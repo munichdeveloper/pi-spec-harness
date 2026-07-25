@@ -2,6 +2,7 @@ import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { randomUUID } from "node:crypto";
 import { assertHygiene } from "./hygiene.js";
+import type { StateStore } from "./state-store.js";
 import { SCHEMA_VERSION, type RunState } from "./types.js";
 
 export class StateLoadError extends Error {}
@@ -57,4 +58,16 @@ export async function saveRunState(path: string, state: RunState): Promise<void>
 
 export function nowIso(): string {
   return new Date().toISOString();
+}
+
+export class FileStateStore implements StateStore {
+  constructor(private readonly path: string) {}
+
+  async load(): Promise<RunState> {
+    return loadRunState(this.path);
+  }
+
+  async save(state: RunState): Promise<void> {
+    await saveRunState(this.path, state);
+  }
 }

@@ -46,16 +46,22 @@ npm run harness -- init \
   --requirement REQ-001 \
   --spec SPEC-011
 
-npm run harness -- status --state artifacts/harness/immogent-slice-001.json
+npm run harness -- status --repository munichdeveloper/Immogent --run-id immogent-slice-001
 
 npm run harness -- gate-open \
-  --state artifacts/harness/immogent-slice-001.json \
+  --repository munichdeveloper/Immogent --run-id immogent-slice-001 \
   --gate-id merge-approval --type human \
   --title "Merge PR #NN freigeben" \
   --question "Darf PR #NN gemerged werden?"
 
-npm run harness -- resume --state artifacts/harness/immogent-slice-001.json
+npm run harness -- resume --repository munichdeveloper/Immogent --run-id immogent-slice-001
 ```
+
+Ohne `--state <path>` nutzt das CLI standardmäßig das GitHub-Issue-Backend:
+ein einziges, persistentes Tracking-Issue `[Harness Run] <run-id>` pro Run,
+in dessen Body der komplette Run-State liegt (siehe
+[docs/human-gates.md](docs/human-gates.md)). Der Dateibackend (`--state
+<path>`) bleibt für rein lokale Tests verfügbar.
 
 Als Pi-Skill: dieses Repository via `pi install git:github.com/munichdeveloper/pi-spec-harness`
 installieren (oder projektlokal `.agents/skills/pi-spec-harness/` verlinken).

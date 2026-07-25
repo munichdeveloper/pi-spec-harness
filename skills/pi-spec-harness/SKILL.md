@@ -19,24 +19,35 @@ du erkennst, dass eine Entscheidung ansteht (Produktentscheidung, Risiko,
 Kosten, Secrets, Merge bei mittlerem/hohem Risiko, Eskalation nach drei
 gescheiterten Iterationen, Unklarheit im Requirement), tust du dies:
 
-1. Falls noch kein Run-State existiert: `harness init ...` ausführen.
+1. Falls noch kein Run-State existiert: `harness init --repository <repo>
+   --run-id <id> --requirement <REQ> --spec <SPEC>` ausführen. Das legt
+   (find-or-create, idempotent) ein einziges, dauerhaftes Tracking-Issue
+   `[Harness Run] <run-id>` im Zielrepository an -- der komplette Run-State
+   lebt fortan in dessen Body. Es gibt bewusst **kein** separates State-File,
+   das nur lokal existiert: alles, was eine Entscheidung braucht, muss von
+   GitHub aus sichtbar und bedienbar sein, auch für eine GitHub Action ohne
+   laufende Chat-Sitzung.
 2. Ein Gate registrieren und öffnen:
    ```
-   harness gate-open --state <state-datei> --gate-id <kurze-id> \
+   harness gate-open --repository <repo> --run-id <id> --gate-id <kurze-id> \
      --type human --title "<kurzer Titel>" \
      --question "<konkrete Frage>" \
      --context "<Zeile 1>" --context "<Zeile 2>"
    ```
-   Das legt automatisch ein GitHub Issue im Ziel-Repository an (Label
-   `harness:gate` + `status:needs-human`).
-3. Im Chat nur **kurz** auf das neu angelegte Issue verweisen (Link), nicht
-   die Entscheidung selbst dort ausdiskutieren.
+   Das setzt Labels `harness:gate-open` + `status:needs-human` auf das
+   bestehende Tracking-Issue und hängt Frage/Kontext als Kommentar an --
+   es wird **kein neues Issue** erzeugt.
+3. Im Chat nur **kurz** auf das Tracking-Issue verweisen (Link), nicht die
+   Entscheidung selbst dort ausdiskutieren.
 4. Arbeit an diesem Run stoppen, bis das Gate aufgelöst ist (siehe unten).
    An anderen, unabhängigen Runs darfst du weiterarbeiten.
 
 Ein Mensch löst das Gate ausschließlich durch Setzen des Labels
-`harness:gate-approved` oder `harness:gate-rejected` auf dem Issue.
-Kommentare allein zählen nicht als Entscheidung.
+`harness:gate-approved` oder `harness:gate-rejected` auf dem Tracking-Issue.
+Kommentare allein zählen nicht als Entscheidung. `harness resume` (von dir,
+mir, oder einer GitHub Action) übernimmt die Entscheidung, entfernt die
+transienten Labels und hält das Issue offen, bis der ganze Run `complete`
+ist -- beim nächsten Gate desselben Runs wird dasselbe Issue wiederverwendet.
 
 ## Werkzeuge
 
@@ -45,6 +56,10 @@ Das Harness-CLI liegt in diesem Repository (`pi-spec-harness`) unter
 `npm run build` + `node dist/cli.js <command>`. Jeder Befehl gibt
 `{ schemaVersion, command, result, nextAction }` als JSON zurück -- lies
 immer `nextAction`, um zu wissen, was als Nächstes zu tun ist.
+
+Alle Befehle akzeptieren entweder `--state <pfad>` (lokales Datei-Backend,
+nur für Tests/Smoke-Runs sinnvoll) oder `--repository <repo> --run-id <id>`
+(GitHub-Issue-Backend, Standardfall für echte Runs).
 
 Wichtige Befehle:
 

@@ -12,6 +12,15 @@ siehe [`skills/pi-spec-harness/SKILL.md`](skills/pi-spec-harness/SKILL.md).
 - Human Gates sind ausschließlich über GitHub-Issue-Labels auflösbar
   (`harness:gate-approved` / `harness:gate-rejected`). Kein Code darf eine
   Chat-Antwort oder einen Kommentartext als Freigabe interpretieren.
+- Ein Run hat genau **ein** persistentes Tracking-Issue (`harness:run`)
+  über seine gesamte Lebensdauer. Gates öffnen niemals ein neues Issue --
+  sie setzen transiente Labels auf das bestehende Tracking-Issue und hängen
+  einen Kommentar an. Das Issue wird nur beim Erreichen der Phase
+  `complete` geschlossen.
+- Der Run-State lebt kanonisch im Issue-Body (siehe
+  `src/state/issue-store.ts`), nicht in einer Datei, die nur lokal
+  existiert -- sonst kann keine GitHub Action ohne laufende Chat-Sitzung
+  weiterarbeiten.
 - `computeNextAction` in `src/state/state-machine.ts` ist eine reine
   Funktion: kein I/O, kein GitHub-Zugriff. Seiteneffekte (State speichern,
   GitHub ansprechen) gehören in die CLI-Befehle oder das Skill-Protokoll,

@@ -104,6 +104,26 @@ export const github = {
     await runGh(args);
   },
 
+  async updateIssueBody(repository: string, number: number, body: string): Promise<void> {
+    await runGh(["issue", "edit", String(number), "--repo", repository, "--body", body]);
+  },
+
+  /**
+   * Find an open-or-closed issue whose title matches exactly. Used to
+   * find-or-create the single persistent tracking issue for a run.
+   */
+  async findIssueByExactTitle(repository: string, title: string): Promise<IssueRef | undefined> {
+    const out = await runGh([
+      "issue", "list", "--repo", repository, "--state", "all",
+      "--search", `"${title}" in:title`,
+      "--json", "number,title,url",
+      "--limit", "20",
+    ]);
+    const issues = JSON.parse(out) as { number: number; title: string; url: string }[];
+    const match = issues.find((i) => i.title === title);
+    return match ? { repository, number: match.number, url: match.url } : undefined;
+  },
+
   async createPullRequest(
     repository: string,
     opts: { title: string; body: string; base: string; head: string; draft?: boolean },
