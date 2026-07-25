@@ -8,6 +8,7 @@ import {
   openHumanGateIssue,
 } from "./gates/human-gate.js";
 import { github } from "./github/gh.js";
+import { getSpecAssignee } from "./spec/spec-parser.js";
 import { ensureRunIssue, findRunIssue } from "./state/issue-store.js";
 import type { StateStore } from "./state/state-store.js";
 import { FileStateStore } from "./state/store.js";
@@ -199,6 +200,54 @@ async function cmdNote(argv: StoreArgs & { text: string }): Promise<void> {
   printResult("note", { state: next }, `Note recorded on run '${next.runId}'.`);
 }
 
+async function cmdIssueCreate(
+  argv: StoreArgs & {
+    title: string;
+    body: string;
+    labels?: string[];
+    assignee?: string;
+  },
+): Promise<void> {
+  const store = await resolveExistingStore(argv);
+  let state = await store.load();
+
+  // If spec is provided in the state and no assignee override, read from spec frontmatter
+  let assignee = argv.assignee;
+  if (!assignee && state.spec && argv.repository) {
+    try {
+      assignee = await getSpecAssignee(argv.repository, `${state.spec}-*.md`);
+    } catch {
+      // Fall back to copilot if spec frontmatter cannot be read
+      assignee = "@github-copilot";
+    }
+  }
+  assignee = assignee || "@github-copilot";
+
+  // Create the issue
+  const issueRef = await github.createIssue(argv.repository || "", {
+    title: argv.title,
+    body: argv.body,
+    labels: argv.labels,
+  });
+
+  // Assign it
+  if (assignee) {
+    await github.addAssignees(argv.repository || "", issueRef.number, [assignee]);
+  }
+
+  // Open the issue-ready gate
+  const gateId = "issue-ready";
+  state = upsertGate(state, { id: gateId, type: "issue", question: `Implementation issue ${issueRef.number} created and assignee set to ${assignee}` });
+  await store.save(state);
+
+  const next = computeNextAction(state);
+  printResult(
+    "issue-create",
+    { issueNumber: issueRef.number, issueUrl: issueRef.url, assignee, gate: gateId },
+    next.detail,
+  );
+}
+
 async function cmdIterationStart(argv: StoreArgs): Promise<void> {
   const store = await resolveExistingStore(argv);
   const state = await store.load();
@@ -332,6 +381,26 @@ await yargs(hideBin(process.argv))
     "Append a free-form, hygiene-checked note to the run",
     (y) => storeOptions(y).option("text", { type: "string", demandOption: true }),
     async (argv) => cmdNote({ state: argv.state, repository: argv.repository, runId: argv.runId, text: argv.text }),
+  )
+  .command(
+    "issue-create",
+    "Create an implementation issue and assign based on spec's implementation_assignee field",
+    (y) =>
+      storeOptions(y)
+        .option("title", { type: "string", demandOption: true, describe: "Issue title" })
+        .option("body", { type: "string", demandOption: true, describe: "Issue body (Markdown)" })
+        .option("labels", { type: "array", string: true, describe: "Labels to apply" })
+        .option("assignee", { type: "string", describe: "Override assignee (defaults to spec's implementation_assignee or @github-copilot)" }),
+    async (argv) =>
+      cmdIssueCreate({
+        state: argv.state,
+        repository: argv.repository,
+        runId: argv.runId,
+        title: argv.title,
+        body: argv.body,
+        labels: argv.labels as string[] | undefined,
+        assignee: argv.assignee,
+      }),
   )
   .command(
     "iteration-start",

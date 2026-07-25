@@ -98,6 +98,11 @@ export const github = {
     await runGh(["issue", "edit", String(number), "--repo", repository, ...labels.flatMap((l) => ["--remove-label", l])]);
   },
 
+  async addAssignees(repository: string, number: number, assignees: string[]): Promise<void> {
+    if (assignees.length === 0) return;
+    await runGh(["issue", "edit", String(number), "--repo", repository, ...assignees.flatMap((a) => ["--add-assignee", a])]);
+  },
+
   async closeIssue(repository: string, number: number, comment?: string): Promise<void> {
     const args = ["issue", "close", String(number), "--repo", repository];
     if (comment) args.push("--comment", comment);
