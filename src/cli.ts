@@ -5,6 +5,7 @@ import { hideBin } from "yargs/helpers";
 import { applyGateDecision, checkHumanGateIssue, openHumanGateIssue } from "./gates/human-gate.js";
 import { loadRunState, saveRunState } from "./state/store.js";
 import {
+  acknowledgeRejectedGate,
   computeNextAction,
   finishIteration,
   initRunState,
@@ -116,6 +117,14 @@ async function cmdPhase(argv: { state: string; phase: PhaseId }): Promise<void> 
   await saveRunState(argv.state, state);
   const next = computeNextAction(state);
   printResult("phase", { state, nextAction: next }, next.detail);
+}
+
+async function cmdGateAcknowledge(argv: { state: string; gateId: string; note: string }): Promise<void> {
+  let state = await loadRunState(argv.state);
+  state = acknowledgeRejectedGate(state, argv.gateId, argv.note);
+  await saveRunState(argv.state, state);
+  const next = computeNextAction(state);
+  printResult("gate-acknowledge", { state, nextAction: next }, next.detail);
 }
 
 async function cmdNote(argv: { state: string; text: string }): Promise<void> {
@@ -249,6 +258,16 @@ await yargs(hideBin(process.argv))
           },
         ),
     async (argv) => cmdPhase({ state: argv.state, phase: argv.phase as PhaseId }),
+  )
+  .command(
+    "gate-acknowledge",
+    "Acknowledge a rejected human gate (records how the run proceeds after rejection)",
+    (y) =>
+      y
+        .option("state", { type: "string", demandOption: true })
+        .option("gate-id", { type: "string", demandOption: true })
+        .option("note", { type: "string", demandOption: true }),
+    async (argv) => cmdGateAcknowledge({ state: argv.state, gateId: argv.gateId, note: argv.note }),
   )
   .command(
     "note",

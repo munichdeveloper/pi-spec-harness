@@ -107,12 +107,33 @@ export function findGate(state: RunState, gateId: string): GateRecord | undefine
 }
 
 /**
- * A human gate blocks all forward progress until it has result "passed" with
- * a recorded decision.approved === true. This is intentionally the single
- * choke point for "does a human need to look at this?".
+ * A human gate is "open" (still blocking) only while it has not been
+ * resolved yet, i.e. result is "pending" or "needs-human". Once a human has
+ * decided -- approved ("passed") or rejected ("failed") -- the gate is
+ * resolved and must not block forever. A rejected gate is surfaced
+ * separately via computeNextAction so the caller can react instead of the
+ * run silently advancing or getting stuck.
  */
 export function hasOpenHumanGate(state: RunState): GateRecord | undefined {
-  return state.gates.find((g) => g.type === "human" && g.result !== "passed");
+  return state.gates.find((g) => g.type === "human" && (g.result === "pending" || g.result === "needs-human"));
+}
+
+/**
+ * The most recently resolved human gate whose result was "failed" (rejected)
+ * and that has not yet been acknowledged (see acknowledgeRejectedGate).
+ */
+export function findUnacknowledgedRejectedGate(state: RunState): GateRecord | undefined {
+  return state.gates.find((g) => g.type === "human" && g.result === "failed" && !g.decision?.note?.startsWith("acknowledged:"));
+}
+
+export function acknowledgeRejectedGate(state: RunState, gateId: string, note: string): RunState {
+  const gate = findGate(state, gateId);
+  if (!gate || gate.result !== "failed") {
+    throw new Error(`gate '${gateId}' is not a rejected human gate`);
+  }
+  return resolveGate(state, gateId, {
+    decision: { ...(gate.decision ?? { approved: false, by: "unknown", at: nowIso() }), note: `acknowledged: ${note}` },
+  });
 }
 
 export function transitionPhase(state: RunState, phase: PhaseId): RunState {
@@ -149,6 +170,7 @@ export function iterationCapReached(state: RunState): boolean {
 export interface NextAction {
   action:
     | "await-human-gate"
+    | "human-gate-rejected"
     | "advance-phase"
     | "escalate-iteration-cap"
     | "run-complete"
@@ -171,6 +193,17 @@ export function computeNextAction(state: RunState): NextAction {
         openHumanGate.issue ? `See ${openHumanGate.issue.url}` : "No gate issue opened yet."
       }`,
       gate: openHumanGate,
+    };
+  }
+
+  const rejectedGate = findUnacknowledgedRejectedGate(state);
+  if (rejectedGate) {
+    return {
+      action: "human-gate-rejected",
+      detail: `Human gate '${rejectedGate.id}' was rejected. ${
+        rejectedGate.issue ? `See ${rejectedGate.issue.url}` : ""
+      } Decide how to proceed, then call acknowledgeRejectedGate.`,
+      gate: rejectedGate,
     };
   }
 

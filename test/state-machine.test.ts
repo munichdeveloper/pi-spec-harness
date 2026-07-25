@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  acknowledgeRejectedGate,
   computeNextAction,
   finishIteration,
   hasOpenHumanGate,
@@ -65,6 +66,28 @@ describe("state-machine", () => {
       decision: { approved: true, by: "munichdeveloper", at: new Date().toISOString() },
     });
     expect(hasOpenHumanGate(state)).toBeUndefined();
+    expect(computeNextAction(state).action).toBe("advance-phase");
+  });
+
+  it("a rejected human gate resolves (no longer 'open') but surfaces as human-gate-rejected", () => {
+    let state = baseRun();
+    state = upsertGate(state, { id: "merge-approval", type: "human", question: "Merge PR #1?" });
+    state = resolveGate(state, "merge-approval", {
+      result: "failed",
+      decision: { approved: false, by: "munichdeveloper", at: new Date().toISOString() },
+    });
+    expect(hasOpenHumanGate(state)).toBeUndefined();
+    expect(computeNextAction(state).action).toBe("human-gate-rejected");
+  });
+
+  it("acknowledging a rejected gate clears human-gate-rejected and allows progress again", () => {
+    let state = baseRun();
+    state = upsertGate(state, { id: "merge-approval", type: "human", question: "Merge PR #1?" });
+    state = resolveGate(state, "merge-approval", {
+      result: "failed",
+      decision: { approved: false, by: "munichdeveloper", at: new Date().toISOString() },
+    });
+    state = acknowledgeRejectedGate(state, "merge-approval", "run cancelled, see follow-up run");
     expect(computeNextAction(state).action).toBe("advance-phase");
   });
 
