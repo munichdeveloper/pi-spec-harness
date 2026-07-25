@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { readFile } from "node:fs/promises";
 import yargs, { type Argv } from "yargs";
 import { hideBin } from "yargs/helpers";
 import {
@@ -203,13 +204,23 @@ async function cmdNote(argv: StoreArgs & { text: string }): Promise<void> {
 async function cmdIssueCreate(
   argv: StoreArgs & {
     title: string;
-    body: string;
+    body?: string;
+    bodyFile?: string;
     labels?: string[];
     assignee?: string;
   },
 ): Promise<void> {
   const store = await resolveExistingStore(argv);
   let state = await store.load();
+
+  // Read body from file or direct argument
+  let body = argv.body;
+  if (argv.bodyFile) {
+    body = await readFile(argv.bodyFile, "utf-8");
+  }
+  if (!body) {
+    throw new Error("--body or --body-file is required");
+  }
 
   // If spec is provided in the state and no assignee override, read from spec frontmatter
   let assignee = argv.assignee;
@@ -224,7 +235,7 @@ async function cmdIssueCreate(
   assignee = assignee || "@github-copilot";
 
   // Create the issue with a note if it's for @github-copilot
-  let bodyWithNote = argv.body;
+  let bodyWithNote = body;
   if (assignee === "@github-copilot") {
     bodyWithNote = [
       `_Intended for: ${assignee}_\n`,
@@ -396,18 +407,26 @@ await yargs(hideBin(process.argv))
     (y) =>
       storeOptions(y)
         .option("title", { type: "string", demandOption: true, describe: "Issue title" })
-        .option("body", { type: "string", demandOption: true, describe: "Issue body (Markdown)" })
+        .option("body", { type: "string", describe: "Issue body (Markdown)" })
+        .option("body-file", { type: "string", describe: "Path to file with issue body (markdown)" })
         .option("labels", { type: "array", string: true, describe: "Labels to apply" })
-        .option("assignee", { type: "string", describe: "Override assignee (defaults to spec's implementation_assignee or @github-copilot)" }),
+        .option("assignee", { type: "string", describe: "Override assignee (defaults to spec's implementation_assignee or @github-copilot)" })
+        .check((argv) => {
+          if (!argv.body && !argv["body-file"]) {
+            throw new Error("Either --body or --body-file is required");
+          }
+          return true;
+        }),
     async (argv) =>
       cmdIssueCreate({
         state: argv.state,
         repository: argv.repository,
         runId: argv.runId,
         title: argv.title,
-        body: argv.body,
+        body: argv.body as string | undefined,
+        bodyFile: argv["body-file"] as string | undefined,
         labels: argv.labels as string[] | undefined,
-        assignee: argv.assignee,
+        assignee: argv.assignee as string | undefined,
       }),
   )
   .command(
