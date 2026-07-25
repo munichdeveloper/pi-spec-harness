@@ -72,6 +72,9 @@ Wichtige Befehle:
 - `gate-resolve` -- nicht-menschliche Gates (z. B. `spec`, `runtime`, `merge`)
   manuell mit Ergebnis + Evidence auflösen, nachdem du die Prüfung selbst
   durchgeführt hast (Tests, CI-Status, Review-Threads).
+- `issue-create` -- Implementation-Issue erstellen, automatisch assignen basierend
+  auf der SPEC's `implementation_assignee`-Feld (Standard: `@github-copilot`).
+  Öffnet automatisch das `issue-ready`-Gate. Mit `--assignee <username>` override.
 - `phase` -- Phase explizit setzen (`requirement` bis `complete`).
 - `iteration-start` / `iteration-finish` -- automatische
   Korrekturiterationen zählen; nach `maxAutomaticIterations` (Default 3)
@@ -84,11 +87,16 @@ Wichtige Befehle:
    (`gate-id: requirement-approval` bzw. `spec-approval`) statt zu raten.
 2. **Run initialisieren:** `harness init --run-id ... --repository ... \
    --requirement REQ-XXX --spec SPEC-XXX`.
-3. **Issue-Gate:** Wenn es noch kein GitHub Issue für dieses Slice gibt, eins
-   anlegen (`gh issue create` im Ziel-Repo, Labels laut dortigem
-   Statusmodell, z. B. `status:ready`, `ai:allowed`). `harness gate-open
-   --gate-id issue-ready --type issue` und danach mit `gate-resolve`
-   bestätigen, sobald Labels gesetzt sind.
+3. **Issue-Gate:** Implementierungs-Issue erstellen. Die SPEC-Datei sollte ein
+   Feld `implementation_assignee` im Frontmatter haben (Standard:
+   `@github-copilot`). Nutze:
+   ```
+   harness issue-create --repository owner/repo --run-id <run-id> \
+     --title "<Kurzer Titel>" --body "<Markdown-Beschreibung>" \
+     --labels "status:ready" "ai:allowed" --assignee <override-optional>
+   ```
+   Der Harness liest `implementation_assignee` aus der SPEC, erstellt das
+   Issue, assignt es automatisch und öffnet das `issue-ready`-Gate.
 4. **Implementierung:** eigener Branch, kleiner Scope, Tests mitliefern.
    Nutze deine normalen Tools (`bash`, `read`, `edit`, `write`) direkt im
    Ziel-Repo-Checkout -- das Harness bucht nur mit, es tut die Arbeit nicht
