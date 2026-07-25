@@ -2,10 +2,14 @@
 import { existsSync } from "node:fs";
 import yargs from "yargs";
 import { hideBin } from "yargs/helpers";
-import { applyGateDecision, checkHumanGateIssue, openHumanGateIssue } from "./gates/human-gate.js";
+import {
+  acknowledgeRejectedHumanGate,
+  applyGateDecision,
+  checkHumanGateIssue,
+  openHumanGateIssue,
+} from "./gates/human-gate.js";
 import { loadRunState, saveRunState } from "./state/store.js";
 import {
-  acknowledgeRejectedGate,
   computeNextAction,
   finishIteration,
   initRunState,
@@ -121,7 +125,7 @@ async function cmdPhase(argv: { state: string; phase: PhaseId }): Promise<void> 
 
 async function cmdGateAcknowledge(argv: { state: string; gateId: string; note: string }): Promise<void> {
   let state = await loadRunState(argv.state);
-  state = acknowledgeRejectedGate(state, argv.gateId, argv.note);
+  state = await acknowledgeRejectedHumanGate(state, argv.gateId, argv.note);
   await saveRunState(argv.state, state);
   const next = computeNextAction(state);
   printResult("gate-acknowledge", { state, nextAction: next }, next.detail);

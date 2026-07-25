@@ -1,5 +1,5 @@
 import { github } from "../github/gh.js";
-import { resolveGate, type NextAction } from "../state/state-machine.js";
+import { acknowledgeRejectedGate, resolveGate, type NextAction } from "../state/state-machine.js";
 import type { RunState } from "../state/types.js";
 
 /**
@@ -134,6 +134,32 @@ export async function applyGateDecision(
     if (decision.approved) {
       await github.closeIssue(gate.issue.repository, gate.issue.number);
     }
+  }
+
+  return next;
+}
+
+/**
+ * Acknowledge a rejected human gate: records how the run proceeds and, if
+ * the gate has a backing issue, closes it with a summary comment so the
+ * issue tracker reflects that the rejection has been handled, not just the
+ * rejection itself.
+ */
+export async function acknowledgeRejectedHumanGate(
+  runState: RunState,
+  gateId: string,
+  note: string,
+): Promise<RunState> {
+  const gate = runState.gates.find((g) => g.id === gateId);
+  const next = acknowledgeRejectedGate(runState, gateId, note);
+
+  if (gate?.issue) {
+    await github.commentIssue(
+      gate.issue.repository,
+      gate.issue.number,
+      `Harness: Ablehnung quittiert. ${note}`,
+    );
+    await github.closeIssue(gate.issue.repository, gate.issue.number);
   }
 
   return next;
