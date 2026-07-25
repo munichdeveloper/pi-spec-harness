@@ -7,6 +7,7 @@ import {
   checkHumanGateIssue,
   openHumanGateIssue,
 } from "./gates/human-gate.js";
+import { github } from "./github/gh.js";
 import { ensureRunIssue, findRunIssue } from "./state/issue-store.js";
 import type { StateStore } from "./state/state-store.js";
 import { FileStateStore } from "./state/store.js";
@@ -167,6 +168,15 @@ async function cmdPhase(argv: StoreArgs & { phase: PhaseId }): Promise<void> {
   let state = await store.load();
   state = transitionPhase(state, argv.phase);
   await store.save(state);
+
+  if (argv.phase === "complete" && store.issueRef) {
+    await github.closeIssue(
+      store.issueRef.repository,
+      store.issueRef.number,
+      `Harness: Run \`${state.runId}\` ist abgeschlossen (Phase \`complete\`).`,
+    );
+  }
+
   const next = computeNextAction(state);
   printResult("phase", { state, nextAction: next }, next.detail);
 }
