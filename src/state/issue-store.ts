@@ -83,12 +83,30 @@ export class IssueStateStore implements StateStore {
   }
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 /**
  * Find the existing tracking issue for a run, if any.
+ *
+ * GitHub's issue search index lags issue creation by a second or two, so a
+ * `gate-open` called immediately after `init` can otherwise fail to find an
+ * issue that demonstrably exists. Retry briefly with backoff before giving
+ * up, instead of forcing every caller to work around eventual consistency.
  */
-export async function findRunIssue(repository: string, runId: string): Promise<IssueStateStore | undefined> {
-  const found = await github.findIssueByExactTitle(repository, runIssueTitle(runId));
-  return found ? new IssueStateStore(found.repository, found.number, found.url) : undefined;
+export async function findRunIssue(
+  repository: string,
+  runId: string,
+  retry: { attempts: number; delayMs: number } = { attempts: 4, delayMs: 1500 },
+): Promise<IssueStateStore | undefined> {
+  const title = runIssueTitle(runId);
+  for (let attempt = 1; attempt <= retry.attempts; attempt++) {
+    const found = await github.findIssueByExactTitle(repository, title);
+    if (found) return new IssueStateStore(found.repository, found.number, found.url);
+    if (attempt < retry.attempts) await sleep(retry.delayMs);
+  }
+  return undefined;
 }
 
 /**
@@ -96,7 +114,9 @@ export async function findRunIssue(repository: string, runId: string): Promise<I
  * writes the initial state into its body immediately.
  */
 export async function ensureRunIssue(repository: string, runId: string, initialState: RunState): Promise<IssueStateStore> {
-  const existing = await findRunIssue(repository, runId);
+  // No retry here: if the issue genuinely does not exist yet, we want to
+  // create it immediately rather than wait out the search-index lag.
+  const existing = await findRunIssue(repository, runId, { attempts: 1, delayMs: 0 });
   if (existing) return existing;
 
   await github.ensureLabel(repository, RUN_ISSUE_LABEL, {
