@@ -223,15 +223,23 @@ async function cmdIssueCreate(
   }
   assignee = assignee || "@github-copilot";
 
-  // Create the issue
+  // Create the issue with a note if it's for @github-copilot
+  let bodyWithNote = argv.body;
+  if (assignee === "@github-copilot") {
+    bodyWithNote = [
+      `_Intended for: ${assignee}_\n`,
+      argv.body,
+    ].join("\n");
+  }
+
   const issueRef = await github.createIssue(argv.repository || "", {
     title: argv.title,
-    body: argv.body,
+    body: bodyWithNote,
     labels: argv.labels,
   });
 
-  // Assign it
-  if (assignee) {
+  // Assign it (skip for @github-copilot, which GitHub doesn't support as a real assignee)
+  if (assignee && assignee !== "@github-copilot") {
     await github.addAssignees(argv.repository || "", issueRef.number, [assignee]);
   }
 
