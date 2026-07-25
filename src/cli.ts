@@ -118,6 +118,14 @@ async function cmdPhase(argv: { state: string; phase: PhaseId }): Promise<void> 
   printResult("phase", { state, nextAction: next }, next.detail);
 }
 
+async function cmdNote(argv: { state: string; text: string }): Promise<void> {
+  const state = await loadRunState(argv.state);
+  const notes = [...(state.notes ?? []), `${new Date().toISOString()} ${argv.text}`];
+  const next = { ...state, notes, updatedAt: new Date().toISOString() };
+  await saveRunState(argv.state, next);
+  printResult("note", { state: next }, `Note recorded on run '${next.runId}'.`);
+}
+
 async function cmdIterationStart(argv: { state: string }): Promise<void> {
   let state = await loadRunState(argv.state);
   const { state: nextState, iteration } = startIteration(state);
@@ -241,6 +249,15 @@ await yargs(hideBin(process.argv))
           },
         ),
     async (argv) => cmdPhase({ state: argv.state, phase: argv.phase as PhaseId }),
+  )
+  .command(
+    "note",
+    "Append a free-form, hygiene-checked note to the run",
+    (y) =>
+      y
+        .option("state", { type: "string", demandOption: true })
+        .option("text", { type: "string", demandOption: true }),
+    async (argv) => cmdNote({ state: argv.state, text: argv.text }),
   )
   .command(
     "iteration-start",
