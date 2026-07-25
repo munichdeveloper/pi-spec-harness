@@ -179,6 +179,16 @@ async function cmdPhase(argv: StoreArgs & { phase: PhaseId }): Promise<void> {
     );
   }
 
+  // Auto-label implementation issue for Copilot assignment when phase becomes "implementation"
+  if (argv.phase === "implementation" && state.issue && store.issueRef) {
+    try {
+      await github.addLabels(store.issueRef.repository, state.issue, ["ai:allowed", "status:ready"]);
+    } catch (err) {
+      // Non-fatal: if labeling fails (e.g., issue doesn't exist yet), just log and continue
+      console.warn(`Warning: could not add Copilot labels to issue ${state.issue}: ${err}`);
+    }
+  }
+
   const next = computeNextAction(state);
   printResult("phase", { state, nextAction: next }, next.detail);
 }
@@ -254,9 +264,10 @@ async function cmdIssueCreate(
     await github.addAssignees(argv.repository || "", issueRef.number, [assignee]);
   }
 
-  // Open the issue-ready gate
+  // Open the issue-ready gate and store issue number for later phases
   const gateId = "issue-ready";
   state = upsertGate(state, { id: gateId, type: "issue", question: `Implementation issue ${issueRef.number} created and assignee set to ${assignee}` });
+  state.issue = issueRef.number;
   await store.save(state);
 
   const next = computeNextAction(state);
