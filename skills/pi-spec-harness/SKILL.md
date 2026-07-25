@@ -1,0 +1,106 @@
+---
+name: pi-spec-harness
+description: Use this skill whenever you work on a spec-driven development run for a reference product (e.g. munichdeveloper/Immogent) and need to track run-state, gates, and especially human decisions. Load it before starting implementation work on a GitHub Issue derived from an approved Software Spec, and consult it whenever you are unsure whether something requires human approval.
+---
+
+# Pi Spec Harness
+
+Dieser Skill macht dich (Pi) zum Implementierungs- **und** Buchhaltungsagenten
+für einen spezifikationsgetriebenen Entwicklungsdurchlauf. Er ersetzt das
+alte, rein lesende `spec-driven-agent-harness`-Repository durch eine
+Pi-native Variante: du darfst tatsächlich Code schreiben, Branches/PRs
+anlegen und GitHub-Issues öffnen -- aber ausschließlich innerhalb der hier
+beschriebenen Leitplanken.
+
+## Kernregel: Trennung von Chat und Human Gate
+
+**Menschliche Entscheidungen werden niemals nur im Chat verhandelt.** Sobald
+du erkennst, dass eine Entscheidung ansteht (Produktentscheidung, Risiko,
+Kosten, Secrets, Merge bei mittlerem/hohem Risiko, Eskalation nach drei
+gescheiterten Iterationen, Unklarheit im Requirement), tust du dies:
+
+1. Falls noch kein Run-State existiert: `harness init ...` ausführen.
+2. Ein Gate registrieren und öffnen:
+   ```
+   harness gate-open --state <state-datei> --gate-id <kurze-id> \
+     --type human --title "<kurzer Titel>" \
+     --question "<konkrete Frage>" \
+     --context "<Zeile 1>" --context "<Zeile 2>"
+   ```
+   Das legt automatisch ein GitHub Issue im Ziel-Repository an (Label
+   `harness:gate` + `status:needs-human`).
+3. Im Chat nur **kurz** auf das neu angelegte Issue verweisen (Link), nicht
+   die Entscheidung selbst dort ausdiskutieren.
+4. Arbeit an diesem Run stoppen, bis das Gate aufgelöst ist (siehe unten).
+   An anderen, unabhängigen Runs darfst du weiterarbeiten.
+
+Ein Mensch löst das Gate ausschließlich durch Setzen des Labels
+`harness:gate-approved` oder `harness:gate-rejected` auf dem Issue.
+Kommentare allein zählen nicht als Entscheidung.
+
+## Werkzeuge
+
+Das Harness-CLI liegt in diesem Repository (`pi-spec-harness`) unter
+`src/cli.ts`, ausgeführt über `npm run harness -- <command>` oder gebaut via
+`npm run build` + `node dist/cli.js <command>`. Jeder Befehl gibt
+`{ schemaVersion, command, result, nextAction }` als JSON zurück -- lies
+immer `nextAction`, um zu wissen, was als Nächstes zu tun ist.
+
+Wichtige Befehle:
+
+- `init` -- Run anlegen (idempotent).
+- `status` -- aktuellen State + nächste Aktion anzeigen.
+- `resume` -- nächste Aktion neu berechnen; pollt automatisch ein offenes
+  Human-Gate-Issue auf eine Entscheidung.
+- `gate-open --type <spec|issue|runtime|review|human|merge>` -- Gate
+  registrieren; bei `human` zusätzlich GitHub-Issue anlegen.
+- `gate-resolve` -- nicht-menschliche Gates (z. B. `spec`, `runtime`, `merge`)
+  manuell mit Ergebnis + Evidence auflösen, nachdem du die Prüfung selbst
+  durchgeführt hast (Tests, CI-Status, Review-Threads).
+- `phase` -- Phase explizit setzen (`requirement` bis `complete`).
+- `iteration-start` / `iteration-finish` -- automatische
+  Korrekturiterationen zählen; nach `maxAutomaticIterations` (Default 3)
+  fehlgeschlagenen Iterationen erzwingt `computeNextAction` eine Eskalation.
+
+## Ablauf für ein Slice (Requirement → Merge)
+
+1. **Voraussetzung prüfen:** Requirement und Spec im Ziel-Repo (`docs/`)
+   müssen `status: approved` sein. Falls nicht, öffne ein Human-Gate
+   (`gate-id: requirement-approval` bzw. `spec-approval`) statt zu raten.
+2. **Run initialisieren:** `harness init --run-id ... --repository ... \
+   --requirement REQ-XXX --spec SPEC-XXX`.
+3. **Issue-Gate:** Wenn es noch kein GitHub Issue für dieses Slice gibt, eins
+   anlegen (`gh issue create` im Ziel-Repo, Labels laut dortigem
+   Statusmodell, z. B. `status:ready`, `ai:allowed`). `harness gate-open
+   --gate-id issue-ready --type issue` und danach mit `gate-resolve`
+   bestätigen, sobald Labels gesetzt sind.
+4. **Implementierung:** eigener Branch, kleiner Scope, Tests mitliefern.
+   Nutze deine normalen Tools (`bash`, `read`, `edit`, `write`) direkt im
+   Ziel-Repo-Checkout -- das Harness bucht nur mit, es tut die Arbeit nicht
+   für dich.
+5. **Verifikation:** Linting/Typprüfung/Tests/Build laufen lassen. Ergebnis
+   mit `gate-resolve --gate-id verification --result passed|failed
+   --evidence <Pfad-oder-Log>` festhalten.
+6. **Iteration bei Fehlern:** `iteration-start` vor jedem Korrekturversuch,
+   `iteration-finish --result failed --findings "..."` danach. Nach dem
+   dritten Fehlschlag öffnet die Logik automatisch eine Eskalation -- du
+   musst dann ein Human-Gate öffnen (`gate-id: needs-human-escalation`),
+   nicht selbst einen vierten Versuch starten.
+7. **PR & Dokumentation:** PR im Ziel-Repo öffnen, Dokumentation im selben PR
+   aktualisieren, PR-Beschreibung verlinkt Requirement/Spec/Issue.
+8. **Merge-Gate:** Bei `risk: medium` oder `risk: high` (siehe Spec-
+   Frontmatter) ist der Merge **immer** ein Human-Gate
+   (`gate-id: merge-approval`). Bei `risk: low` genügt ein `gate-resolve`
+   nach grüner CI und ohne offene Review-Threads.
+9. **Abschluss:** Nach Merge `phase --phase complete` setzen, Run-Dokument im
+   Ziel-Repo (analog zu `RUN-XXX`-Dokumenten) ergänzen.
+
+## Nicht verhandelbare Grenzen
+
+- Kein Merge bei `risk: medium`/`risk: high` ohne aufgelöstes Human-Gate.
+- Keine echten Nutzerdaten, keine Secrets in Run-State, Logs oder Fixtures.
+- Maximal drei automatische Korrekturiterationen pro Run.
+- Destruktive Migrationen, Auth-/Berechtigungsänderungen: immer Human-Gate,
+  unabhängig vom deklarierten Risiko der Spec.
+- Bei Widersprüchen zwischen Requirement, Spec und Issue: nicht raten, Human-
+  Gate öffnen und Konflikt im `question`-Feld benennen.
