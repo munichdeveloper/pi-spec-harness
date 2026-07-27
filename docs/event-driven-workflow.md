@@ -310,3 +310,70 @@ implementation_assignee: "@github-copilot"  # Standard
 - [human-gates.md](./human-gates.md) – Gate-Mechanik im Detail
 - [workflow.md](./workflow.md) – State Machine & Phasen
 - [pi-spec-harness README](../README.md) – Harness-Übersicht
+
+---
+
+## Appendix: Agent Failure Recovery (RUN-006 Learnings)
+
+### Scenario: Agent Implementation Fails Tests
+
+When Copilot (or another agent) opens a PR with failing tests:
+
+```
+┌─ Workflow Automation ────────────────────────┐
+│                                              │
+│  Check Failure (E2E Test, etc.)              │
+│         ↓                                    │
+│  agent-cherry-pick-implementation.yml        │
+│    ├─ Detect failing draft PR                │
+│    ├─ Extract commits from PR branch         │
+│    ├─ Cherry-pick to main                    │
+│    ├─ Post status comment                    │
+│    └─ PUSH to main ✓ (code preserved)        │
+│         ↓                                    │
+│  agent-fix-failing-tests.yml (parallel)      │
+│    ├─ Post detailed error feedback           │
+│    ├─ Close the draft PR                     │
+│    └─ Re-trigger agent assignment            │
+│         ↓                                    │
+│  copilot-solve-issue.yml                     │
+│    └─ Agent re-assigned with labels          │
+│         ↓                                    │
+│  Agent opens new PR (on fresh foundation)    │
+│    ├─ Retry implementation with fixes        │
+│    ├─ Run tests again                        │
+│    └─ If passes: proceed to merge ✓          │
+│         ↓                                    │
+│  Max 3 automatic retries                     │
+│    └─ If still failing: escalate to human gate
+│                                              │
+└──────────────────────────────────────────────┘
+```
+
+### Key Properties
+
+1. **Code Preservation**: Implementation commits are cherry-picked to main **before** PR closure
+2. **Automatic Retry**: No manual intervention needed (except gate decisions)
+3. **Iteration Tracking**: Each attempt is counted in `state.iterations[]`
+4. **Escalation**: After 3 failed attempts, human gate opens for manual decision
+5. **Audit Trail**: All steps logged in PR comments + Harness state
+
+### Commits Involved
+
+- `agent-cherry-pick-implementation.yml`: Preserve code on failure
+- `agent-fix-failing-tests.yml`: Notify and retry
+- `copilot-solve-issue.yml`: Re-assign agent
+- State Machine: Track iterations and escalate
+
+### Example: RUN-006
+
+| Event | Workflow | Result |
+|-------|----------|--------|
+| PR #50 fehlgeschlagen | agent-cherry-pick-implementation | 2 commits → main ✓ |
+| E2E-Test-Fehler | agent-fix-failing-tests | Feedback gepostet, PR #50 geschlossen |
+| Labels re-set | copilot-solve-issue | Copilot erneut assignet |
+| PR #51 geöffnet | (automatic) | Neue Implementierung |
+| All tests grün | (automatic) | PR #51 gemerged |
+
+**Result:** Zero code loss, zero manual coding, full automation.
+

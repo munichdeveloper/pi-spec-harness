@@ -147,3 +147,34 @@ When an agent (e.g., GitHub Copilot) fails to fix failing tests, the system:
    - This triggers a human gate for manual intervention
 
 **Result**: Runaway agent failures don't block forever — they escalate automatically after 3 failed attempts.
+
+## Agent Failure Recovery & Code Preservation
+
+When an agent (e.g., GitHub Copilot) fails during implementation:
+
+### Automatic Code Preservation
+1. **Cherry-Pick Implementation** (`agent-cherry-pick-implementation.yml`):
+   - Triggers on check failure (before PR closure)
+   - Extracts all commits from the failing draft PR
+   - Cherry-picks them to main (with conflict detection)
+   - Posts status comment on PR
+   - Code is **preserved in main** even if PR fails
+
+2. **Notification & Retry** (`agent-fix-failing-tests.yml`):
+   - Posts detailed feedback with failure analysis
+   - Closes the draft PR (now safe, code is in main)
+   - Re-triggers agent assignment
+   - Agent opens a **new draft PR** based on previous work in main
+
+### Result
+- ✅ Code is never lost on PR failures
+- ✅ Agent retries are on clean foundation (main + previous work)
+- ✅ Full audit trail in PR comments and main commits
+
+**Example:** RUN-006 Iteration 1 fehlgeschlagen
+```
+PR #50 fehlgeschlagen → cherry-picked to main ✓
+PR #50 geschlossen → Copilot re-triggert
+PR #51 geöffnet → basierend auf vorherigem Code in main
+PR #51 alle Tests grün → merged
+```
