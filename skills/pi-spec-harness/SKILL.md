@@ -127,3 +127,23 @@ Wichtige Befehle:
   unabhängig vom deklarierten Risiko der Spec.
 - Bei Widersprüchen zwischen Requirement, Spec und Issue: nicht raten, Human-
   Gate öffnen und Konflikt im `question`-Feld benennen.
+
+## Agent Iteration Feedback Loop
+
+When an agent (e.g., GitHub Copilot) fails to fix failing tests, the system:
+
+1. **Automatic Detection** (`agent-fix-failing-tests.yml`):
+   - Triggers on workflow failures (Repository Quality, Preview E2E)
+   - Finds the open draft PR by the agent
+   - Posts a comment on the tracking issue with failing checks summary
+   - Calls `harness iteration-start` to track the attempt
+
+2. **Iteration Tracking**:
+   - Each failed attempt is recorded in `state.iterations[]`
+   - Failed iterations counted toward `maxAutomaticIterations` (default: 3)
+
+3. **Escalation** (`computeNextAction`):
+   - Once `iterationCapReached(state) == true`, next `resume` generates `escalate-iteration-cap` action
+   - This triggers a human gate for manual intervention
+
+**Result**: Runaway agent failures don't block forever — they escalate automatically after 3 failed attempts.
