@@ -17,6 +17,7 @@ import {
   PHASE_ORDER,
   computeNextAction,
   bindPullRequest,
+  findGate,
   finishIteration,
   initRunState,
   reconcileInit,
@@ -140,6 +141,13 @@ async function cmdAdvance(argv: StoreArgs): Promise<void> {
 
   const advanced = transitionPhase(state, nextPhase);
   await store.save(advanced);
+  if (nextPhase === "complete" && store.issueRef) {
+    await github.closeIssue(
+      store.issueRef.repository,
+      store.issueRef.number,
+      `Harness: Run \`${advanced.runId}\` ist abgeschlossen (Phase \`complete\`).`,
+    );
+  }
   const following = computeNextAction(advanced);
   printResult("advance", { state: advanced, nextAction: following }, following.detail);
 }
@@ -181,6 +189,12 @@ async function cmdGateResolve(
 ): Promise<void> {
   const store = await resolveExistingStore(argv);
   let state = await store.load();
+  const gate = findGate(state, argv.gateId);
+  if (gate?.type === "human") {
+    throw new Error(
+      `human gate '${argv.gateId}' can only be resolved by a decision label and harness resume`,
+    );
+  }
   state = resolveGate(state, argv.gateId, { result: argv.result, evidence: argv.evidence });
   await store.save(state);
   const next = computeNextAction(state);
@@ -282,7 +296,7 @@ async function cmdIssueCreate(
   if (assignee === "@github-copilot") {
     bodyWithNote = [
       `_Intended for: ${assignee}_\n`,
-      argv.body,
+      body,
     ].join("\n");
   }
 

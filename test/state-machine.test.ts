@@ -102,6 +102,26 @@ describe("state-machine", () => {
     expect(computeNextAction(state).action).toBe("escalate-iteration-cap");
   });
 
+  it("continues after a human resolves the automatic iteration-cap escalation", () => {
+    let state = baseRun();
+    for (let i = 0; i < state.maxAutomaticIterations; i++) {
+      const started = startIteration(state);
+      state = finishIteration(started.state, started.iteration.index, "failed", ["still broken"]);
+    }
+    state = upsertGate(state, {
+      id: "needs-human-escalation",
+      type: "human",
+      question: "Continue manually?",
+    });
+    state = resolveGate(state, "needs-human-escalation", {
+      result: "passed",
+      decision: { approved: true, by: "test", at: new Date().toISOString() },
+    });
+
+    expect(computeNextAction(state).action).toBe("advance-phase");
+    expect(transitionPhase(state, "spec").phase).toBe("spec");
+  });
+
   it("does not escalate below the iteration cap", () => {
     let state = baseRun();
     const started = startIteration(state);
@@ -135,6 +155,17 @@ describe("state-machine", () => {
     expect(() => transitionPhase(state, "implementation")).toThrow(/invalid phase transition/);
     const spec = transitionPhase(state, "spec");
     expect(() => transitionPhase(spec, "requirement")).toThrow(/invalid phase transition/);
+  });
+
+  it("requires passed merge evidence before complete", () => {
+    let state = { ...baseRun(), phase: "merge" as const };
+    expect(() => transitionPhase(state, "complete")).toThrow(/merge evidence/);
+    state = upsertGate(state, { id: `merge-approval-${"a".repeat(40)}`, type: "human" });
+    state = resolveGate(state, `merge-approval-${"a".repeat(40)}`, {
+      result: "passed",
+      decision: { approved: true, by: "test", at: new Date().toISOString() },
+    });
+    expect(transitionPhase(state, "complete").phase).toBe("complete");
   });
 
   it("binds one PR, permits a new checkpoint SHA, and invalidates review evidence", () => {

@@ -169,8 +169,18 @@ export function transitionPhase(state: RunState, phase: PhaseId): RunState {
       `cannot advance phase while technical gate '${blockingTechnicalGate.id}' is ${blockingTechnicalGate.result}`,
     );
   }
-  if (iterationCapReached(state) && phase !== "complete") {
+  if (iterationCapReached(state) && !iterationCapEscalationResolved(state) && phase !== "complete") {
     throw new Error("cannot advance phase after the automatic iteration cap was reached");
+  }
+  if (
+    phase === "complete" &&
+    !state.gates.some(
+      (gate) =>
+        gate.result === "passed" &&
+        (gate.type === "merge" || gate.id === "merge-approval" || gate.id.startsWith("merge-approval-")),
+    )
+  ) {
+    throw new Error("cannot complete a run without passed merge evidence");
   }
 
   return { ...state, phase, updatedAt: nowIso() };
@@ -247,6 +257,16 @@ export function iterationCapReached(state: RunState): boolean {
   return failed >= state.maxAutomaticIterations;
 }
 
+export function iterationCapEscalationResolved(state: RunState): boolean {
+  return state.gates.some(
+    (gate) =>
+      gate.id === "needs-human-escalation" &&
+      gate.type === "human" &&
+      (gate.result === "passed" ||
+        (gate.result === "failed" && gate.decision?.note?.startsWith("acknowledged:"))),
+  );
+}
+
 export interface NextAction {
   action:
     | "await-human-gate"
@@ -305,7 +325,11 @@ export function computeNextAction(state: RunState): NextAction {
     };
   }
 
-  if (iterationCapReached(state) && state.phase !== "complete") {
+  if (
+    iterationCapReached(state) &&
+    !iterationCapEscalationResolved(state) &&
+    state.phase !== "complete"
+  ) {
     return {
       action: "escalate-iteration-cap",
       detail: `${state.maxAutomaticIterations} automatic iterations failed; escalate to a human gate before continuing.`,
