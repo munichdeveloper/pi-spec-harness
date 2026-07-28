@@ -2,7 +2,7 @@
 id: REQ-001
 type: requirement
 title: Sichere unbeaufsichtigte Harness-Runs
-status: review
+status: approved
 owner: product
 risk: high
 created: 2026-07-28

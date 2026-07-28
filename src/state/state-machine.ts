@@ -192,18 +192,30 @@ export function bindPullRequest(
       `run '${state.runId}' is already bound to PR #${state.pullRequest}; refusing PR #${pullRequest}`,
     );
   }
-  if (state.pullRequestHeadSha !== undefined && state.pullRequestHeadSha !== headSha) {
-    throw new Error(
-      `run '${state.runId}' is already bound to head ${state.pullRequestHeadSha}; use a new verification checkpoint for ${headSha}`,
-    );
-  }
   if (state.pullRequest === pullRequest && state.pullRequestHeadSha === headSha) {
     return state;
   }
+  const headChanged =
+    state.pullRequest === pullRequest &&
+    state.pullRequestHeadSha !== undefined &&
+    state.pullRequestHeadSha !== headSha;
+  const gates = headChanged
+    ? state.gates.map((gate) =>
+        gate.type === "review"
+          ? {
+              ...gate,
+              result: "pending" as const,
+              evidence: undefined,
+              updatedAt: nowIso(),
+            }
+          : gate,
+      )
+    : state.gates;
   return {
     ...state,
     pullRequest,
     pullRequestHeadSha: headSha.toLowerCase(),
+    gates,
     updatedAt: nowIso(),
   };
 }

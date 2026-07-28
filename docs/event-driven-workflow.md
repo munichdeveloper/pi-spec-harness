@@ -1,379 +1,115 @@
-# Event-Driven Harness Workflow
+# Event-driven harness workflow
 
-## Übersicht
+## Ziel
 
-Die pi-spec-harness ist vollständig event-driven ausgelegt. Nach der initialen Spec und Gate-Eröffnung läuft der gesamte Prozess automatisch in GitHub Cloud – von der Spec-Freigabe über die Issue-Erstellung bis zur Copilot-Implementierung.
+Ein Run kann ohne offene Chat-Sitzung fortgesetzt werden. GitHub-Issues
+enthalten den kanonischen Zustand, GitHub-Labels tragen menschliche
+Entscheidungen und eng begrenzte Actions führen genau den betroffenen Run
+weiter.
 
-**Keine Chat-Abhängigkeit, keine manuellen Zwischenschritte – nur Gate-Entscheidungen im Browser.**
+Die Automation darf niemals das „neueste“ Issue, die höchste Spec oder den
+zuletzt geöffneten PR auswählen.
 
----
+## Kanonische Zuordnung
 
-## Deine manuellen Aufgaben
+Ein Slice besitzt:
 
-### 1. Spec schreiben + Run initialisieren
+1. genau ein Tracking-Issue mit `harness:run`,
+2. genau eine Run-ID im State-Block dieses Issues,
+3. eine Spec-ID im Run-State,
+4. höchstens ein Implementierungs-Issue mit `harness:implementation`,
+5. höchstens einen gebundenen PR samt vollständigem Head-SHA.
 
-```bash
-# Spec in docs/30-specifications/ schreiben (z.B. SPEC-015)
-# Mit frontmatter: implementation_assignee: "@github-copilot"
+Das Implementierungs-Issue enthält zusätzlich:
 
-# Run initialisieren
-harness init \
-  --run-id immogent-run-006-bewertungsmodell \
-  --repository munichdeveloper/Immogent \
-  --requirement REQ-001 \
-  --spec SPEC-015
-
-# Spec-Freigabe-Gate öffnen
-harness gate-open \
-  --repository munichdeveloper/Immogent \
-  --run-id immogent-run-006-bewertungsmodell \
-  --gate-id spec-approval \
-  --type human \
-  --title "SPEC-015 freigeben?" \
-  --question "Schwellenwert 70 okay für interessant-Berechnung?"
+```text
+Harness Run: `<run-id>`
+Tracking Issue: #<number>
+Spec: `docs/.../<SPEC-ID>-....md`
 ```
 
-**Ergebnis:** Tracking-Issue wird erstellt, Frage wird als Kommentar gepostet
+## Ereigniskette
 
----
+### Spec-Freigabe
 
-### 2. Spec freigeben (im Browser)
+1. Mensch setzt `harness:gate-approved` oder `harness:gate-rejected` auf dem
+   Tracking-Issue.
+2. `harness-gate-trigger.yml` liest die Run-ID ausschließlich aus genau
+   diesem Issue.
+3. `harness resume` übernimmt die Entscheidung und entfernt transiente
+   Labels.
+4. Bei Freigabe darf `harness advance` genau eine Phase weiterschalten.
+5. Nur ein Gate mit ID `spec-approval` dispatcht die Issue-Erstellung mit
+   expliziter Run-ID und Tracking-Issue-Nummer.
 
-1. Gehe zum Tracking-Issue (Nummer wird in Harness-Output angezeigt)
-2. Setze Label `harness:gate-approved`
+Eine Spec-Datei oder ein Spec-PR wird nicht anhand von Sortierung oder
+Aktualitätsannahmen verändert. Eine solche Mutation benötigt eine eigene,
+eindeutige Bindung.
 
-**Automatisch startet dann:**
+### Implementierungs-Issue
 
-| # | Action | Was passiert |
-|---|--------|--------------|
-| 1 | `harness-gate-trigger.yml` | Triggert `harness resume` |
-| 2 | (resume) | Gate wird als `passed` markiert |
-| 3 | (spec-update) | SPEC-Datei: `status: review` → `status: approved` |
-| 4 | (pr-merge) | PR wird auto-gemergt (mit `--squash --auto`) |
-| 5 | `harness-issue-create-trigger.yml` | Triggert nach Gate-Trigger-Erfolg |
-| 6 | (issue-create) | `harness issue-create` wird aufgerufen |
-| 7 | (phase-transition) | `harness phase --phase implementation` wird aufgerufen |
-| 8 | (auto-labels) | Labels `ai:allowed` + `status:ready` auf Issue setzen |
-| 9 | `copilot-solve-issue.yml` | Triggert auf Label-Event |
-| 10 | (assign) | Assignt `copilot-swe-agent` zur Issue |
+`harness-issue-create-trigger.yml` akzeptiert ausschließlich einen expliziten
+`workflow_dispatch`:
 
-**Ergebnis:** Copilot hat Issue, liest vollständigen Body, fängt an zu implementieren
+- `run_id`
+- `tracking_issue`
 
----
+Der Workflow validiert das Tracking-Issue, liest die Spec-ID aus dem
+Run-State und verlangt genau eine passende Spec-Datei. Das neue Issue erhält
+`harness:implementation`, `ai:allowed` und `status:ready`, aber niemals
+`harness:run`.
 
-### 3. Implementation beobachten
+### PR-Verifikation
 
-Copilot erstellt automatisch:
-- Feature-Branch: `agent/issue-48-bewertungsmodell`
-- Code + Tests
-- Draft-PR
+Ein PR wird über seine Referenz zum Implementierungs-Issue seinem Run
+zugeordnet. Verification wird erst bestanden, wenn:
 
-Wenn PR geöffnet wird:
+- der PR kein Draft ist,
+- der aktuelle Head-SHA im Run-State gebunden wurde,
+- alle sichtbaren PR-Checks abgeschlossen und erfolgreich oder übersprungen
+  sind,
+- kein nicht veralteter, ungelöster Review-Thread existiert.
 
-| # | Action | Was passiert |
-|---|--------|--------------|
-| 1 | `pr-verification-trigger.yml` | Triggert auf PR-Event |
-| 2 | (find-issue) | Findet harness:run Issue via PR-Body-Referenz |
-| 3 | (resolve-gate) | `harness gate-resolve --gate-id verification --result passed` |
-| 4 | (next-action) | Harness öffnet `merge-approval` Human-Gate (risk:medium) |
+Evidence enthält den konkreten PR, Head-SHA und Action-Link. Ein neuer
+Head-SHA setzt Review-Evidence auf `pending` zurück.
 
-**Ergebnis:** Merge-Gate wartet auf deine Entscheidung
+### Merge
 
----
+Nach erfolgreicher Verifikation öffnet der Workflow ein SHA-spezifisches
+Human-Gate. Nach Freigabe darf `harness-gate-trigger.yml` ausschließlich den
+im State gespeicherten PR mergen, wenn dessen aktueller Head noch exakt dem
+gespeicherten SHA entspricht und die erforderlichen Checks grün sind.
 
-### 4. Merge freigeben (im Browser)
+### Fehler und Recovery
 
-1. Gehe zum Tracking-Issue
-2. Setze Label `harness:gate-approved` (für merge-approval)
+Bei fehlgeschlagenen Checks:
 
-**Automatisch:**
+1. PR und Head-SHA stammen ausschließlich aus dem `workflow_run`-Payload.
+2. Der Head wird als
+   `recovery/<run>-pr-<number>-<short-sha>` bewahrt.
+3. `main` bleibt unverändert.
+4. Pro Head-SHA wird genau eine fehlgeschlagene Iteration gebucht.
+5. Unterhalb des Limits darf der Implementierungsagent erneut getriggert
+   werden.
+6. Ab drei Fehlschlägen öffnet sich `needs-human-escalation`; es findet kein
+   vierter automatischer Versuch statt.
 
-| # | Action | Was passiert |
-|---|--------|--------------|
-| 1 | `harness-gate-trigger.yml` | Triggert `harness resume` |
-| 2 | (pr-merge) | PR wird auto-gemergt |
-| 3 | (issue-close) | Tracking-Issue bleibt offen für `complete` |
+## Menschliche Aufgaben
 
----
+Der Mensch muss im Normalfall nur:
 
-### 5. Run abschließen
+- fachliche oder risikorelevante Gates entscheiden,
+- das Merge-Gate bei mittlerem oder hohem Risiko entscheiden,
+- eine Eskalation nach drei Fehlschlägen beurteilen.
 
-```bash
-harness phase \
-  --repository munichdeveloper/Immogent \
-  --run-id immogent-run-006-bewertungsmodell \
-  --phase complete
-```
+Kommentare dienen als Kontext. Formal zählen nur die beiden Gate-Labels.
 
-**Automatisch:**
-- Tracking-Issue wird geschlossen
-- Run ist archiviert
+## Betriebsprüfung
 
----
-
-## Vollständige Automation Map
-
-### Trigger → Action → Aktion
-
-| Trigger | GitHub Action | CLI-Befehl | Details |
-|---------|---------------|-----------|---------|
-| Label `harness:gate-approved` auf Tracking-Issue | `harness-gate-trigger.yml` | `harness resume` | Liest Gate-Entscheidung, wendet sie an |
-| ↓ (Resume erfolgreich) | ↓ | `harness phase spec` | Schiebt State weiter |
-| ↓ (spec-approval Gate passed) | `harness-gate-trigger.yml` | (auto) | Updated SPEC-Datei: status review→approved |
-| ↓ | `harness-gate-trigger.yml` | (auto) | Versucht spec PR zu mergen (`--auto`) |
-| ↓ (harness-gate-trigger endet) | `harness-issue-create-trigger.yml` | (triggert per workflow_run) | Checkt Spec-File, generiert Issue-Body |
-| ↓ | `harness-issue-create-trigger.yml` | `harness issue-create` | Issue #48 wird erstellt |
-| ↓ (issue-create erfolgreich) | `harness-issue-create-trigger.yml` | `harness phase implementation` | Auto-labels, triggert Copilot |
-| Label `ai:allowed` + `status:ready` | `copilot-solve-issue.yml` | (gh issue edit --add-assignee) | Copilot wird assignt |
-| Copilot erstellt PR | `pr-verification-trigger.yml` | (triggert per PR-Event) | Findet harness:run Issue |
-| ↓ (PR erkannt) | `pr-verification-trigger.yml` | `harness gate-resolve verification` | Verification-Gate auto-resolve |
-| ↓ (verification passed) | (Harness State Machine) | (auto) | Öffnet merge-approval Gate |
-| Label `harness:gate-approved` (Merge) | `harness-gate-trigger.yml` | `harness resume` | Gate wird applied |
-| ↓ | `harness-gate-trigger.yml` | (auto) | PR wird gemergt |
-
----
-
-## Beispiel: Vollständiger RUN-006 Flow
-
-### Einmaliges Setup vor Run-Start
-
-```bash
-# 1. SPEC-015 in docs/30-specifications/ schreiben
-# - Status: review
-# - implementation_assignee: "@github-copilot"
-# - Alles dokumentiert
-
-# 2. Repository-Secret setzen (einmalig)
-# gh secret set COPILOT_ASSIGN_PAT --repo munichdeveloper/Immogent --body "<fine-grained-pat>"
-```
-
-### Ausführung
-
-**Tag 1, 10:00 Uhr**
-
-```bash
-harness init \
-  --run-id immogent-run-006-bewertungsmodell \
-  --repository munichdeveloper/Immogent \
-  --requirement REQ-001 \
-  --spec SPEC-015
-
-harness gate-open \
-  --repository munichdeveloper/Immogent \
-  --run-id immogent-run-006-bewertungsmodell \
-  --gate-id spec-approval \
-  --type human \
-  --title "SPEC-015 freigeben?" \
-  --question "Schwellenwert 70 für interessante Angebote okay?" \
-  --context "Spec: docs/30-specifications/SPEC-015-deterministisches-bewertungsmodell.md" \
-  --context "PR: https://github.com/munichdeveloper/Immogent/pull/44"
-```
-
-→ **Tracking-Issue #51 erstellt, Gate öffnet sich**
-
-**Tag 1, 10:15 Uhr**
-
-Du genehmigst im Browser: Label `harness:gate-approved` auf Issue #51
-
-→ **GitHub startet automatisch alles:**
-- `harness-gate-trigger.yml` resumet
-- SPEC-Status: review → approved
-- PR #44 mergt
-- `harness-issue-create-trigger.yml` erstellt Issue #48
-- Labels `ai:allowed` + `status:ready` werden gesetzt
-- `copilot-solve-issue.yml` assignt Copilot
-
-**Tag 1, 10:30 Uhr**
-
-Copilot fängt automatisch an:
-- Branch: `agent/issue-48-bewertungsmodell`
-- Code wird geschrieben
-- Tests werden hinzugefügt
-- PR #50 wird geöffnet
-
-→ **`pr-verification-trigger.yml` triggert automatisch:**
-- Findet Referenz zu Issue #48
-- Ruft `harness gate-resolve verification` auf
-- Merge-Gate öffnet sich
-
-**Tag 1, 15:00 Uhr**
-
-PR ist ready (alle Checks grün), du genehmigst: Label `harness:gate-approved` auf Tracking-Issue #51
-
-→ **Automatisch:**
-- `harness-gate-trigger.yml` mergt PR #50
-- Run ist bereit zum Abschluss
-
-**Tag 1, 15:30 Uhr**
-
-```bash
-harness phase \
-  --repository munichdeveloper/Immogent \
-  --run-id immogent-run-006-bewertungsmodell \
-  --phase complete
-```
-
-→ **Automatisch:**
-- Tracking-Issue #51 wird geschlossen
-- Run ist archiviert
-
----
-
-## Fehlerbehandlung
-
-### Wenn ein Gate/Action fehlschlägt
-
-Jede Action postet einen Kommentar auf dem Tracking-Issue bei Fehler mit:
-- Fehlermeldung
-- Link zum Action-Log
-
-**Du siehst es sofort im Issue**, nicht nur im CLI.
-
-### Wenn du ein Gate ablehnen willst
-
-```bash
-harness gate-open \
-  --repository munichdeveloper/Immogent \
-  --run-id immogent-run-006-bewertungsmodell \
-  --gate-id spec-approval \
-  --type human
-# ... dann Label harness:gate-rejected setzen
-```
-
----
-
-## Konfiguration
-
-### Secrets (einmalig pro Repository)
-
-```bash
-# Für Copilot-Zuweisung (benötigt: Issues Read & Write, dieses Repo only)
-gh secret set COPILOT_ASSIGN_PAT --repo <owner>/<repo> --body "<pat>"
-```
-
-### Spec-Frontmatter
-
-```yaml
----
-id: SPEC-015
-type: software-spec
-title: ...
-status: review              # wird zu approved nach Gate
-implementation_assignee: "@github-copilot"  # Standard
----
-```
-
----
-
-## Labels (Immogent)
-
-| Label | Bedeutung |
-|-------|-----------|
-| `harness:run` | Issue ist Tracking-Issue für einen Run |
-| `harness:gate` | Gate ist offen |
-| `harness:gate-approved` | Gate wurde freigegeben |
-| `harness:gate-rejected` | Gate wurde abgelehnt |
-| `status:needs-human` | Wartet auf Human-Gate-Entscheidung |
-| `ai:allowed` | Issue kann von Copilot bearbeitet werden |
-| `status:ready` | Issue ist ready für Copilot |
-
----
-
-## Troubleshooting
-
-### "Tracking-Issue Title does not match '[Harness Run] <run-id>'"
-
-→ Der Titel des Tracking-Issues ist nicht korrekt formatiert
-→ Sollte automatisch sein, aber wenn manuell: `[Harness Run] immogent-run-006-bewertungsmodell`
-
-### "COPILOT_ASSIGN_PAT secret is not set"
-
-→ Repository-Secret fehlt
-→ Siehe Secrets-Sektion
-
-### "No open harness:run issue found"
-
-→ Kein offenes Tracking-Issue für einen Run
-→ Hast du `harness init` + `harness gate-open` aufgerufen?
-
-### Copilot wird nicht assignt
-
-→ Check: Sind beide Labels `ai:allowed` + `status:ready` gesetzt?
-→ Check: Läuft `copilot-solve-issue.yml` (Action Log)?
-→ Check: Secret `COPILOT_ASSIGN_PAT` richtig konfiguriert?
-
----
-
-## Weitere Ressourcen
-
-- [SKILL.md](../skills/pi-spec-harness/SKILL.md) – Agent-Protokoll
-- [human-gates.md](./human-gates.md) – Gate-Mechanik im Detail
-- [workflow.md](./workflow.md) – State Machine & Phasen
-- [pi-spec-harness README](../README.md) – Harness-Übersicht
-
----
-
-## Appendix: Agent Failure Recovery (RUN-006 Learnings)
-
-### Scenario: Agent Implementation Fails Tests
-
-When Copilot (or another agent) opens a PR with failing tests:
-
-```
-┌─ Workflow Automation ────────────────────────┐
-│                                              │
-│  Check Failure (E2E Test, etc.)              │
-│         ↓                                    │
-│  agent-cherry-pick-implementation.yml        │
-│    ├─ Detect failing draft PR                │
-│    ├─ Extract commits from PR branch         │
-│    ├─ Cherry-pick to main                    │
-│    ├─ Post status comment                    │
-│    └─ PUSH to main ✓ (code preserved)        │
-│         ↓                                    │
-│  agent-fix-failing-tests.yml (parallel)      │
-│    ├─ Post detailed error feedback           │
-│    ├─ Close the draft PR                     │
-│    └─ Re-trigger agent assignment            │
-│         ↓                                    │
-│  copilot-solve-issue.yml                     │
-│    └─ Agent re-assigned with labels          │
-│         ↓                                    │
-│  Agent opens new PR (on fresh foundation)    │
-│    ├─ Retry implementation with fixes        │
-│    ├─ Run tests again                        │
-│    └─ If passes: proceed to merge ✓          │
-│         ↓                                    │
-│  Max 3 automatic retries                     │
-│    └─ If still failing: escalate to human gate
-│                                              │
-└──────────────────────────────────────────────┘
-```
-
-### Key Properties
-
-1. **Code Preservation**: Implementation commits are cherry-picked to main **before** PR closure
-2. **Automatic Retry**: No manual intervention needed (except gate decisions)
-3. **Iteration Tracking**: Each attempt is counted in `state.iterations[]`
-4. **Escalation**: After 3 failed attempts, human gate opens for manual decision
-5. **Audit Trail**: All steps logged in PR comments + Harness state
-
-### Commits Involved
-
-- `agent-cherry-pick-implementation.yml`: Preserve code on failure
-- `agent-fix-failing-tests.yml`: Notify and retry
-- `copilot-solve-issue.yml`: Re-assign agent
-- State Machine: Track iterations and escalate
-
-### Example: RUN-006
-
-| Event | Workflow | Result |
-|-------|----------|--------|
-| PR #50 fehlgeschlagen | agent-cherry-pick-implementation | 2 commits → main ✓ |
-| E2E-Test-Fehler | agent-fix-failing-tests | Feedback gepostet, PR #50 geschlossen |
-| Labels re-set | copilot-solve-issue | Copilot erneut assignet |
-| PR #51 geöffnet | (automatic) | Neue Implementierung |
-| All tests grün | (automatic) | PR #51 gemerged |
-
-**Result:** Zero code loss, zero manual coding, full automation.
+- Action-Run gehört zum erwarteten Tracking-Issue.
+- State nennt die erwartete Run-ID, Spec, Implementierungs-Issue, PR und SHA.
+- CI und Workflow-Vertragstests sind grün.
+- Kein Workflow enthält direkte Pushes nach `main`.
+- Keine Workflow-Auswahl verwendet `tail -1`, `sort -V`, `--limit 1` oder
+  eine Suche nach dem „most recent“ Objekt.
 

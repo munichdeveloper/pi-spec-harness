@@ -2,7 +2,7 @@
 id: SPEC-001
 type: software-spec
 title: Run-sichere Event-Orchestrierung und Recovery
-status: review
+status: approved
 owner: engineering
 risk: high
 requirements:

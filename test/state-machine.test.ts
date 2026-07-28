@@ -137,15 +137,21 @@ describe("state-machine", () => {
     expect(() => transitionPhase(spec, "requirement")).toThrow(/invalid phase transition/);
   });
 
-  it("binds one PR and immutable full head SHA idempotently", () => {
+  it("binds one PR, permits a new checkpoint SHA, and invalidates review evidence", () => {
     const state = baseRun();
     const sha = "a".repeat(40);
-    const bound = bindPullRequest(state, 42, sha);
+    let bound = bindPullRequest(state, 42, sha);
     expect(bound.pullRequest).toBe(42);
     expect(bound.pullRequestHeadSha).toBe(sha);
     expect(bindPullRequest(bound, 42, sha)).toBe(bound);
     expect(() => bindPullRequest(bound, 43, sha)).toThrow(/already bound to PR/);
-    expect(() => bindPullRequest(bound, 42, "b".repeat(40))).toThrow(/already bound to head/);
+
+    bound = upsertGate(bound, { id: "verification", type: "review" });
+    bound = resolveGate(bound, "verification", { result: "passed", evidence: ["ci/old"] });
+    const rebound = bindPullRequest(bound, 42, "b".repeat(40));
+    expect(rebound.pullRequestHeadSha).toBe("b".repeat(40));
+    expect(rebound.gates.find((gate) => gate.id === "verification")?.result).toBe("pending");
+    expect(rebound.gates.find((gate) => gate.id === "verification")?.evidence).toBeUndefined();
     expect(() => bindPullRequest(state, 42, "short")).toThrow(/full 40-character/);
   });
 });

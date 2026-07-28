@@ -42,3 +42,13 @@ Merge --> Run als 'complete' markieren
 
 Iterationsgrenze: `maxAutomaticIterations` (Default 3). Danach zwingt
 `computeNextAction` eine Eskalation als `human`-Gate.
+
+## Zustandsregeln
+
+- `advance` schaltet höchstens eine Phase weiter.
+- Phasen dürfen weder übersprungen noch rückwärts gesetzt werden.
+- Nicht-menschliche Gates mit `pending`, `needs-human` oder `failed`
+  blockieren genauso wie offene Human-Gates.
+- Ein PR wird mit Nummer und vollständigem Head-SHA an den Run gebunden.
+- Ein neuer SHA desselben PR setzt bestehende Review-Evidence zurück.
+- Ein anderer PR kann nicht stillschweigend an denselben Run gebunden werden.

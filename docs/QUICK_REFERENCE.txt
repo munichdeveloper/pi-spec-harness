@@ -89,7 +89,6 @@
 │        ├── harness-issue-create-trigger.yml                               │
 │        ├── copilot-solve-issue.yml                                        │
 │        ├── pr-verification-trigger.yml                                    │
-│        ├── agent-cherry-pick-implementation.yml                           │
 │        └── agent-fix-failing-tests.yml                                    │
 │                                                                             │
 └─────────────────────────────────────────────────────────────────────────────┘
