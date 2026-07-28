@@ -1,0 +1,108 @@
+╔════════════════════════════════════════════════════════════════════════════╗
+║           PI-SPEC-HARNESS QUICK REFERENCE für neuen Agent                  ║
+╚════════════════════════════════════════════════════════════════════════════╝
+
+┌─ SYSTEM VERSTEHEN ─────────────────────────────────────────────────────────┐
+│                                                                             │
+│  [Spec Writer (dich)]  ──init──>  [pi-spec-harness]                       │
+│                                         ↓                                   │
+│                                   [GitHub Issue]  ←─ persistent State     │
+│                                         ↑                                   │
+│                                   [GitHub Labels]                          │
+│                           (gate-approved / gate-rejected)                  │
+│                                         ↓                                   │
+│                           [GitHub Actions Workflows]                       │
+│                      (auto-spec, auto-issue, auto-assign)                 │
+│                                         ↓                                   │
+│                            [Copilot Implementation]                        │
+│                                         ↓                                   │
+│                      [Tests ✅ or ❌ w/ Auto-Recover]                       │
+│                                         ↓                                   │
+│                          [Human Gate: Merge? Y/N]                          │
+│                                         ↓                                   │
+│                              [Auto-Merge to Main]                          │
+│                                         ↓                                   │
+│                              [Run Complete]                                │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─ WICHTIGSTE BEFEHLE ───────────────────────────────────────────────────────┐
+│                                                                             │
+│  Init Run (schreib Spec zuerst!):                                         │
+│  $ npm run harness -- init \                                              │
+│      --run-id immogent-run-007-NAME \                                     │
+│      --repository munichdeveloper/Immogent \                              │
+│      --requirement REQ-001 \                                              │
+│      --spec SPEC-XXX                                                      │
+│                                                                             │
+│  Check Status:                                                             │
+│  $ npm run harness -- status \                                            │
+│      --repository munichdeveloper/Immogent \                              │
+│      --run-id immogent-run-007-NAME                                       │
+│                                                                             │
+│  Open Gate:                                                                │
+│  $ npm run harness -- gate-open \                                         │
+│      --repository munichdeveloper/Immogent \                              │
+│      --run-id immogent-run-007-NAME \                                     │
+│      --gate-id spec-approval \                                            │
+│      --type human \                                                        │
+│      --title "SPEC-XXX freigeben?" \                                      │
+│      --question "Frage an Product Owner?"                                 │
+│                                                                             │
+│  Resume (nach Gate-Label, meist automatisch):                             │
+│  $ npm run harness -- resume \                                            │
+│      --repository munichdeveloper/Immogent \                              │
+│      --run-id immogent-run-007-NAME                                       │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─ DATEI-ORTE ───────────────────────────────────────────────────────────────┐
+│                                                                             │
+│  Harness-Code:                                                             │
+│  /IdeaProjects/pi-spec-harness/                                           │
+│    ├── src/cli.ts                  ← Befehle (init, gate-open, resume)    │
+│    ├── src/state/state-machine.ts  ← Zustandslogik                        │
+│    ├── src/state/issue-store.ts    ← GitHub Issue Backend                 │
+│    ├── src/github/gh.ts            ← GitHub API Wrapper                   │
+│    ├── AGENTS.md                   ← Regeln für Agenten                   │
+│    └── docs/                                                               │
+│        ├── event-driven-workflow.md ← Workflow Erklärung                  │
+│        └── implementation-guide.md  ← ⭐ FALLSTRICKE                       │
+│                                                                             │
+│  Immogent-Code:                                                            │
+│  /tmp/Immogent/                                                            │
+│    ├── docs/30-specifications/     ← Specs (SPEC-015 ist aktuell)         │
+│    ├── src/domain/offer-evaluation.ts  ← Business Logic                   │
+│    ├── src/application/            ← Services                             │
+│    ├── src/infrastructure/          ← Repositories                        │
+│    ├── drizzle/                    ← DB Migrationen                       │
+│    │   ├── 0008_offer-evaluation.sql                                      │
+│    │   └── meta/_journal.json      ← ⚠️ KRITISCH!                         │
+│    ├── src/e2e/                    ← E2E Tests                            │
+│    └── .github/workflows/          ← GitHub Actions                       │
+│        ├── harness-gate-trigger.yml                                       │
+│        ├── harness-issue-create-trigger.yml                               │
+│        ├── copilot-solve-issue.yml                                        │
+│        ├── pr-verification-trigger.yml                                    │
+│        ├── agent-cherry-pick-implementation.yml                           │
+│        └── agent-fix-failing-tests.yml                                    │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─ HÄUFIGE PROBLEME & LÖSUNGEN ──────────────────────────────────────────────┐
+│                                                                             │
+│  ❌ "Migration not found / column does not exist"                          │
+│  → drizzle/meta/_journal.json hat Migration nicht?                        │
+│  ✅ Eintrag mit idx, version, digest hinzufügen                           │
+│                                                                             │
+│  ❌ "Type mismatch: string assigned to Date"                              │
+│  → mapOfferRow() konvertiert nicht explizit                               │
+│  ✅ Nutze: value instanceof Date ? value : new Date(value as string)     │
+│                                                                             │
+│  ❌ "Element not found" in E2E                                            │
+│  → Offer wurde korrekt herausgefiltert (neuer Filter!)                   │
+│  ✅ Nutze ?filter=all oder repariere Test-Daten                          │
+│                                                                             │
+│  ❌ "Copilot not assigned"                                                │
+│  → COPILOT_ASSIGN_PAT Secret fehlt                                       │
+│  ✅ Check Settings → Secrets and variables → A
