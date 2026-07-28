@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   acknowledgeRejectedGate,
+  bindPullRequest,
   computeNextAction,
   finishIteration,
   hasOpenHumanGate,
@@ -8,6 +9,7 @@ import {
   reconcileInit,
   resolveGate,
   startIteration,
+  transitionPhase,
   upsertGate,
 } from "../src/state/state-machine.js";
 
@@ -111,5 +113,39 @@ describe("state-machine", () => {
     let state = baseRun();
     state = { ...state, phase: "complete" };
     expect(computeNextAction(state).action).toBe("run-complete");
+  });
+
+  it("blocks on pending and failed technical gates", () => {
+    let state = baseRun();
+    state = upsertGate(state, { id: "verification", type: "review" });
+    expect(computeNextAction(state).action).toBe("await-technical-gate");
+    expect(() => transitionPhase(state, "spec")).toThrow(/technical gate 'verification' is pending/);
+
+    state = resolveGate(state, "verification", { result: "failed", evidence: ["ci/run/1"] });
+    expect(computeNextAction(state).action).toBe("technical-gate-failed");
+    expect(() => transitionPhase(state, "spec")).toThrow(/technical gate 'verification' is failed/);
+
+    state = resolveGate(state, "verification", { result: "passed", evidence: ["ci/run/2"] });
+    expect(transitionPhase(state, "spec").phase).toBe("spec");
+  });
+
+  it("allows only an idempotent or single-step phase transition", () => {
+    const state = baseRun();
+    expect(transitionPhase(state, "requirement")).toBe(state);
+    expect(() => transitionPhase(state, "implementation")).toThrow(/invalid phase transition/);
+    const spec = transitionPhase(state, "spec");
+    expect(() => transitionPhase(spec, "requirement")).toThrow(/invalid phase transition/);
+  });
+
+  it("binds one PR and immutable full head SHA idempotently", () => {
+    const state = baseRun();
+    const sha = "a".repeat(40);
+    const bound = bindPullRequest(state, 42, sha);
+    expect(bound.pullRequest).toBe(42);
+    expect(bound.pullRequestHeadSha).toBe(sha);
+    expect(bindPullRequest(bound, 42, sha)).toBe(bound);
+    expect(() => bindPullRequest(bound, 43, sha)).toThrow(/already bound to PR/);
+    expect(() => bindPullRequest(bound, 42, "b".repeat(40))).toThrow(/already bound to head/);
+    expect(() => bindPullRequest(state, 42, "short")).toThrow(/full 40-character/);
   });
 });

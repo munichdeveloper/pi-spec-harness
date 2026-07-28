@@ -1,0 +1,59 @@
+name: Harness Gate Trigger
+
+on:
+  issues:
+    types: [labeled]
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: harness-gate-${{ github.event.issue.number }}
+  cancel-in-progress: false
+
+jobs:
+  resume:
+    if: >-
+      contains(github.event.issue.labels.*.name, 'harness:run') &&
+      (github.event.label.name == 'harness:gate-approved' ||
+       github.event.label.name == 'harness:gate-rejected')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20.9"
+          cache: npm
+
+      - run: npm ci
+
+      - name: Resolve the exact run from the labeled tracking issue
+        id: run
+        shell: bash
+        run: |
+          run_id="$(jq -r '.issue.body | capture("## Harness Run: `(?<id>[^`]+)`").id // empty' "$GITHUB_EVENT_PATH")"
+          if [[ -z "$run_id" ]]; then
+            echo "::error::The labeled issue has no canonical Harness Run header."
+            exit 1
+          fi
+          echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
+
+      - name: Apply the label decision and resume the exact run
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          result="$(
+            npm run harness -- resume \
+              --repository "${{ github.repository }}" \
+              --run-id "${{ steps.run.outputs.run_id }}"
+          )"
+          printf '%s\n' "$result"
+          action="$(printf '%s\n' "$result" | sed -n '/^{/,$p' | jq -r '.result.nextAction.action')"
+          if [[ "$action" == "advance-phase" ]]; then
+            npm run harness -- advance \
+              --repository "${{ github.repository }}" \
+              --run-id "${{ steps.run.outputs.run_id }}"
+          fi

@@ -75,6 +75,7 @@ export interface RunState {
   issue?: number; // GitHub issue number once created
   branch?: string;
   pullRequest?: number;
+  pullRequestHeadSha?: string;
   phase: PhaseId;
   createdAt: string;
   updatedAt: string;
