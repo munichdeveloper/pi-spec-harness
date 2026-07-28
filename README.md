@@ -69,7 +69,10 @@ Siehe [`skills/pi-spec-harness/SKILL.md`](skills/pi-spec-harness/SKILL.md) für
 das vollständige Ablaufprotokoll.
 
 Weitere Details: [docs/workflow.md](docs/workflow.md),
-[docs/human-gates.md](docs/human-gates.md).
+[docs/human-gates.md](docs/human-gates.md),
+[docs/event-driven-workflow.md](docs/event-driven-workflow.md) (User-facing),
+[docs/implementation-guide.md](docs/implementation-guide.md) (für KI-Agenten:
+Fallstricke & Checklisten).
 
 ## Lokale Entwicklung
 
