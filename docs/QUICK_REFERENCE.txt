@@ -54,6 +54,11 @@
 │      --repository munichdeveloper/Immogent \                              │
 │      --run-id immogent-run-007-NAME                                       │
 │                                                                             │
+│  Genau eine erlaubte Phase weiterschalten:                                │
+│  $ npm run harness -- advance \                                           │
+│      --repository munichdeveloper/Immogent \                              │
+│      --run-id immogent-run-007-NAME                                       │
+│                                                                             │
 └─────────────────────────────────────────────────────────────────────────────┘
 
 ┌─ DATEI-ORTE ───────────────────────────────────────────────────────────────┐
@@ -84,7 +89,6 @@
 │        ├── harness-issue-create-trigger.yml                               │
 │        ├── copilot-solve-issue.yml                                        │
 │        ├── pr-verification-trigger.yml                                    │
-│        ├── agent-cherry-pick-implementation.yml                           │
 │        └── agent-fix-failing-tests.yml                                    │
 │                                                                             │
 └─────────────────────────────────────────────────────────────────────────────┘
@@ -105,4 +109,23 @@
 │                                                                             │
 │  ❌ "Copilot not assigned"                                                │
 │  → COPILOT_ASSIGN_PAT Secret fehlt                                       │
-│  ✅ Check Settings → Secrets and variables → A
+│  ✅ Check Settings → Secrets and variables → Actions                     │
+│                                                                             │
+│  ❌ Gate-Label gesetzt, aber keine Reaktion                               │
+│  → Prüfe, ob harness-gate-trigger.yml im Zielrepository vorhanden ist    │
+│  ✅ Action muss die Run-ID aus genau diesem Tracking-Issue lesen          │
+│                                                                             │
+│  ❌ Mehrere parallele Runs werden verwechselt                             │
+│  → Nie „latest issue/spec/PR“ auswählen                                   │
+│  ✅ Run-ID, Issue, PR und Head-SHA aus dem kanonischen State verwenden    │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+SICHERHEITSREGELN
+
+- Genau ein Tracking-Issue mit Label harness:run pro Run.
+- Implementation-Issues tragen harness:implementation, nie harness:run.
+- Technische Gates blockieren bei pending, needs-human und failed.
+- Fehlerhafte Implementierungen nur auf recovery/* sichern; nie nach main pushen.
+- Medium-/High-Risk-Merges benötigen ein Human-Gate.
+- Nach drei fehlgeschlagenen automatischen Iterationen stoppen und eskalieren.

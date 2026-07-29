@@ -41,6 +41,9 @@ Lesezugriff auf das Issue sieht denselben Stand.
    transienten Labels** (`harness:gate-open`, `status:needs-human`,
    `harness:gate-approved`/`-rejected`). Das Issue bleibt offen -- es wird
    nur geschlossen, wenn der gesamte Run `complete` erreicht.
+   Der Befehl `harness advance` darf anschließend genau eine Phase
+   weiterschalten, sofern `computeNextAction` das erlaubt. Er überspringt
+   weder ein Human- noch ein technisches Gate.
 7. Beim nächsten Human-Gate desselben Runs wiederholt sich Schritt 3 auf
    **demselben** Issue. Ein Run erzeugt über seine gesamte Lebensdauer also
    genau ein Issue, nicht eines pro Gate.
@@ -50,11 +53,12 @@ Lesezugriff auf das Issue sieht denselben Stand.
 Weil Zustand und Entscheidung vollständig im Issue leben, kann eine GitHub
 Action im Zielrepository (getriggert auf `issues: [labeled]`, gefiltert auf
 `harness:gate-approved`/`-rejected`) `harness resume --repository <repo>
---run-id <id>` aufrufen, ohne dass eine Chat-Sitzung offen sein muss. Da
-`pi-spec-harness` public ist, braucht die Action dafür kein Cross-Repo-Token
--- sie checkt den Code einfach aus. Siehe
-[Immogent `.github/workflows/harness-gate-trigger.yml`](https://github.com/munichdeveloper/Immogent/blob/main/.github/workflows/harness-gate-trigger.yml)
-für ein Beispiel.
+--run-id <id>` und danach gegebenenfalls `harness advance` aufrufen, ohne
+dass eine Chat-Sitzung offen sein muss. Das Harness-Repository enthält dafür
+selbst `.github/workflows/harness-gate-trigger.yml`. Zielrepositories sollen
+denselben engen Vertrag übernehmen: ausschließlich das gerade gelabelte
+Tracking-Issue auswerten, niemals den „neuesten“ Run suchen und pro
+Label-Ereignis höchstens eine Phase weiterschalten.
 
 ## Warum Labels statt Kommentartext?
 
@@ -81,5 +85,5 @@ npm run harness -- gate-open \
 Das legt (find-or-create) das Tracking-Issue `[Harness Run] immogent-slice-001`
 an bzw. verwendet es weiter und hängt Frage/Kontext als Kommentar an.
 
-Ergebnis: ein neues Issue im Immogent-Repo, das genau diese eine Frage stellt
-und bis zur Label-Entscheidung offen bleibt.
+Ergebnis: Das bereits vorhandene Tracking-Issue des Runs zeigt genau diese
+Frage und bleibt bis zum Abschluss des gesamten Runs offen.

@@ -14,7 +14,10 @@ import { ensureRunIssue, findRunIssue } from "./state/issue-store.js";
 import type { StateStore } from "./state/state-store.js";
 import { FileStateStore } from "./state/store.js";
 import {
+  PHASE_ORDER,
   computeNextAction,
+  bindPullRequest,
+  findGate,
   finishIteration,
   initRunState,
   reconcileInit,
@@ -122,6 +125,33 @@ async function cmdResume(argv: StoreArgs): Promise<void> {
   printResult("resume", { state, nextAction: next }, next.detail);
 }
 
+async function cmdAdvance(argv: StoreArgs): Promise<void> {
+  const store = await resolveExistingStore(argv);
+  const state = await store.load();
+  const next = computeNextAction(state);
+  if (next.action !== "advance-phase") {
+    throw new Error(`run '${state.runId}' cannot advance: ${next.detail}`);
+  }
+
+  const currentIndex = PHASE_ORDER.indexOf(state.phase);
+  const nextPhase = PHASE_ORDER[currentIndex + 1];
+  if (!nextPhase) {
+    throw new Error(`run '${state.runId}' has no phase after '${state.phase}'`);
+  }
+
+  const advanced = transitionPhase(state, nextPhase);
+  await store.save(advanced);
+  if (nextPhase === "complete" && store.issueRef) {
+    await github.closeIssue(
+      store.issueRef.repository,
+      store.issueRef.number,
+      `Harness: Run \`${advanced.runId}\` ist abgeschlossen (Phase \`complete\`).`,
+    );
+  }
+  const following = computeNextAction(advanced);
+  printResult("advance", { state: advanced, nextAction: following }, following.detail);
+}
+
 async function cmdGateOpen(
   argv: StoreArgs & {
     gateId: string;
@@ -159,6 +189,12 @@ async function cmdGateResolve(
 ): Promise<void> {
   const store = await resolveExistingStore(argv);
   let state = await store.load();
+  const gate = findGate(state, argv.gateId);
+  if (gate?.type === "human") {
+    throw new Error(
+      `human gate '${argv.gateId}' can only be resolved by a decision label and harness resume`,
+    );
+  }
   state = resolveGate(state, argv.gateId, { result: argv.result, evidence: argv.evidence });
   await store.save(state);
   const next = computeNextAction(state);
@@ -191,6 +227,17 @@ async function cmdPhase(argv: StoreArgs & { phase: PhaseId }): Promise<void> {
 
   const next = computeNextAction(state);
   printResult("phase", { state, nextAction: next }, next.detail);
+}
+
+async function cmdPrBind(
+  argv: StoreArgs & { pullRequest: number; headSha: string },
+): Promise<void> {
+  const store = await resolveExistingStore(argv);
+  let state = await store.load();
+  state = bindPullRequest(state, argv.pullRequest, argv.headSha);
+  await store.save(state);
+  const next = computeNextAction(state);
+  printResult("pr-bind", { state, nextAction: next }, next.detail);
 }
 
 async function cmdGateAcknowledge(argv: StoreArgs & { gateId: string; note: string }): Promise<void> {
@@ -249,7 +296,7 @@ async function cmdIssueCreate(
   if (assignee === "@github-copilot") {
     bodyWithNote = [
       `_Intended for: ${assignee}_\n`,
-      argv.body,
+      body,
     ].join("\n");
   }
 
@@ -268,6 +315,13 @@ async function cmdIssueCreate(
   const gateId = "issue-ready";
   state = upsertGate(state, { id: gateId, type: "issue", question: `Implementation issue ${issueRef.number} created and assignee set to ${assignee}` });
   state.issue = issueRef.number;
+  const labels = new Set(argv.labels ?? []);
+  if (labels.has("status:ready") && labels.has("ai:allowed")) {
+    state = resolveGate(state, gateId, {
+      result: "passed",
+      evidence: [issueRef.url],
+    });
+  }
   await store.save(state);
 
   const next = computeNextAction(state);
@@ -299,6 +353,22 @@ async function cmdIterationFinish(
 
 await yargs(hideBin(process.argv))
   .scriptName("harness")
+  .command(
+    "pr-bind",
+    "Bind exactly one pull request and immutable head SHA to the run",
+    (y) =>
+      storeOptions(y)
+        .option("pull-request", { type: "number", demandOption: true })
+        .option("head-sha", { type: "string", demandOption: true }),
+    async (argv) =>
+      cmdPrBind({
+        state: argv.state,
+        repository: argv.repository,
+        runId: argv.runId,
+        pullRequest: argv.pullRequest,
+        headSha: argv.headSha,
+      }),
+  )
   .command(
     "init",
     "Initialize (or idempotently reconcile) a run. Uses the file backend if --state is given, otherwise the GitHub-issue backend (--repository + --run-id create/find the tracking issue).",
@@ -334,6 +404,12 @@ await yargs(hideBin(process.argv))
     "Recompute next action; poll any open human-gate issue for a decision",
     (y) => storeOptions(y),
     async (argv) => cmdResume(argv),
+  )
+  .command(
+    "advance",
+    "Advance exactly one phase when all current gates are resolved",
+    (y) => storeOptions(y),
+    async (argv) => cmdAdvance(argv),
   )
   .command(
     "gate-open",

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   acknowledgeRejectedGate,
+  bindPullRequest,
   computeNextAction,
   finishIteration,
   hasOpenHumanGate,
@@ -8,6 +9,7 @@ import {
   reconcileInit,
   resolveGate,
   startIteration,
+  transitionPhase,
   upsertGate,
 } from "../src/state/state-machine.js";
 
@@ -100,6 +102,26 @@ describe("state-machine", () => {
     expect(computeNextAction(state).action).toBe("escalate-iteration-cap");
   });
 
+  it("continues after a human resolves the automatic iteration-cap escalation", () => {
+    let state = baseRun();
+    for (let i = 0; i < state.maxAutomaticIterations; i++) {
+      const started = startIteration(state);
+      state = finishIteration(started.state, started.iteration.index, "failed", ["still broken"]);
+    }
+    state = upsertGate(state, {
+      id: "needs-human-escalation",
+      type: "human",
+      question: "Continue manually?",
+    });
+    state = resolveGate(state, "needs-human-escalation", {
+      result: "passed",
+      decision: { approved: true, by: "test", at: new Date().toISOString() },
+    });
+
+    expect(computeNextAction(state).action).toBe("advance-phase");
+    expect(transitionPhase(state, "spec").phase).toBe("spec");
+  });
+
   it("does not escalate below the iteration cap", () => {
     let state = baseRun();
     const started = startIteration(state);
@@ -111,5 +133,57 @@ describe("state-machine", () => {
     let state = baseRun();
     state = { ...state, phase: "complete" };
     expect(computeNextAction(state).action).toBe("run-complete");
+  });
+
+  it("blocks on pending and failed technical gates", () => {
+    let state = baseRun();
+    state = upsertGate(state, { id: "verification", type: "review" });
+    expect(computeNextAction(state).action).toBe("await-technical-gate");
+    expect(() => transitionPhase(state, "spec")).toThrow(/technical gate 'verification' is pending/);
+
+    state = resolveGate(state, "verification", { result: "failed", evidence: ["ci/run/1"] });
+    expect(computeNextAction(state).action).toBe("technical-gate-failed");
+    expect(() => transitionPhase(state, "spec")).toThrow(/technical gate 'verification' is failed/);
+
+    state = resolveGate(state, "verification", { result: "passed", evidence: ["ci/run/2"] });
+    expect(transitionPhase(state, "spec").phase).toBe("spec");
+  });
+
+  it("allows only an idempotent or single-step phase transition", () => {
+    const state = baseRun();
+    expect(transitionPhase(state, "requirement")).toBe(state);
+    expect(() => transitionPhase(state, "implementation")).toThrow(/invalid phase transition/);
+    const spec = transitionPhase(state, "spec");
+    expect(() => transitionPhase(spec, "requirement")).toThrow(/invalid phase transition/);
+  });
+
+  it("requires passed merge evidence before complete", () => {
+    let state = { ...baseRun(), phase: "merge" as const };
+    expect(() => transitionPhase(state, "complete")).toThrow(/merge evidence/);
+    state = upsertGate(state, { id: `merge-approval-${"a".repeat(40)}`, type: "human" });
+    state = resolveGate(state, `merge-approval-${"a".repeat(40)}`, {
+      result: "passed",
+      decision: { approved: true, by: "test", at: new Date().toISOString() },
+    });
+    expect(transitionPhase(state, "complete").phase).toBe("complete");
+  });
+
+  it("binds one PR, permits a new checkpoint SHA, and invalidates review evidence", () => {
+    const state = baseRun();
+    const sha = "a".repeat(40);
+    let bound = bindPullRequest(state, 42, sha);
+    expect(bound.pullRequest).toBe(42);
+    expect(bound.pullRequestHeadSha).toBe(sha);
+    expect(bindPullRequest(bound, 42, sha)).toBe(bound);
+    expect(bindPullRequest(bound, 42, sha.toUpperCase())).toBe(bound);
+    expect(() => bindPullRequest(bound, 43, sha)).toThrow(/already bound to PR/);
+
+    bound = upsertGate(bound, { id: "verification", type: "review" });
+    bound = resolveGate(bound, "verification", { result: "passed", evidence: ["ci/old"] });
+    const rebound = bindPullRequest(bound, 42, "b".repeat(40));
+    expect(rebound.pullRequestHeadSha).toBe("b".repeat(40));
+    expect(rebound.gates.find((gate) => gate.id === "verification")?.result).toBe("pending");
+    expect(rebound.gates.find((gate) => gate.id === "verification")?.evidence).toBeUndefined();
+    expect(() => bindPullRequest(state, 42, "short")).toThrow(/full 40-character/);
   });
 });

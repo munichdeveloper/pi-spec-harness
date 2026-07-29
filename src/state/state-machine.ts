@@ -106,6 +106,14 @@ export function findGate(state: RunState, gateId: string): GateRecord | undefine
   return state.gates.find((g) => g.id === gateId);
 }
 
+export function findBlockingTechnicalGate(state: RunState): GateRecord | undefined {
+  return state.gates.find(
+    (gate) =>
+      gate.type !== "human" &&
+      (gate.result === "pending" || gate.result === "needs-human" || gate.result === "failed"),
+  );
+}
+
 /**
  * A human gate is "open" (still blocking) only while it has not been
  * resolved yet, i.e. result is "pending" or "needs-human". Once a human has
@@ -137,7 +145,90 @@ export function acknowledgeRejectedGate(state: RunState, gateId: string, note: s
 }
 
 export function transitionPhase(state: RunState, phase: PhaseId): RunState {
+  if (phase === state.phase) return state;
+
+  const currentIndex = PHASE_ORDER.indexOf(state.phase);
+  const requestedIndex = PHASE_ORDER.indexOf(phase);
+  if (requestedIndex !== currentIndex + 1) {
+    throw new Error(
+      `invalid phase transition '${state.phase}' -> '${phase}'; only the next phase '${PHASE_ORDER[currentIndex + 1] ?? "complete"}' is allowed`,
+    );
+  }
+
+  const openHumanGate = hasOpenHumanGate(state);
+  if (openHumanGate) {
+    throw new Error(`cannot advance phase while human gate '${openHumanGate.id}' is open`);
+  }
+  const rejectedHumanGate = findUnacknowledgedRejectedGate(state);
+  if (rejectedHumanGate) {
+    throw new Error(`cannot advance phase while human gate '${rejectedHumanGate.id}' is rejected`);
+  }
+  const blockingTechnicalGate = findBlockingTechnicalGate(state);
+  if (blockingTechnicalGate) {
+    throw new Error(
+      `cannot advance phase while technical gate '${blockingTechnicalGate.id}' is ${blockingTechnicalGate.result}`,
+    );
+  }
+  if (iterationCapReached(state) && !iterationCapEscalationResolved(state) && phase !== "complete") {
+    throw new Error("cannot advance phase after the automatic iteration cap was reached");
+  }
+  if (
+    phase === "complete" &&
+    !state.gates.some(
+      (gate) =>
+        gate.result === "passed" &&
+        (gate.type === "merge" || gate.id === "merge-approval" || gate.id.startsWith("merge-approval-")),
+    )
+  ) {
+    throw new Error("cannot complete a run without passed merge evidence");
+  }
+
   return { ...state, phase, updatedAt: nowIso() };
+}
+
+export function bindPullRequest(
+  state: RunState,
+  pullRequest: number,
+  headSha: string,
+): RunState {
+  if (!Number.isInteger(pullRequest) || pullRequest <= 0) {
+    throw new Error("pull request number must be a positive integer");
+  }
+  if (!/^[0-9a-f]{40}$/i.test(headSha)) {
+    throw new Error("pull request head SHA must be a full 40-character Git SHA");
+  }
+  const normalizedHeadSha = headSha.toLowerCase();
+  if (state.pullRequest !== undefined && state.pullRequest !== pullRequest) {
+    throw new Error(
+      `run '${state.runId}' is already bound to PR #${state.pullRequest}; refusing PR #${pullRequest}`,
+    );
+  }
+  if (state.pullRequest === pullRequest && state.pullRequestHeadSha === normalizedHeadSha) {
+    return state;
+  }
+  const headChanged =
+    state.pullRequest === pullRequest &&
+    state.pullRequestHeadSha !== undefined &&
+    state.pullRequestHeadSha !== normalizedHeadSha;
+  const gates = headChanged
+    ? state.gates.map((gate) =>
+        gate.type === "review"
+          ? {
+              ...gate,
+              result: "pending" as const,
+              evidence: undefined,
+              updatedAt: nowIso(),
+            }
+          : gate,
+      )
+    : state.gates;
+  return {
+    ...state,
+    pullRequest,
+    pullRequestHeadSha: normalizedHeadSha,
+    gates,
+    updatedAt: nowIso(),
+  };
 }
 
 export function startIteration(state: RunState): { state: RunState; iteration: IterationRecord } {
@@ -167,9 +258,21 @@ export function iterationCapReached(state: RunState): boolean {
   return failed >= state.maxAutomaticIterations;
 }
 
+export function iterationCapEscalationResolved(state: RunState): boolean {
+  return state.gates.some(
+    (gate) =>
+      gate.id === "needs-human-escalation" &&
+      gate.type === "human" &&
+      (gate.result === "passed" ||
+        (gate.result === "failed" && gate.decision?.note?.startsWith("acknowledged:"))),
+  );
+}
+
 export interface NextAction {
   action:
     | "await-human-gate"
+    | "await-technical-gate"
+    | "technical-gate-failed"
     | "human-gate-rejected"
     | "advance-phase"
     | "escalate-iteration-cap"
@@ -207,7 +310,27 @@ export function computeNextAction(state: RunState): NextAction {
     };
   }
 
-  if (iterationCapReached(state) && state.phase !== "complete") {
+  const blockingTechnicalGate = findBlockingTechnicalGate(state);
+  if (blockingTechnicalGate) {
+    if (blockingTechnicalGate.result === "failed") {
+      return {
+        action: "technical-gate-failed",
+        detail: `Technical gate '${blockingTechnicalGate.id}' failed; fix the finding and resolve the same gate with new evidence before advancing.`,
+        gate: blockingTechnicalGate,
+      };
+    }
+    return {
+      action: "await-technical-gate",
+      detail: `Technical gate '${blockingTechnicalGate.id}' is ${blockingTechnicalGate.result}; evidence is required before advancing.`,
+      gate: blockingTechnicalGate,
+    };
+  }
+
+  if (
+    iterationCapReached(state) &&
+    !iterationCapEscalationResolved(state) &&
+    state.phase !== "complete"
+  ) {
     return {
       action: "escalate-iteration-cap",
       detail: `${state.maxAutomaticIterations} automatic iterations failed; escalate to a human gate before continuing.`,

@@ -68,14 +68,19 @@ Wichtige Befehle:
 - `resume` -- nächste Aktion neu berechnen; pollt automatisch ein offenes
   Human-Gate-Issue auf eine Entscheidung.
 - `gate-open --type <spec|issue|runtime|review|human|merge>` -- Gate
-  registrieren; bei `human` zusätzlich GitHub-Issue anlegen.
+  registrieren; bei `human` das persistente Tracking-Issue labeln und
+  kommentieren. Es wird kein zusätzliches Gate-Issue angelegt.
 - `gate-resolve` -- nicht-menschliche Gates (z. B. `spec`, `runtime`, `merge`)
   manuell mit Ergebnis + Evidence auflösen, nachdem du die Prüfung selbst
   durchgeführt hast (Tests, CI-Status, Review-Threads).
 - `issue-create` -- Implementation-Issue erstellen, automatisch assignen basierend
   auf der SPEC's `implementation_assignee`-Feld (Standard: `@github-copilot`).
   Öffnet automatisch das `issue-ready`-Gate. Mit `--assignee <username>` override.
-- `phase` -- Phase explizit setzen (`requirement` bis `complete`).
+- `advance` -- genau eine Phase weiterschalten, sofern kein Gate blockiert.
+- `phase` -- Zielphase explizit anfordern; ebenfalls nur ein monotoner
+  Einzelschritt und ohne blockierendes Gate zulässig.
+- `pr-bind` -- genau einen PR und dessen vollständigen Head-SHA an den Run
+  binden; ein neuer SHA invalidiert Review-Evidence.
 - `iteration-start` / `iteration-finish` -- automatische
   Korrekturiterationen zählen; nach `maxAutomaticIterations` (Default 3)
   fehlgeschlagenen Iterationen erzwingt `computeNextAction` eine Eskalation.
@@ -153,28 +158,27 @@ When an agent (e.g., GitHub Copilot) fails to fix failing tests, the system:
 When an agent (e.g., GitHub Copilot) fails during implementation:
 
 ### Automatic Code Preservation
-1. **Cherry-Pick Implementation** (`agent-cherry-pick-implementation.yml`):
-   - Triggers on check failure (before PR closure)
-   - Extracts all commits from the failing draft PR
-   - Cherry-picks them to main (with conflict detection)
-   - Posts status comment on PR
-   - Code is **preserved in main** even if PR fails
+1. **Recovery branch** (`agent-fix-failing-tests.yml`):
+   - resolves the exact failed PR from the workflow event,
+   - stores its exact head as
+     `recovery/<run>-pr-<number>-<short-sha>`,
+   - never checks out or pushes `main`.
 
 2. **Notification & Retry** (`agent-fix-failing-tests.yml`):
-   - Posts detailed feedback with failure analysis
-   - Closes the draft PR (now safe, code is in main)
-   - Re-triggers agent assignment
-   - Agent opens a **new draft PR** based on previous work in main
+   - records `iteration-start` and `iteration-finish`,
+   - posts exact PR, check and recovery evidence,
+   - closes and retriggers only below the iteration cap,
+   - opens `needs-human-escalation` after three failed attempts.
 
 ### Result
 - ✅ Code is never lost on PR failures
-- ✅ Agent retries are on clean foundation (main + previous work)
-- ✅ Full audit trail in PR comments and main commits
+- ✅ Agent retries start from the repository's unchanged default branch
+- ✅ Full audit trail in Run-State, PR comments and Recovery-Branches
 
 **Example:** RUN-006 Iteration 1 fehlgeschlagen
 ```
-PR #50 fehlgeschlagen → cherry-picked to main ✓
-PR #50 geschlossen → Copilot re-triggert
-PR #51 geöffnet → basierend auf vorherigem Code in main
+PR #50 fehlgeschlagen → recovery/run-006-pr-50-<sha> erstellt
+Iteration gebucht, PR #50 geschlossen → Copilot re-triggert
+PR #51 geöffnet → neuer Versuch, Recovery bleibt nachvollziehbar
 PR #51 alle Tests grün → merged
 ```

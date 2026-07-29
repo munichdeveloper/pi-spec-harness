@@ -4,6 +4,20 @@ Dieses Dokument richtet sich an KI-Agenten (z.B. Copilot), die GitHub Issues imp
 
 ---
 
+## Harness-Metadaten nicht verändern
+
+- Das Issue mit `harness:run` ist ausschließlich das persistente
+  Tracking-Issue.
+- Das Arbeits-Issue trägt `harness:implementation` und nennt Run-ID,
+  Tracking-Issue und Spec explizit.
+- Der PR muss das Implementierungs-Issue verlinken.
+- Ein fehlgeschlagener PR wird auf `recovery/*` bewahrt. Niemals fehlerhafte
+  Commits direkt nach `main` pushen oder cherry-picken.
+- Jede automatische Korrektur zählt als Iteration; nach drei Fehlschlägen
+  wird gestoppt und ein Human-Gate geöffnet.
+
+---
+
 ## 🚨 Häufige Fallstricke (Lessons Learned aus RUN-006)
 
 ### 1. **Datenbank-Migrationen müssen überall synchron sein**
