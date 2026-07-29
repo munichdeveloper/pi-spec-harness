@@ -175,6 +175,7 @@ describe("state-machine", () => {
     expect(bound.pullRequest).toBe(42);
     expect(bound.pullRequestHeadSha).toBe(sha);
     expect(bindPullRequest(bound, 42, sha)).toBe(bound);
+    expect(bindPullRequest(bound, 42, sha.toUpperCase())).toBe(bound);
     expect(() => bindPullRequest(bound, 43, sha)).toThrow(/already bound to PR/);
 
     bound = upsertGate(bound, { id: "verification", type: "review" });

@@ -197,18 +197,19 @@ export function bindPullRequest(
   if (!/^[0-9a-f]{40}$/i.test(headSha)) {
     throw new Error("pull request head SHA must be a full 40-character Git SHA");
   }
+  const normalizedHeadSha = headSha.toLowerCase();
   if (state.pullRequest !== undefined && state.pullRequest !== pullRequest) {
     throw new Error(
       `run '${state.runId}' is already bound to PR #${state.pullRequest}; refusing PR #${pullRequest}`,
     );
   }
-  if (state.pullRequest === pullRequest && state.pullRequestHeadSha === headSha) {
+  if (state.pullRequest === pullRequest && state.pullRequestHeadSha === normalizedHeadSha) {
     return state;
   }
   const headChanged =
     state.pullRequest === pullRequest &&
     state.pullRequestHeadSha !== undefined &&
-    state.pullRequestHeadSha !== headSha;
+    state.pullRequestHeadSha !== normalizedHeadSha;
   const gates = headChanged
     ? state.gates.map((gate) =>
         gate.type === "review"
@@ -224,7 +225,7 @@ export function bindPullRequest(
   return {
     ...state,
     pullRequest,
-    pullRequestHeadSha: headSha.toLowerCase(),
+    pullRequestHeadSha: normalizedHeadSha,
     gates,
     updatedAt: nowIso(),
   };

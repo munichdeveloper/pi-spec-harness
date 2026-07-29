@@ -33,7 +33,7 @@ jobs:
         id: run
         shell: bash
         run: |
-          run_id="$(jq -r '.issue.body | capture("## Harness Run: `(?<id>[^`]+)`").id // empty' "$GITHUB_EVENT_PATH")"
+          run_id="$(jq -r '.issue.body | (try capture("## Harness Run: `(?<id>[^`]+)`") catch {}) | .id // empty' "$GITHUB_EVENT_PATH")"
           if [[ -z "$run_id" ]]; then
             echo "::error::The labeled issue has no canonical Harness Run header."
             exit 1
