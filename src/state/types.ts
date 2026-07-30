@@ -37,14 +37,33 @@ export interface HumanGateIssueRef {
   url: string;
 }
 
+/**
+ * Structured decision context stored on a human gate. Rendered in the
+ * tracking-issue body so a Product Owner can make an informed decision.
+ */
+export interface GateDecisionContext {
+  scope?: string;
+  criteria?: string[];
+  risks?: string[];
+  nonGoals?: string[];
+  followUpAction?: string;
+}
+
 export interface GateRecord {
   id: string; // e.g. "spec-approval", "merge-slice-1"
   type: GateType;
   result: GateResult;
   createdAt: string; // ISO timestamp
   updatedAt: string; // ISO timestamp
+  /**
+   * ISO timestamp recorded when the gate was published and became decidable.
+   * Label-timeline events before this time are ignored (TAC-04/TAC-05).
+   */
+  openedAt?: string;
   /** Free-form question/context shown to the human, required for type "human". */
   question?: string;
+  /** Structured decision context rendered in the tracking-issue body (TAC-01/TAC-02). */
+  context?: GateDecisionContext;
   /** Present once a human gate issue has been opened. */
   issue?: HumanGateIssueRef;
   /** Evidence supporting a passed/failed result (URLs, file paths, check run ids). */

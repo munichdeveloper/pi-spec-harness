@@ -4,13 +4,15 @@ import yargs, { type Argv } from "yargs";
 import { hideBin } from "yargs/helpers";
 import {
   acknowledgeRejectedHumanGate,
-  applyGateDecision,
   checkHumanGateIssue,
+  computeGateDecision,
   openHumanGateIssue,
+  postGateDecision,
 } from "./gates/human-gate.js";
+import { GATE_LABEL } from "./gates/human-gate.js";
 import { github } from "./github/gh.js";
 import { getSpecAssignee } from "./spec/spec-parser.js";
-import { ensureRunIssue, findRunIssue } from "./state/issue-store.js";
+import { IssueStateStore, RUN_ISSUE_LABEL, ensureRunIssue, findRunIssue, parseStateFromBody } from "./state/issue-store.js";
 import type { StateStore } from "./state/state-store.js";
 import { FileStateStore } from "./state/store.js";
 import {
@@ -114,8 +116,12 @@ async function cmdResume(argv: StoreArgs): Promise<void> {
   if (next.action === "await-human-gate" && next.gate?.issue) {
     const decision = await checkHumanGateIssue(state, next.gate.id);
     if (decision.resolved) {
-      state = await applyGateDecision(state, next.gate.id, decision);
-      await store.save(state);
+      // TAC-06: persist the decision state BEFORE running comment/label cleanup.
+      const decided = computeGateDecision(state, next.gate.id, decision);
+      await store.save(decided);
+      // TAC-07: cleanup is idempotent and can be retried if it fails.
+      await postGateDecision(decided, next.gate.id, decision);
+      state = decided;
       const updatedNext = computeNextAction(state);
       printResult("resume", { state, nextAction: updatedNext }, updatedNext.detail);
       return;
@@ -300,22 +306,48 @@ async function cmdIssueCreate(
     ].join("\n");
   }
 
-  const issueRef = await github.createIssue(argv.repository || "", {
+  const repository = argv.repository || "";
+  const issueRef = await github.createIssue(repository, {
     title: argv.title,
     body: bodyWithNote,
     labels: argv.labels,
   });
 
-  // Assign it (skip for @github-copilot, which GitHub doesn't support as a real assignee)
-  if (assignee && assignee !== "@github-copilot") {
-    await github.addAssignees(argv.repository || "", issueRef.number, [assignee]);
+  // Attempt assignee: for @github-copilot try the real account name; skip gracefully on failure.
+  let assigneeVerified = false;
+  const actualAssignee = assignee === "@github-copilot" ? "github-copilot[bot]" : assignee;
+  if (assignee) {
+    try {
+      await github.addAssignees(repository, issueRef.number, [actualAssignee]);
+      assigneeVerified = true;
+    } catch {
+      // Non-fatal: Copilot or assignee may not be available in this repository.
+      assigneeVerified = false;
+    }
+  }
+
+  // TAC-12: verify labels were actually applied by reading the issue back.
+  const requestedLabels = argv.labels ?? [];
+  let labelsVerified = false;
+  if (requestedLabels.length > 0) {
+    const created = await github.viewIssue(repository, issueRef.number);
+    const actualLabels = new Set(created.labels.map((l) => l.name));
+    labelsVerified = requestedLabels.every((l) => actualLabels.has(l));
+    if (!labelsVerified) {
+      const missing = requestedLabels.filter((l) => !actualLabels.has(l));
+      throw new Error(
+        `issue-create verification failed: labels not applied on #${issueRef.number}: ${missing.join(", ")}`,
+      );
+    }
+  } else {
+    labelsVerified = true;
   }
 
   // Open the issue-ready gate and store issue number for later phases
   const gateId = "issue-ready";
   state = upsertGate(state, { id: gateId, type: "issue", question: `Implementation issue ${issueRef.number} created and assignee set to ${assignee}` });
   state.issue = issueRef.number;
-  const labels = new Set(argv.labels ?? []);
+  const labels = new Set(requestedLabels);
   if (labels.has("status:ready") && labels.has("ai:allowed")) {
     state = resolveGate(state, gateId, {
       result: "passed",
@@ -327,9 +359,64 @@ async function cmdIssueCreate(
   const next = computeNextAction(state);
   printResult(
     "issue-create",
-    { issueNumber: issueRef.number, issueUrl: issueRef.url, assignee, gate: gateId },
+    {
+      issueNumber: issueRef.number,
+      issueUrl: issueRef.url,
+      assignee,
+      assigneeVerified,
+      labelsVerified,
+      gate: gateId,
+    },
     next.detail,
   );
+}
+
+/**
+ * TAC-08: Reconcile all open harness gates in a repository. Finds every
+ * open tracking issue carrying both `harness:run` and `harness:gate-open`,
+ * then applies the same label-timeline-based resume logic for each run.
+ * This handles label events that arrived while the trigger workflow was not
+ * yet active or had transiently failed (missed-event recovery).
+ */
+async function cmdReconcile(argv: { repository: string }): Promise<void> {
+  const issues = await github.findIssuesWithLabels(argv.repository, [RUN_ISSUE_LABEL, GATE_LABEL]);
+
+  const results: Array<{ issueNumber: number; runId?: string; action?: string; error?: string }> = [];
+
+  for (const issue of issues) {
+    try {
+      const runState = parseStateFromBody(issue.body);
+      const store = new IssueStateStore(argv.repository, issue.number);
+      const next = computeNextAction(runState);
+
+      if (next.action === "await-human-gate" && next.gate?.issue) {
+        const gateId = next.gate.id;
+        const decision = await checkHumanGateIssue(runState, gateId);
+        if (decision.resolved) {
+          // TAC-06: persist first, then cleanup
+          const decided = computeGateDecision(runState, gateId, decision);
+          await store.save(decided);
+          await postGateDecision(decided, gateId, decision);
+          results.push({
+            issueNumber: issue.number,
+            runId: runState.runId,
+            action: `gate '${gateId}' resolved: ${decision.approved ? "approved" : "rejected"}`,
+          });
+          continue;
+        }
+      }
+
+      results.push({
+        issueNumber: issue.number,
+        runId: runState.runId,
+        action: next.action,
+      });
+    } catch (err) {
+      results.push({ issueNumber: issue.number, error: String(err) });
+    }
+  }
+
+  printResult("reconcile", { reconciled: results }, `Reconciled ${results.length} open gate(s).`);
 }
 
 async function cmdIterationStart(argv: StoreArgs): Promise<void> {
@@ -539,6 +626,12 @@ await yargs(hideBin(process.argv))
         result: argv.result as "passed" | "failed",
         findings: argv.findings as string[] | undefined,
       }),
+  )
+  .command(
+    "reconcile",
+    "Find all open harness gates in a repository and apply any pending label decisions (missed-event recovery)",
+    (y) => y.option("repository", { type: "string", demandOption: true, describe: "owner/repo to reconcile" }),
+    async (argv) => cmdReconcile({ repository: argv.repository as string }),
   )
   .demandCommand(1)
   .strict()

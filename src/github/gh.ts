@@ -21,6 +21,12 @@ export interface IssueRef {
   url: string;
 }
 
+export interface LabelEvent {
+  label: string;
+  actor: string;
+  createdAt: string;
+}
+
 /**
  * Thin, explicit wrapper around the `gh` CLI. Every write action here is a
  * deliberate, named function -- there is no generic "run arbitrary gh
@@ -144,5 +150,51 @@ export const github = {
     const match = url.match(/\/pull\/(\d+)/);
     const number = match ? Number(match[1]) : Number.NaN;
     return { number, url };
+  },
+
+  /**
+   * Read label-timeline events for an issue. Returns only "labeled" events
+   * with actor login and creation timestamp, which are used by the gate
+   * decision logic to filter events by the gate's openedAt timestamp (TAC-04).
+   */
+  async listIssueLabelEvents(repository: string, number: number): Promise<LabelEvent[]> {
+    const out = await runGh([
+      "api",
+      `repos/${repository}/issues/${number}/timeline`,
+      "--paginate",
+    ]);
+    const events = JSON.parse(out) as Array<{
+      event: string;
+      label?: { name: string };
+      actor?: { login: string };
+      created_at?: string;
+    }>;
+    return events
+      .filter((e) => e.event === "labeled" && e.label?.name && e.actor?.login && e.created_at)
+      .map((e) => ({
+        label: e.label!.name,
+        actor: e.actor!.login,
+        createdAt: e.created_at!,
+      }));
+  },
+
+  /**
+   * List open issues that carry all of the given labels. Used by the
+   * reconcile command to find open harness gates (TAC-08).
+   */
+  async findIssuesWithLabels(
+    repository: string,
+    labels: string[],
+  ): Promise<{ number: number; title: string; body: string }[]> {
+    const args = [
+      "issue", "list",
+      "--repo", repository,
+      "--state", "open",
+      ...labels.flatMap((l) => ["--label", l]),
+      "--json", "number,title,body",
+      "--limit", "100",
+    ];
+    const out = await runGh(args);
+    return JSON.parse(out) as { number: number; title: string; body: string }[];
   },
 };

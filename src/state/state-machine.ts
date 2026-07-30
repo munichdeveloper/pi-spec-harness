@@ -1,5 +1,5 @@
 import { nowIso } from "./store.js";
-import type { GateRecord, GateResult, GateType, IterationRecord, PhaseId, RunState } from "./types.js";
+import type { GateDecisionContext, GateRecord, GateResult, GateType, IterationRecord, PhaseId, RunState } from "./types.js";
 import { SCHEMA_VERSION } from "./types.js";
 
 export const PHASE_ORDER: PhaseId[] = [
@@ -69,7 +69,7 @@ export function reconcileInit(existing: RunState, options: InitRunOptions): RunS
 
 export function upsertGate(
   state: RunState,
-  gate: { id: string; type: GateType; question?: string },
+  gate: { id: string; type: GateType; question?: string; context?: GateDecisionContext },
 ): RunState {
   const timestamp = nowIso();
   const existingIndex = state.gates.findIndex((g) => g.id === gate.id);
@@ -83,6 +83,7 @@ export function upsertGate(
     createdAt: timestamp,
     updatedAt: timestamp,
     question: gate.question,
+    context: gate.context,
   };
   return { ...state, gates: [...state.gates, record], updatedAt: timestamp };
 }
@@ -90,7 +91,7 @@ export function upsertGate(
 export function resolveGate(
   state: RunState,
   gateId: string,
-  update: Partial<Pick<GateRecord, "result" | "evidence" | "issue" | "decision">>,
+  update: Partial<Pick<GateRecord, "result" | "evidence" | "issue" | "decision" | "openedAt" | "context">>,
 ): RunState {
   const timestamp = nowIso();
   const index = state.gates.findIndex((g) => g.id === gateId);
@@ -212,7 +213,7 @@ export function bindPullRequest(
     state.pullRequestHeadSha !== normalizedHeadSha;
   const gates = headChanged
     ? state.gates.map((gate) =>
-        gate.type === "review"
+        gate.type === "review" || gate.type === "merge"
           ? {
               ...gate,
               result: "pending" as const,
