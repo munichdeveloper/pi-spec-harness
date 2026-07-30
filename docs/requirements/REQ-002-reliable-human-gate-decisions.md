@@ -2,7 +2,7 @@
 id: REQ-002
 type: requirement
 title: Zuverlässige und bewertbare Human-Gate-Entscheidungen
-status: review
+status: approved
 owner: product
 risk: high
 created: 2026-07-30
@@ -69,4 +69,3 @@ können kein späteres Gate unbeabsichtigt auflösen.
 - autonome Produkt- oder Merge-Entscheidungen,
 - Freigaben allein durch Chat-Nachrichten oder unstrukturierte Kommentare,
 - Änderungen an fachlichen Funktionen von Immogent.
-

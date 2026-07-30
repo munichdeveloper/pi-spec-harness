@@ -2,7 +2,7 @@
 id: SPEC-002
 type: software-spec
 title: Dauerhafte Human-Gate-Entscheidungen und Event-Reconciliation
-status: review
+status: approved
 owner: engineering
 risk: high
 requirements:
@@ -95,4 +95,3 @@ Die Änderung wird als eigener PR ausgeliefert. Bei einem Fehler kann der PR
 normal revertiert werden. Der kanonische Issue-State bleibt lesbar; neue
 optionale Gate-Felder sind rückwärtskompatibel. Der bestehende manuelle
 `resume`-Pfad bleibt als Recovery-Möglichkeit erhalten.
-
