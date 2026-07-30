@@ -74,6 +74,65 @@ Weitere Details: [docs/workflow.md](docs/workflow.md),
 [docs/implementation-guide.md](docs/implementation-guide.md) (für KI-Agenten:
 Fallstricke & Checklisten).
 
+## Zwei-PR-Topologie (TAC-14)
+
+Ab SPEC-003 unterscheidet der Harness zwei getrennte Pull Requests pro Run:
+
+```
+main ←──── Delivery-PR (#10) ←──── Impl-PR (#42, Coding Agent)
+             (human-managed)          (automated, against delivery branch)
+```
+
+| Feld | Bedeutung |
+|------|-----------|
+| `deliveryPullRequest` / `deliveryHeadSha` | PR des Delivery-Branch gegen `main`; nur nach SHA-spezifischem Human-Gate gemerged |
+| `implementationPullRequest` / `implementationHeadSha` | PR des Coding Agent gegen den Delivery-Branch; nach grüner CI und gelösten Reviews automatisch übernommen |
+
+Beide werden getrennt und mit vollständigen HEAD-SHAs im `RunState` geführt.
+Ändert sich eine HEAD-SHA, werden die zugehörigen Gate-Evidenzen automatisch
+invalidiert (TAC-01/TAC-11).
+
+Der **finale Merge des Delivery-PRs** nach `main` bleibt bei `risk: high`
+menschlich freizugeben (SHA-spezifisches `merge`-Human-Gate). Keine autonome
+Freigabe ohne dieses Gate.
+
+CLI-Befehle für die Zwei-PR-Topologie:
+
+```bash
+# Delivery-PR binden
+npm run harness -- delivery-pr-bind \
+  --repository owner/repo --run-id run-001 \
+  --pull-request 10 --head-sha <40-char-sha>
+
+# Implementierungs-PR binden (mit Basis-Validierung)
+npm run harness -- impl-pr-bind \
+  --repository owner/repo --run-id run-001 \
+  --pull-request 42 --head-sha <40-char-sha> \
+  --expected-base fix/delivery-branch
+
+# Spec-Freigabe auf dem Delivery-Branch committen
+npm run harness -- spec-approve \
+  --repository owner/repo --run-id run-001
+
+# Issue nach Erstellung aus GitHub re-lesen und verifizieren
+npm run harness -- issue-verify \
+  --repository owner/repo --run-id run-001 \
+  --expected-labels harness:implementation status:ready ai:allowed \
+  --expected-assignee copilot
+
+# Coding Agent zuweisen (offizielle API, baseRef = Delivery-Branch)
+npm run harness -- agent-assign \
+  --repository owner/repo --run-id run-001
+
+# Implementierungs-PR nach CI+Review in den Delivery-Branch mergen
+npm run harness -- impl-pr-merge \
+  --repository owner/repo --run-id run-001
+
+# Orchestrator: gate-freie Phasen automatisch voranschreiten
+npm run harness -- orchestrate \
+  --repository owner/repo --run-id run-001
+```
+
 ## Lokale Entwicklung
 
 Voraussetzungen: Node.js 20.9+, `gh` CLI mit bestehender Anmeldung und

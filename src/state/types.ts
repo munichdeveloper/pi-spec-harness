@@ -74,8 +74,34 @@ export interface RunState {
   spec: string; // stable spec id, e.g. SPEC-011
   issue?: number; // GitHub issue number once created
   branch?: string;
+  /** @deprecated Use deliveryPullRequest / deliveryHeadSha instead for new runs. Kept for backward compatibility. */
   pullRequest?: number;
+  /** @deprecated Use deliveryPullRequest / deliveryHeadSha instead for new runs. Kept for backward compatibility. */
   pullRequestHeadSha?: string;
+  /**
+   * Delivery PR (against the default branch, human-managed).
+   * TAC-01: tracked separately from the implementation PR.
+   */
+  deliveryPullRequest?: number;
+  /** Full HEAD SHA of the delivery branch at the last verified checkpoint. */
+  deliveryHeadSha?: string;
+  /**
+   * Implementation PR created by the Coding Agent against the delivery branch.
+   * TAC-01: tracked separately from the delivery PR.
+   */
+  implementationPullRequest?: number;
+  /** Full HEAD SHA of the implementation PR at the last verified checkpoint. */
+  implementationHeadSha?: string;
+  /**
+   * Explicit path to the bound requirement document (relative to repo root).
+   * TAC-01: set at run start; glob / "newest file" selection is forbidden.
+   */
+  requirementPath?: string;
+  /**
+   * Explicit path to the bound software-spec document (relative to repo root).
+   * TAC-01: set at run start; glob / "newest file" selection is forbidden.
+   */
+  specPath?: string;
   phase: PhaseId;
   createdAt: string;
   updatedAt: string;

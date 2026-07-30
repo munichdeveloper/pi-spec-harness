@@ -22,6 +22,14 @@ export interface InitRunOptions {
   issue?: number;
   branch?: string;
   maxAutomaticIterations?: number;
+  /** Explicit path to the requirement document (relative to repo root). TAC-01. */
+  requirementPath?: string;
+  /** Explicit path to the spec document (relative to repo root). TAC-01. */
+  specPath?: string;
+  /** Delivery PR number if already known at init time. */
+  deliveryPullRequest?: number;
+  /** Delivery PR HEAD SHA if already known at init time. */
+  deliveryHeadSha?: string;
 }
 
 export function initRunState(options: InitRunOptions): RunState {
@@ -34,6 +42,10 @@ export function initRunState(options: InitRunOptions): RunState {
     spec: options.spec,
     issue: options.issue,
     branch: options.branch,
+    requirementPath: options.requirementPath,
+    specPath: options.specPath,
+    deliveryPullRequest: options.deliveryPullRequest,
+    deliveryHeadSha: options.deliveryHeadSha,
     phase: "requirement",
     createdAt: timestamp,
     updatedAt: timestamp,
@@ -226,6 +238,101 @@ export function bindPullRequest(
     ...state,
     pullRequest,
     pullRequestHeadSha: normalizedHeadSha,
+    gates,
+    updatedAt: nowIso(),
+  };
+}
+
+/**
+ * Bind the delivery PR (against the default branch) and its HEAD SHA.
+ * Once the PR number is set it is immutable; the HEAD SHA can be updated
+ * to a new checkpoint, which invalidates `merge` type gates.
+ * TAC-01, TAC-03.
+ */
+export function bindDeliveryPullRequest(
+  state: RunState,
+  pullRequest: number,
+  headSha: string,
+): RunState {
+  if (!Number.isInteger(pullRequest) || pullRequest <= 0) {
+    throw new Error("pull request number must be a positive integer");
+  }
+  if (!/^[0-9a-f]{40}$/i.test(headSha)) {
+    throw new Error("delivery pull request head SHA must be a full 40-character Git SHA");
+  }
+  const normalizedHeadSha = headSha.toLowerCase();
+  if (state.deliveryPullRequest !== undefined && state.deliveryPullRequest !== pullRequest) {
+    throw new Error(
+      `run '${state.runId}' is already bound to delivery PR #${state.deliveryPullRequest}; refusing PR #${pullRequest}`,
+    );
+  }
+  if (state.deliveryPullRequest === pullRequest && state.deliveryHeadSha === normalizedHeadSha) {
+    return state; // idempotent
+  }
+  const headChanged =
+    state.deliveryPullRequest === pullRequest &&
+    state.deliveryHeadSha !== undefined &&
+    state.deliveryHeadSha !== normalizedHeadSha;
+  // Invalidate merge gates when the delivery head changes -- any merge
+  // evidence was gathered against the old SHA and must be re-verified.
+  const gates = headChanged
+    ? state.gates.map((gate) =>
+        gate.type === "merge"
+          ? { ...gate, result: "pending" as const, evidence: undefined, updatedAt: nowIso() }
+          : gate,
+      )
+    : state.gates;
+  return {
+    ...state,
+    deliveryPullRequest: pullRequest,
+    deliveryHeadSha: normalizedHeadSha,
+    gates,
+    updatedAt: nowIso(),
+  };
+}
+
+/**
+ * Bind the implementation PR (Coding Agent, against the delivery branch) and
+ * its HEAD SHA. Once the PR number is set it is immutable; the SHA can be
+ * updated, which invalidates `review` and `runtime` gates.
+ * TAC-01, TAC-10.
+ */
+export function bindImplementationPullRequest(
+  state: RunState,
+  pullRequest: number,
+  headSha: string,
+): RunState {
+  if (!Number.isInteger(pullRequest) || pullRequest <= 0) {
+    throw new Error("pull request number must be a positive integer");
+  }
+  if (!/^[0-9a-f]{40}$/i.test(headSha)) {
+    throw new Error("implementation pull request head SHA must be a full 40-character Git SHA");
+  }
+  const normalizedHeadSha = headSha.toLowerCase();
+  if (state.implementationPullRequest !== undefined && state.implementationPullRequest !== pullRequest) {
+    throw new Error(
+      `run '${state.runId}' is already bound to implementation PR #${state.implementationPullRequest}; refusing PR #${pullRequest}`,
+    );
+  }
+  if (state.implementationPullRequest === pullRequest && state.implementationHeadSha === normalizedHeadSha) {
+    return state; // idempotent
+  }
+  const headChanged =
+    state.implementationPullRequest === pullRequest &&
+    state.implementationHeadSha !== undefined &&
+    state.implementationHeadSha !== normalizedHeadSha;
+  // Invalidate review and runtime gates when the implementation head changes.
+  const gates = headChanged
+    ? state.gates.map((gate) =>
+        gate.type === "review" || gate.type === "runtime"
+          ? { ...gate, result: "pending" as const, evidence: undefined, updatedAt: nowIso() }
+          : gate,
+      )
+    : state.gates;
+  return {
+    ...state,
+    implementationPullRequest: pullRequest,
+    implementationHeadSha: normalizedHeadSha,
     gates,
     updatedAt: nowIso(),
   };
