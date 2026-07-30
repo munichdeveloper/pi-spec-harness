@@ -2,7 +2,7 @@
 id: REQ-003
 type: requirement
 title: Autonome Übergabe von freigegebener Spec an den Coding Agent
-status: review
+status: approved
 owner: product
 risk: high
 created: 2026-07-30
@@ -68,4 +68,3 @@ auf der richtigen Basis und verfolgt dessen Implementierungs-PR eindeutig.
 - freie KI-Generierung eines vom freigegebenen Scope abweichenden Issues,
 - periodisches Polling als Voraussetzung für Fortschritt,
 - Änderungen an Immogent-Fachfunktionen.
-
