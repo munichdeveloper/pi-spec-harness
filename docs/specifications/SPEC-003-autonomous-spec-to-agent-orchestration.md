@@ -2,7 +2,7 @@
 id: SPEC-003
 type: software-spec
 title: Verifizierte Spec-zu-Agent-Orchestrierung
-status: review
+status: approved
 owner: engineering
 risk: high
 requirements:
@@ -108,4 +108,3 @@ Die Orchestrierung wird in einem eigenen Delivery-PR ausgeliefert. Alle
 Schreibaktionen erfolgen auf Feature-Branches und bleiben durch normale
 GitHub-Reverts rückgängig zu machen. Bei deaktivierter Orchestrierung bleiben
 die bestehenden Einzelbefehle als manueller Recovery-Pfad verfügbar.
-
