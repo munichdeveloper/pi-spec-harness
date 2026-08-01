@@ -13,7 +13,7 @@ describe("GitHub workflow contracts", () => {
     expect(workflow).toContain("catch {}");
     expect(workflow).toContain('--run-id "${{ steps.run.outputs.run_id }}"');
     expect(workflow).toContain("npm run harness -- advance");
-    expect(workflow).toContain('! "$gate_id" =~ ^merge-approval-');
+    expect(workflow).toContain('! "$gate_id" =~ ^merge-approval($|-)');
     expect(workflow).toContain("phase completion waits for the bound merge effect");
     expect(workflow).not.toContain("sort -V");
     expect(workflow).not.toContain("tail -1");

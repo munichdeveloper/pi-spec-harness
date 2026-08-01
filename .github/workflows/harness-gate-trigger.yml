@@ -55,7 +55,7 @@ jobs:
           gate_id="$(printf '%s\n' "$result" | sed -n '/^{/,$p' | jq -r '
             [.result.state.gates[] | select(.type == "human")][-1].id // empty
           ')"
-          if [[ "$action" == "advance-phase" && ! "$gate_id" =~ ^merge-approval- ]]; then
+          if [[ "$action" == "advance-phase" && ! "$gate_id" =~ ^merge-approval($|-) ]]; then
             npm run harness -- advance \
               --repository "${{ github.repository }}" \
               --run-id "${{ steps.run.outputs.run_id }}"

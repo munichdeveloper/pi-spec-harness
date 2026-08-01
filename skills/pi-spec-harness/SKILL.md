@@ -118,9 +118,10 @@ Wichtige Befehle:
    aktualisieren, PR-Beschreibung verlinkt Requirement/Spec/Issue.
 8. **Merge-Gate:** Bei `risk: medium` oder `risk: high` (siehe Spec-
    Frontmatter) ist der Merge **immer** ein Human-Gate. Das Gate bindet den
-   konkreten PR und vollständigen Head-SHA (`gate-id:
-   merge-approval-<pr-or-sha>`). Bei `risk: low` genügt ein technisches Gate
-   nach grüner CI und ohne offene Review-Threads.
+   konkreten PR über `gate-id: merge-approval-<pr>`. Der vollständige
+   Head-SHA liegt separat und unveränderlich als `pullRequestHeadSha` im
+   Run-State und wird in der Gate-Frage angezeigt. Bei `risk: low` genügt ein
+   technisches Gate nach grüner CI und ohne offene Review-Threads.
 9. **Merge-Effekt:** Die Zielrepository-Action liest vor dem Merge den
    aktuellen PR-Head sowie alle erforderlichen Checks und Review-Threads.
    Workflows, die `gh pr checks` verwenden, benötigen explizit
