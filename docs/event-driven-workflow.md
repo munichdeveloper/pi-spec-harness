@@ -80,6 +80,25 @@ Human-Gate. Nach Freigabe darf `harness-gate-trigger.yml` ausschließlich den
 im State gespeicherten PR mergen, wenn dessen aktueller Head noch exakt dem
 gespeicherten SHA entspricht und die erforderlichen Checks grün sind.
 
+Das Auflösen des Human-Gates und der Merge sind zwei getrennte, geordnete
+Effekte. Die Freigabe setzt das Gate auf `passed`, schaltet den Run aber noch
+nicht nach `complete`. Erst ein erfolgreicher Merge darf den abschließenden
+Phasenwechsel auslösen. Damit bleibt ein Fehler zwischen Freigabe und Merge
+sichtbar und wiederholbar.
+
+Zielrepository-Workflows, die den PR-Check-Rollup lesen, deklarieren
+mindestens `checks: read` und `statuses: read`. Bei der Merge-Prüfung wird der
+Harness-eigene Verify-Workflow aus der Menge der Voraussetzungen entfernt,
+damit kein selbstreferenzieller Check-Zyklus entsteht. Branch Protection und
+alle fachlichen beziehungsweise externen Required Checks bleiben wirksam.
+
+Für die Wiederaufnahme nach einem Infrastrukturfehler stellt der
+Gate-Workflow einen expliziten Reconcile-Dispatch mit der Nummer des
+Tracking-Issues bereit. Er darf nur ein bereits bestandenes,
+SHA-spezifisches Merge-Gate aus dem kanonischen State verwenden. Ist der
+exakte PR bereits gemergt, ist die Wiederholung ein erfolgreicher No-op; ist
+er offen, werden Head-SHA, Checks und Review-Threads erneut live geprüft.
+
 ### Fehler und Recovery
 
 Bei fehlgeschlagenen Checks:
