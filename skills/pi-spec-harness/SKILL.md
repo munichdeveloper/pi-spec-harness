@@ -117,11 +117,20 @@ Wichtige Befehle:
 7. **PR & Dokumentation:** PR im Ziel-Repo öffnen, Dokumentation im selben PR
    aktualisieren, PR-Beschreibung verlinkt Requirement/Spec/Issue.
 8. **Merge-Gate:** Bei `risk: medium` oder `risk: high` (siehe Spec-
-   Frontmatter) ist der Merge **immer** ein Human-Gate
-   (`gate-id: merge-approval`). Bei `risk: low` genügt ein `gate-resolve`
+   Frontmatter) ist der Merge **immer** ein Human-Gate. Das Gate bindet den
+   konkreten PR und vollständigen Head-SHA (`gate-id:
+   merge-approval-<pr-or-sha>`). Bei `risk: low` genügt ein technisches Gate
    nach grüner CI und ohne offene Review-Threads.
-9. **Abschluss:** Nach Merge `phase --phase complete` setzen, Run-Dokument im
-   Ziel-Repo (analog zu `RUN-XXX`-Dokumenten) ergänzen.
+9. **Merge-Effekt:** Die Zielrepository-Action liest vor dem Merge den
+   aktuellen PR-Head sowie alle erforderlichen Checks und Review-Threads.
+   Workflows, die `gh pr checks` verwenden, benötigen explizit
+   `checks: read` und `statuses: read`. Der Harness-eigene Verify-Workflow
+   wird nicht als Voraussetzung seiner eigenen Merge-Entscheidung gewertet.
+10. **Abschluss:** Erst nachdem der gebundene PR tatsächlich gemergt wurde,
+    darf der Run nach `complete` wechseln. Ein bereits freigegebenes Gate
+    kann nach einem Infrastrukturfehler über einen expliziten Reconcile-Run
+    erneut abgearbeitet werden; PR und SHA werden dabei nicht neu gewählt
+    und es entsteht keine zweite fachliche Freigabe.
 
 ## Nicht verhandelbare Grenzen
 
@@ -130,6 +139,8 @@ Wichtige Befehle:
 - Maximal drei automatische Korrekturiterationen pro Run.
 - Destruktive Migrationen, Auth-/Berechtigungsänderungen: immer Human-Gate,
   unabhängig vom deklarierten Risiko der Spec.
+- Ein bestandenes Merge-Gate ist noch kein bestandener Merge-Effekt. Phase
+  `complete` darf nie vor dem tatsächlichen Merge persistiert werden.
 - Bei Widersprüchen zwischen Requirement, Spec und Issue: nicht raten, Human-
   Gate öffnen und Konflikt im `question`-Feld benennen.
 
