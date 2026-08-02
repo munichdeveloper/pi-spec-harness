@@ -12,6 +12,8 @@ describe("GitHub workflow contracts", () => {
     expect(workflow).toContain("catch {}");
     expect(workflow).toContain('--run-id "${{ steps.run.outputs.run_id }}"');
     expect(workflow).toContain("npm run harness -- advance");
+    expect(workflow).toContain('! "$gate_id" =~ ^merge-approval($|-)');
+    expect(workflow).toContain("phase completion waits for the bound merge effect");
     expect(workflow).not.toContain("sort -V");
     expect(workflow).not.toContain("tail -1");
     expect(workflow).not.toContain("git push");
@@ -49,5 +51,20 @@ describe("GitHub workflow contracts", () => {
     expect(cli).toContain("decisionContext");
     expect(cli).toContain("prepareHumanGateIssue");
     expect(cli.indexOf("await store.save(state)")).toBeLessThan(cli.indexOf("publishHumanGateIssue(state, argv.gateId)"));
+  });
+
+  it("documents the target-repository merge transaction and check permissions", async () => {
+    const [workflowDoc, skill, handover] = await Promise.all([
+      readFile("docs/event-driven-workflow.md", "utf8"),
+      readFile("skills/pi-spec-harness/SKILL.md", "utf8"),
+      readFile("docs/HANDOVER.md", "utf8"),
+    ]);
+    const contract = [workflowDoc, skill, handover].join("\n");
+
+    expect(contract).toContain("checks: read");
+    expect(contract).toContain("statuses: read");
+    expect(contract).toContain("Merge-Effekt");
+    expect(contract).toContain("Reconcile");
+    expect(contract).toContain("Tracking-Issue");
   });
 });

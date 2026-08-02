@@ -108,9 +108,11 @@ npm run harness -- pr-bind \
    abgeschlossene Checks und keine offenen Review-Threads.
 6. Merge verwendet ausschließlich PR und SHA aus dem Run-State und ein
    SHA-spezifisches Human-Gate.
-7. Fehler sichern den Head unter `recovery/*`, buchen eine Iteration und
+7. Ein bestandenes Merge-Gate schaltet noch nicht nach `complete`; erst der
+   nachgewiesene Merge-Effekt schließt den Run ab.
+8. Fehler sichern den Head unter `recovery/*`, buchen eine Iteration und
    schreiben niemals nach `main`.
-8. Nach drei Fehlern wird gestoppt und eskaliert.
+9. Nach drei Fehlern wird gestoppt und eskaliert.
 
 ## Start eines neuen SaaS-Repositories
 
@@ -139,6 +141,12 @@ npm run harness -- pr-bind \
 
 - GitHub Actions muss Issue-, PR- und je nach Workflow
   `contents:write`-Berechtigungen besitzen.
+- Jeder Zielrepository-Workflow mit `gh pr checks` benötigt zusätzlich
+  `checks: read` und `statuses: read`; nicht deklarierte Berechtigungen sind
+  bei einem expliziten `permissions`-Block nicht implizit verfügbar.
+- Merge-Reconciliation verwendet ausschließlich das persistente
+  Tracking-Issue und das bereits bestandene SHA-spezifische Gate. Sie wählt
+  niemals den neuesten PR oder SHA.
 - Recovery benötigt `contents:write`, aber nur zum Erzeugen des
   `recovery/*`-Refs.
 - Der Harness-Stand mit `advance` und `pr-bind` muss im Default-Branch
