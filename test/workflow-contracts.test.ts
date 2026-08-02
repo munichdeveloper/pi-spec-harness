@@ -50,7 +50,7 @@ describe("GitHub workflow contracts", () => {
     }
     expect(cli).toContain("decisionContext");
     expect(cli).toContain("prepareHumanGateIssue");
-    expect(cli.indexOf("await store.save(state)")).toBeLessThan(cli.indexOf("publishHumanGateIssue(state, argv.gateId)"));
+    expect(cli.indexOf("await store.save(state)")).toBeLessThan(cli.indexOf("publishHumanGateIssue(state, argv.gateId,"));
   });
 
   it("documents the target-repository merge transaction and check permissions", async () => {

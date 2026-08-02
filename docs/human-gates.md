@@ -25,9 +25,12 @@ Lesezugriff auf das Issue sieht denselben Stand.
    Unklarheit im Requirement/Spec/Issue).
 3. Pi registriert ein Gate vom Typ `human` und ruft `gate-open --type human`
    auf. Es wird **kein neues Issue erzeugt** -- stattdessen:
-   - Das Gate wird zuerst mit `publication.status: prepared`, Öffnungszeit,
-     strukturiertem Entscheidungskontext und stabilem Kommentar-Marker im
+   - Das Gate wird zuerst mit `publication.status: prepared`, strukturiertem
+     Entscheidungskontext und stabilem Kommentar-Marker im
      kanonischen State gespeichert.
+   - Nach dem Bereinigen alter Decision-Labels werden `openedAt` und
+     `publication.status: publishing` gespeichert. Erst danach wird das Gate
+     extern sichtbar.
    - Labels `status:needs-human` + `harness:gate-open` werden auf das
      bestehende Tracking-Issue gesetzt.
    - Ein Kommentar mit Frage und Kontext wird idempotent angehängt

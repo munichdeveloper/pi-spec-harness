@@ -67,27 +67,42 @@ export function prepareHumanGateIssue(opts: OpenHumanGateOptions): RunState {
   if (existingGate?.issue) {
     return runState;
   }
-  const openedAt = new Date().toISOString();
-  const marker = `<!-- harness:gate-open:${runState.runId}:${gateId}:${openedAt} -->`;
+  const marker = `<!-- harness:gate-open:${runState.runId}:${gateId}:${new Date().toISOString()} -->`;
   return resolveGate(runState, gateId, {
     issue: runIssue,
-    result: "needs-human",
-    openedAt,
     context: decisionContext,
     publication: { status: "prepared", marker, title, legacyContext: context },
   });
 }
 
 /** Publish a prepared gate idempotently and return its completed checkpoint. */
-export async function publishHumanGateIssue(runState: RunState, gateId: string): Promise<RunState> {
-  const gate = runState.gates.find((candidate) => candidate.id === gateId);
+export async function publishHumanGateIssue(
+  runState: RunState,
+  gateId: string,
+  persist: (state: RunState) => Promise<void>,
+): Promise<RunState> {
+  let state = runState;
+  let gate = state.gates.find((candidate) => candidate.id === gateId);
   if (!gate?.issue) throw new Error(`gate '${gateId}' is not prepared for publication`);
   if (!gate.publication) return runState; // backward-compatible already-open gate
   if (gate.publication.status === "open") return runState;
 
+  if (gate.publication.status === "prepared") {
+    await ensureGateLabels(gate.issue.repository);
+    // No gate is externally published yet. Stale decisions are removed only
+    // in this state, before the durable openedAt boundary is established.
+    await github.removeLabels(gate.issue.repository, gate.issue.number, [GATE_APPROVED_LABEL, GATE_REJECTED_LABEL]);
+    state = resolveGate(state, gateId, {
+      result: "needs-human",
+      openedAt: new Date().toISOString(),
+      publication: { ...gate.publication, status: "publishing" },
+    });
+    await persist(state);
+    gate = state.gates.find((candidate) => candidate.id === gateId);
+    if (!gate?.issue || !gate.publication) throw new Error(`gate '${gateId}' lost its publication checkpoint`);
+  }
+
   const { issue, publication } = gate;
-  await ensureGateLabels(issue.repository);
-  await github.removeLabels(issue.repository, issue.number, [GATE_APPROVED_LABEL, GATE_REJECTED_LABEL]);
   await github.addLabels(issue.repository, issue.number, [GATE_LABEL, GATE_NEEDS_HUMAN_LABEL]);
 
   const comment = [
@@ -118,7 +133,7 @@ export async function publishHumanGateIssue(runState: RunState, gateId: string):
     await github.commentIssue(issue.repository, issue.number, comment);
   }
 
-  return resolveGate(runState, gateId, {
+  return resolveGate(state, gateId, {
     publication: { ...publication, status: "open" },
   });
 }

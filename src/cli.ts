@@ -21,6 +21,7 @@ import {
   bindPullRequest,
   findGate,
   findPendingGateCleanup,
+  findPendingGatePublication,
   finishIteration,
   initRunState,
   reconcileInit,
@@ -97,6 +98,17 @@ async function retryPendingGateCleanup(store: StateStore, initial: RunState): Pr
   return state;
 }
 
+async function retryPendingGatePublication(store: StateStore, initial: RunState): Promise<RunState> {
+  let state = initial;
+  let pending = findPendingGatePublication(state);
+  while (pending) {
+    state = await publishHumanGateIssue(state, pending.id, (checkpoint) => store.save(checkpoint));
+    await store.save(state);
+    pending = findPendingGatePublication(state);
+  }
+  return state;
+}
+
 async function cmdInit(argv: {
   runId: string;
   repository: string;
@@ -148,6 +160,7 @@ async function cmdResume(argv: StoreArgs): Promise<void> {
   // human gates, polls the backing GitHub issue for a resolved decision.
   const store = await resolveExistingStore(argv);
   let state = await store.load();
+  state = await retryPendingGatePublication(store, state);
   state = await retryPendingGateCleanup(store, state);
   const next = computeNextAction(state);
 
@@ -232,7 +245,7 @@ async function cmdGateOpen(
     });
     // TAC-03: the prepared checkpoint is canonical before any label/comment write.
     await store.save(state);
-    state = await publishHumanGateIssue(state, argv.gateId);
+    state = await publishHumanGateIssue(state, argv.gateId, (checkpoint) => store.save(checkpoint));
   }
   await store.save(state);
   const next = computeNextAction(state);
@@ -411,7 +424,8 @@ async function cmdReconcile(argv: { repository: string }): Promise<void> {
     try {
       const runState = parseStateFromBody(issue.body);
       const store = new IssueStateStore(argv.repository, issue.number);
-      let state = await retryPendingGateCleanup(store, runState);
+      let state = await retryPendingGatePublication(store, runState);
+      state = await retryPendingGateCleanup(store, state);
       const next = computeNextAction(state);
 
       if (next.action === "await-human-gate" && next.gate?.issue) {

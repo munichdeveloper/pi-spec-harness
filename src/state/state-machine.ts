@@ -139,6 +139,12 @@ export function findPendingGateCleanup(state: RunState): GateRecord | undefined 
   return state.gates.find((gate) => gate.type === "human" && gate.cleanupPending === true);
 }
 
+export function findPendingGatePublication(state: RunState): GateRecord | undefined {
+  return state.gates.find(
+    (gate) => gate.type === "human" && gate.publication !== undefined && gate.publication.status !== "open",
+  );
+}
+
 export function isMergeApprovalGate(gate: GateRecord): boolean {
   return gate.type === "merge" || gate.id === "merge-approval" || gate.id.startsWith("merge-approval-");
 }
@@ -292,7 +298,8 @@ export interface NextAction {
     | "escalate-iteration-cap"
     | "run-complete"
     | "resolve-gate"
-    | "cleanup-human-gate";
+    | "cleanup-human-gate"
+    | "publish-human-gate";
   detail: string;
   gate?: GateRecord;
 }
@@ -303,6 +310,15 @@ export interface NextAction {
  * supervisor) act on this.
  */
 export function computeNextAction(state: RunState): NextAction {
+  const pendingPublication = findPendingGatePublication(state);
+  if (pendingPublication) {
+    return {
+      action: "publish-human-gate",
+      detail: `Human gate '${pendingPublication.id}' has a durable ${pendingPublication.publication?.status} publication checkpoint; resume publication.`,
+      gate: pendingPublication,
+    };
+  }
+
   const pendingCleanup = findPendingGateCleanup(state);
   if (pendingCleanup) {
     return {

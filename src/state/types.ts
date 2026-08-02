@@ -50,7 +50,7 @@ export interface GateDecisionContext {
 }
 
 export interface GatePublication {
-  status: "prepared" | "open";
+  status: "prepared" | "publishing" | "open";
   /** Stable marker used to make the externally visible gate comment idempotent. */
   marker: string;
   title: string;

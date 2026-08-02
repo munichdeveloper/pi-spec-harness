@@ -251,6 +251,8 @@ describe("gate context and renderStateBody (TAC-01/TAC-02)", () => {
     const gate = prepared.gates[0];
     expect(gate.publication?.status).toBe("prepared");
     expect(gate.publication?.marker).toContain("harness:gate-open:gate-test-001:spec-approval:");
+    expect(gate.openedAt).toBeUndefined();
+    expect(computeNextAction(prepared).action).toBe("publish-human-gate");
     expect(gate.context).toEqual(ctx);
     expect(parseStateFromBody(renderStateBody(prepared)).gates[0].publication).toEqual(gate.publication);
     expect(prepareHumanGateIssue({
@@ -261,6 +263,29 @@ describe("gate context and renderStateBody (TAC-01/TAC-02)", () => {
       context: [],
       runIssue: gate.issue!,
     })).toBe(prepared);
+  });
+
+  it("keeps publishing retries past stale-label cleanup without reopening the decision epoch", () => {
+    let state = baseRun();
+    state = upsertGate(state, { id: "merge-approval", type: "human", question: "Merge?" });
+    state = prepareHumanGateIssue({
+      runState: state,
+      gateId: "merge-approval",
+      title: "Merge",
+      question: "Merge?",
+      context: [],
+      runIssue: { repository: state.repository, number: 7, url: "https://example.test/issues/7" },
+    });
+    const publication = state.gates[0].publication!;
+    state = resolveGate(state, "merge-approval", {
+      result: "needs-human",
+      openedAt: "2026-07-30T10:00:00.000Z",
+      publication: { ...publication, status: "publishing" },
+    });
+
+    expect(computeNextAction(state).action).toBe("publish-human-gate");
+    expect(state.gates[0].openedAt).toBe("2026-07-30T10:00:00.000Z");
+    expect(state.gates[0].publication?.status).toBe("publishing");
   });
 
   it("GateRecord stores openedAt and structured decision context (TAC-01)", () => {
