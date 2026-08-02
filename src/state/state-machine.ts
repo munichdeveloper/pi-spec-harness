@@ -145,6 +145,14 @@ export function findPendingGatePublication(state: RunState): GateRecord | undefi
   );
 }
 
+export function needsGateReconciliation(state: RunState): boolean {
+  return Boolean(
+    findPendingGatePublication(state) ||
+    findPendingGateCleanup(state) ||
+    hasOpenHumanGate(state)?.issue,
+  );
+}
+
 export function isMergeApprovalGate(gate: GateRecord): boolean {
   return gate.type === "merge" || gate.id === "merge-approval" || gate.id.startsWith("merge-approval-");
 }

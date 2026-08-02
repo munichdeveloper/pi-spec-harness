@@ -24,6 +24,7 @@ import {
   findPendingGatePublication,
   finishIteration,
   initRunState,
+  needsGateReconciliation,
   reconcileInit,
   resolveGate,
   startIteration,
@@ -423,6 +424,7 @@ async function cmdReconcile(argv: { repository: string }): Promise<void> {
   for (const issue of issues) {
     try {
       const runState = parseStateFromBody(issue.body);
+      if (!needsGateReconciliation(runState)) continue;
       const store = new IssueStateStore(argv.repository, issue.number);
       let state = await retryPendingGatePublication(store, runState);
       state = await retryPendingGateCleanup(store, state);
@@ -456,7 +458,11 @@ async function cmdReconcile(argv: { repository: string }): Promise<void> {
     }
   }
 
-  printResult("reconcile", { reconciled: results }, `Reconciled ${results.length} open gate(s).`);
+  printResult(
+    "reconcile",
+    { reconciled: results },
+    `Reconciled ${results.length} open or recoverable gate(s).`,
+  );
 }
 
 async function cmdIterationStart(argv: StoreArgs): Promise<void> {

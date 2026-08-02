@@ -27,6 +27,7 @@ import {
   bindPullRequest,
   computeNextAction,
   initRunState,
+  needsGateReconciliation,
   resolveGate,
   upsertGate,
 } from "../src/state/state-machine.js";
@@ -221,6 +222,37 @@ describe("double delivery idempotency (TAC-07)", () => {
     expect(second.gates[0].result).toBe("passed");
     // The second application does not reset the gate
     expect(second.gates[0].decision?.by).toBe("alice");
+  });
+});
+
+describe("reconciliation candidate selection", () => {
+  it("excludes runs without an open or recoverable human gate", () => {
+    expect(needsGateReconciliation(baseRun())).toBe(false);
+  });
+
+  it("includes prepared publication, open gate, and pending cleanup states", () => {
+    let state = baseRun();
+    state = upsertGate(state, { id: "g1", type: "human", question: "Approve?" });
+    state = prepareHumanGateIssue({
+      runState: state,
+      gateId: "g1",
+      title: "Gate",
+      question: "Approve?",
+      context: [],
+      runIssue: { repository: state.repository, number: 7, url: "https://example.test/issues/7" },
+    });
+    expect(needsGateReconciliation(state)).toBe(true);
+
+    state = resolveGate(state, "g1", {
+      result: "passed",
+      cleanupPending: true,
+      decision: { approved: true, by: "alice", at: "2026-07-30T11:00:00.000Z" },
+      publication: { ...state.gates[0].publication!, status: "open" },
+    });
+    expect(needsGateReconciliation(state)).toBe(true);
+
+    state = resolveGate(state, "g1", { cleanupPending: false });
+    expect(needsGateReconciliation(state)).toBe(false);
   });
 });
 
