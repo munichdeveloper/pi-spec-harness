@@ -49,6 +49,14 @@ export interface GateDecisionContext {
   followUpAction?: string;
 }
 
+export interface GatePublication {
+  status: "prepared" | "open";
+  /** Stable marker used to make the externally visible gate comment idempotent. */
+  marker: string;
+  title: string;
+  legacyContext: string[];
+}
+
 export interface GateRecord {
   id: string; // e.g. "spec-approval", "merge-slice-1"
   type: GateType;
@@ -64,6 +72,10 @@ export interface GateRecord {
   question?: string;
   /** Structured decision context rendered in the tracking-issue body (TAC-01/TAC-02). */
   context?: GateDecisionContext;
+  /** Durable publication checkpoint. `prepared` is persisted before GitHub writes. */
+  publication?: GatePublication;
+  /** Set with the canonical decision and cleared only after idempotent side-effects succeed. */
+  cleanupPending?: boolean;
   /** Present once a human gate issue has been opened. */
   issue?: HumanGateIssueRef;
   /** Evidence supporting a passed/failed result (URLs, file paths, check run ids). */

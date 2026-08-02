@@ -91,7 +91,7 @@ export function upsertGate(
 export function resolveGate(
   state: RunState,
   gateId: string,
-  update: Partial<Pick<GateRecord, "result" | "evidence" | "issue" | "decision" | "openedAt" | "context">>,
+  update: Partial<Pick<GateRecord, "result" | "evidence" | "issue" | "decision" | "openedAt" | "context" | "publication" | "cleanupPending">>,
 ): RunState {
   const timestamp = nowIso();
   const index = state.gates.findIndex((g) => g.id === gateId);
@@ -133,6 +133,14 @@ export function hasOpenHumanGate(state: RunState): GateRecord | undefined {
  */
 export function findUnacknowledgedRejectedGate(state: RunState): GateRecord | undefined {
   return state.gates.find((g) => g.type === "human" && g.result === "failed" && !g.decision?.note?.startsWith("acknowledged:"));
+}
+
+export function findPendingGateCleanup(state: RunState): GateRecord | undefined {
+  return state.gates.find((gate) => gate.type === "human" && gate.cleanupPending === true);
+}
+
+export function isMergeApprovalGate(gate: GateRecord): boolean {
+  return gate.type === "merge" || gate.id === "merge-approval" || gate.id.startsWith("merge-approval-");
 }
 
 export function acknowledgeRejectedGate(state: RunState, gateId: string, note: string): RunState {
@@ -177,8 +185,7 @@ export function transitionPhase(state: RunState, phase: PhaseId): RunState {
     phase === "complete" &&
     !state.gates.some(
       (gate) =>
-        gate.result === "passed" &&
-        (gate.type === "merge" || gate.id === "merge-approval" || gate.id.startsWith("merge-approval-")),
+        gate.result === "passed" && isMergeApprovalGate(gate),
     )
   ) {
     throw new Error("cannot complete a run without passed merge evidence");
@@ -212,16 +219,22 @@ export function bindPullRequest(
     state.pullRequestHeadSha !== undefined &&
     state.pullRequestHeadSha !== normalizedHeadSha;
   const gates = headChanged
-    ? state.gates.map((gate) =>
-        gate.type === "review" || gate.type === "merge"
-          ? {
-              ...gate,
-              result: "pending" as const,
-              evidence: undefined,
-              updatedAt: nowIso(),
-            }
-          : gate,
-      )
+    ? state.gates.flatMap((gate) => {
+        // A human merge approval is named for one exact SHA. Retaining it as
+        // an open gate would allow the old issue timeline to decide the new
+        // head, so remove it and require a fresh SHA-specific gate.
+        if (gate.type === "human" && isMergeApprovalGate(gate)) return [];
+        if (gate.type === "review" || gate.type === "merge") {
+          return [{
+            ...gate,
+            result: "pending" as const,
+            evidence: undefined,
+            decision: undefined,
+            updatedAt: nowIso(),
+          }];
+        }
+        return [gate];
+      })
     : state.gates;
   return {
     ...state,
@@ -278,7 +291,8 @@ export interface NextAction {
     | "advance-phase"
     | "escalate-iteration-cap"
     | "run-complete"
-    | "resolve-gate";
+    | "resolve-gate"
+    | "cleanup-human-gate";
   detail: string;
   gate?: GateRecord;
 }
@@ -289,6 +303,15 @@ export interface NextAction {
  * supervisor) act on this.
  */
 export function computeNextAction(state: RunState): NextAction {
+  const pendingCleanup = findPendingGateCleanup(state);
+  if (pendingCleanup) {
+    return {
+      action: "cleanup-human-gate",
+      detail: `Human gate '${pendingCleanup.id}' is decided; retry idempotent comment and label cleanup.`,
+      gate: pendingCleanup,
+    };
+  }
+
   const openHumanGate = hasOpenHumanGate(state);
   if (openHumanGate) {
     return {

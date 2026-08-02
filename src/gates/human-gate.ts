@@ -57,54 +57,69 @@ export interface OpenHumanGateOptions {
   runIssue: HumanGateIssueRef;
 }
 
-export async function openHumanGateIssue(opts: OpenHumanGateOptions): Promise<RunState> {
-  const { runState, gateId, title, question, context, decisionContext, runIssue } = opts;
+/**
+ * Pure preparation step. Callers must persist its result before invoking
+ * publishHumanGateIssue so a crash can resume without duplicating the gate.
+ */
+export function prepareHumanGateIssue(opts: OpenHumanGateOptions): RunState {
+  const { runState, gateId, title, context, decisionContext, runIssue } = opts;
   const existingGate = runState.gates.find((g) => g.id === gateId);
   if (existingGate?.issue) {
-    return runState; // already opened, nothing to do
+    return runState;
   }
-
-  await ensureGateLabels(runIssue.repository);
-
-  // TAC-03: Remove stale decision labels before publishing the gate so that
-  // only events created after openedAt can resolve it (TAC-04/TAC-05).
-  await github.removeLabels(runIssue.repository, runIssue.number, [
-    GATE_APPROVED_LABEL,
-    GATE_REJECTED_LABEL,
-  ]);
-  await github.addLabels(runIssue.repository, runIssue.number, [GATE_LABEL, GATE_NEEDS_HUMAN_LABEL]);
-
   const openedAt = new Date().toISOString();
-
-  const comment = [
-    `## Human-Gate: ${gateId} -- ${title}`,
-    "",
-    `### Frage / Entscheidungsbedarf`,
-    question,
-    "",
-    ...(decisionContext?.scope ? [`**Scope:** ${decisionContext.scope}`, ""] : []),
-    ...(decisionContext?.criteria && decisionContext.criteria.length > 0
-      ? ["**Akzeptanzkriterien:**", ...decisionContext.criteria.map((c) => `- ${c}`), ""]
-      : []),
-    ...(decisionContext?.risks && decisionContext.risks.length > 0
-      ? ["**Risiken:**", ...decisionContext.risks.map((r) => `- ${r}`), ""]
-      : []),
-    ...(decisionContext?.nonGoals && decisionContext.nonGoals.length > 0
-      ? ["**Nicht-Ziele:**", ...decisionContext.nonGoals.map((g) => `- ${g}`), ""]
-      : []),
-    ...(decisionContext?.followUpAction ? [`**Folgeaktion:** ${decisionContext.followUpAction}`, ""] : []),
-    ...(context.length > 0 ? ["### Kontext", ...context.map((c) => `- ${c}`), ""] : []),
-    "### Entscheidung",
-    `Label \`${GATE_APPROVED_LABEL}\` hinzufügen zum Freigeben, oder \`${GATE_REJECTED_LABEL}\` zum Ablehnen. `,
-    "Ein klärender Kommentar ist willkommen, zählt aber nicht als Entscheidung -- ausschließlich das Label.",
-  ].join("\n");
-  await github.commentIssue(runIssue.repository, runIssue.number, comment);
-
+  const marker = `<!-- harness:gate-open:${runState.runId}:${gateId}:${openedAt} -->`;
   return resolveGate(runState, gateId, {
     issue: runIssue,
     result: "needs-human",
     openedAt,
     context: decisionContext,
+    publication: { status: "prepared", marker, title, legacyContext: context },
+  });
+}
+
+/** Publish a prepared gate idempotently and return its completed checkpoint. */
+export async function publishHumanGateIssue(runState: RunState, gateId: string): Promise<RunState> {
+  const gate = runState.gates.find((candidate) => candidate.id === gateId);
+  if (!gate?.issue) throw new Error(`gate '${gateId}' is not prepared for publication`);
+  if (!gate.publication) return runState; // backward-compatible already-open gate
+  if (gate.publication.status === "open") return runState;
+
+  const { issue, publication } = gate;
+  await ensureGateLabels(issue.repository);
+  await github.removeLabels(issue.repository, issue.number, [GATE_APPROVED_LABEL, GATE_REJECTED_LABEL]);
+  await github.addLabels(issue.repository, issue.number, [GATE_LABEL, GATE_NEEDS_HUMAN_LABEL]);
+
+  const comment = [
+    publication.marker,
+    `## Human-Gate: ${gateId} -- ${publication.title}`,
+    "",
+    `### Frage / Entscheidungsbedarf`,
+    gate.question ?? "",
+    "",
+    ...(gate.context?.scope ? [`**Scope:** ${gate.context.scope}`, ""] : []),
+    ...(gate.context?.criteria && gate.context.criteria.length > 0
+      ? ["**Akzeptanzkriterien:**", ...gate.context.criteria.map((c) => `- ${c}`), ""]
+      : []),
+    ...(gate.context?.risks && gate.context.risks.length > 0
+      ? ["**Risiken:**", ...gate.context.risks.map((r) => `- ${r}`), ""]
+      : []),
+    ...(gate.context?.nonGoals && gate.context.nonGoals.length > 0
+      ? ["**Nicht-Ziele:**", ...gate.context.nonGoals.map((g) => `- ${g}`), ""]
+      : []),
+    ...(gate.context?.followUpAction ? [`**Folgeaktion:** ${gate.context.followUpAction}`, ""] : []),
+    ...(publication.legacyContext.length > 0 ? ["### Kontext", ...publication.legacyContext.map((c) => `- ${c}`), ""] : []),
+    "### Entscheidung",
+    `Label \`${GATE_APPROVED_LABEL}\` hinzufügen zum Freigeben, oder \`${GATE_REJECTED_LABEL}\` zum Ablehnen. `,
+    "Ein klärender Kommentar ist willkommen, zählt aber nicht als Entscheidung -- ausschließlich das Label.",
+  ].join("\n");
+  const issueSnapshot = await github.viewIssue(issue.repository, issue.number);
+  if (!issueSnapshot.comments.some((existing) => existing.body.includes(publication.marker))) {
+    await github.commentIssue(issue.repository, issue.number, comment);
+  }
+
+  return resolveGate(runState, gateId, {
+    publication: { ...publication, status: "open" },
   });
 }
 
@@ -128,6 +143,34 @@ export function filterValidLabelEvents(
   return events.filter((e) => e.label === labelName && e.createdAt >= openedAt);
 }
 
+export function selectCurrentGateDecision(
+  events: { label: string; actor: string; createdAt: string }[],
+  currentLabels: string[],
+  openedAt: string,
+): GateCheckResult {
+  const active = new Set(currentLabels);
+  const approvedEvents = active.has(GATE_APPROVED_LABEL)
+    ? filterValidLabelEvents(events, GATE_APPROVED_LABEL, openedAt)
+    : [];
+  const rejectedEvents = active.has(GATE_REJECTED_LABEL)
+    ? filterValidLabelEvents(events, GATE_REJECTED_LABEL, openedAt)
+    : [];
+  if (approvedEvents.length > 0 && rejectedEvents.length > 0) {
+    throw new Error(
+      `conflicting active approved and rejected labels since openedAt ${openedAt}; ` +
+        "human intervention required to remove one of the labels",
+    );
+  }
+  const event = approvedEvents.at(-1) ?? rejectedEvents.at(-1);
+  if (!event) return { resolved: false };
+  return {
+    resolved: true,
+    approved: event.label === GATE_APPROVED_LABEL,
+    by: event.actor,
+    at: event.createdAt,
+  };
+}
+
 /**
  * Check whether the human gate has been decided by reading the label-timeline
  * events for the backing tracking issue. Only events on or after the gate's
@@ -142,30 +185,15 @@ export async function checkHumanGateIssue(runState: RunState, gateId: string): P
 
   // TAC-04: read label-timeline events with actor and timestamp.
   const events = await github.listIssueLabelEvents(gate.issue.repository, gate.issue.number);
+  const issue = await github.viewIssue(gate.issue.repository, gate.issue.number);
 
   // TAC-05: only events on or after openedAt are valid for this gate cycle.
   const openedAt = gate.openedAt ?? gate.createdAt;
-  const approvedEvents = filterValidLabelEvents(events, GATE_APPROVED_LABEL, openedAt);
-  const rejectedEvents = filterValidLabelEvents(events, GATE_REJECTED_LABEL, openedAt);
-
-  // TAC-05: simultaneous valid approved + rejected is a blocking conflict.
-  if (approvedEvents.length > 0 && rejectedEvents.length > 0) {
-    throw new Error(
-      `gate '${gateId}' has conflicting approved and rejected events since openedAt ${openedAt}; ` +
-        "human intervention required to remove one of the labels",
-    );
+  try {
+    return selectCurrentGateDecision(events, issue.labels.map((label) => label.name), openedAt);
+  } catch (error) {
+    throw new Error(`gate '${gateId}' ${error instanceof Error ? error.message : String(error)}`);
   }
-
-  if (approvedEvents.length > 0) {
-    const ev = approvedEvents[approvedEvents.length - 1];
-    return { resolved: true, approved: true, by: ev.actor, at: ev.createdAt };
-  }
-  if (rejectedEvents.length > 0) {
-    const ev = rejectedEvents[rejectedEvents.length - 1];
-    return { resolved: true, approved: false, by: ev.actor, at: ev.createdAt };
-  }
-
-  return { resolved: false };
 }
 
 /**
@@ -184,6 +212,7 @@ export function computeGateDecision(runState: RunState, gateId: string, decision
       at: decision.at ?? new Date().toISOString(),
       note: decision.note,
     },
+    cleanupPending: true,
   });
 }
 
@@ -197,17 +226,22 @@ export async function postGateDecision(
   runState: RunState,
   gateId: string,
   decision: GateCheckResult,
-): Promise<void> {
+): Promise<RunState> {
   const gate = runState.gates.find((g) => g.id === gateId);
-  if (!gate?.issue) return;
+  if (!gate?.issue || !gate.cleanupPending) return runState;
 
-  await github.commentIssue(
-    gate.issue.repository,
-    gate.issue.number,
-    decision.approved
-      ? `Harness: Gate \`${gateId}\` als **freigegeben** übernommen. Run \`${runState.runId}\` läuft weiter.`
-      : `Harness: Gate \`${gateId}\` als **abgelehnt** übernommen. Run \`${runState.runId}\` pausiert.`,
-  );
+  const decisionAt = gate.decision?.at ?? decision.at ?? "unknown";
+  const marker = `<!-- harness:gate-decision:${runState.runId}:${gateId}:${decisionAt} -->`;
+  const issueSnapshot = await github.viewIssue(gate.issue.repository, gate.issue.number);
+  if (!issueSnapshot.comments.some((existing) => existing.body.includes(marker))) {
+    await github.commentIssue(
+      gate.issue.repository,
+      gate.issue.number,
+      `${marker}\n${decision.approved
+        ? `Harness: Gate \`${gateId}\` als **freigegeben** übernommen. Run \`${runState.runId}\` läuft weiter.`
+        : `Harness: Gate \`${gateId}\` als **abgelehnt** übernommen. Run \`${runState.runId}\` pausiert.`}`,
+    );
+  }
   // Reset transient labels so the same tracking issue is clean for the
   // run's next gate cycle instead of accumulating stale decision labels.
   await github.removeLabels(gate.issue.repository, gate.issue.number, [
@@ -216,6 +250,7 @@ export async function postGateDecision(
     GATE_APPROVED_LABEL,
     GATE_REJECTED_LABEL,
   ]);
+  return resolveGate(runState, gateId, { cleanupPending: false });
 }
 
 /**
@@ -233,8 +268,7 @@ export async function applyGateDecision(
 ): Promise<RunState> {
   const next = computeGateDecision(runState, gateId, decision);
   // Note: caller is responsible for persisting `next` before postGateDecision.
-  await postGateDecision(next, gateId, decision);
-  return next;
+  return postGateDecision(next, gateId, decision);
 }
 
 /**

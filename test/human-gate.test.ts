@@ -11,7 +11,6 @@
  *  - workflow bootstrap finds already-decided open gates
  *  - tracking-issue body contains a fully assessable gate summary
  *  - merge approval bound to PR and full head SHA
- *  - issue-create reports labels and assignee only after verification
  */
 
 import { describe, expect, it } from "vitest";
@@ -20,6 +19,8 @@ import {
   filterValidLabelEvents,
   GATE_APPROVED_LABEL,
   GATE_REJECTED_LABEL,
+  prepareHumanGateIssue,
+  selectCurrentGateDecision,
 } from "../src/gates/human-gate.js";
 import { parseStateFromBody, renderStateBody } from "../src/state/issue-store.js";
 import {
@@ -107,6 +108,21 @@ describe("conflict detection (TAC-05)", () => {
     const rejected = filterValidLabelEvents(onlyApproved, GATE_REJECTED_LABEL, openedAt);
     expect(approved.length > 0 && rejected.length > 0).toBe(false);
   });
+
+  it("becomes resolvable after the human removes one conflicting current label", () => {
+    expect(() => selectCurrentGateDecision(
+      conflictEvents,
+      [GATE_APPROVED_LABEL, GATE_REJECTED_LABEL],
+      openedAt,
+    )).toThrow(/conflicting active/);
+
+    const resolved = selectCurrentGateDecision(conflictEvents, [GATE_APPROVED_LABEL], openedAt);
+    expect(resolved).toMatchObject({ resolved: true, approved: true, by: "alice" });
+  });
+
+  it("does not accept a historical event when its label is no longer active", () => {
+    expect(selectCurrentGateDecision(conflictEvents, [], openedAt)).toEqual({ resolved: false });
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -128,6 +144,7 @@ describe("computeGateDecision is pure (TAC-06)", () => {
     expect(decided.gates[0].result).toBe("passed");
     expect(decided.gates[0].decision?.approved).toBe(true);
     expect(decided.gates[0].decision?.by).toBe("alice");
+    expect(decided.gates[0].cleanupPending).toBe(true);
     // original state is unchanged
     expect(state.gates[0].result).toBe("pending");
   });
@@ -178,7 +195,7 @@ describe("cleanup error after persistence (TAC-07)", () => {
     // Step 3: pretend postGateDecision throws (cleanup failure)
     // → decided is already the canonical state; no data is lost.
     expect(decided.gates[0].result).toBe("passed");
-    expect(computeNextAction(decided).action).toBe("advance-phase");
+    expect(computeNextAction(decided).action).toBe("cleanup-human-gate");
   });
 });
 
@@ -211,6 +228,41 @@ describe("double delivery idempotency (TAC-07)", () => {
 // TAC-01/TAC-02: GateRecord context and openedAt; renderStateBody gate summary
 // ---------------------------------------------------------------------------
 describe("gate context and renderStateBody (TAC-01/TAC-02)", () => {
+  it("persists a prepared publication with structured CLI-equivalent context before GitHub writes", () => {
+    let state = baseRun();
+    const ctx: GateDecisionContext = {
+      scope: "SPEC-002",
+      criteria: ["TAC-01", "TAC-02"],
+      risks: ["high"],
+      nonGoals: ["no polling"],
+      followUpAction: "review",
+    };
+    state = upsertGate(state, { id: "spec-approval", type: "human", question: "Approve?", context: ctx });
+    const prepared = prepareHumanGateIssue({
+      runState: state,
+      gateId: "spec-approval",
+      title: "SPEC-002 freigeben",
+      question: "Approve?",
+      context: ["legacy context"],
+      decisionContext: ctx,
+      runIssue: { repository: state.repository, number: 7, url: "https://example.test/issues/7" },
+    });
+
+    const gate = prepared.gates[0];
+    expect(gate.publication?.status).toBe("prepared");
+    expect(gate.publication?.marker).toContain("harness:gate-open:gate-test-001:spec-approval:");
+    expect(gate.context).toEqual(ctx);
+    expect(parseStateFromBody(renderStateBody(prepared)).gates[0].publication).toEqual(gate.publication);
+    expect(prepareHumanGateIssue({
+      runState: prepared,
+      gateId: "spec-approval",
+      title: "ignored",
+      question: "ignored",
+      context: [],
+      runIssue: gate.issue!,
+    })).toBe(prepared);
+  });
+
   it("GateRecord stores openedAt and structured decision context (TAC-01)", () => {
     let state = baseRun();
     const ctx: GateDecisionContext = {
@@ -320,6 +372,22 @@ describe("merge gate requires PR+SHA checkpoint (TAC-11)", () => {
     state = bindPullRequest(state, 10, sha2);
     expect(state.gates[0].result).toBe("pending");
     expect(state.gates[0].evidence).toBeUndefined();
+  });
+
+  it("removes a SHA-specific human merge gate when the bound head changes", () => {
+    const sha1 = "1".repeat(40);
+    const sha2 = "2".repeat(40);
+    let state = bindPullRequest(baseRun(), 42, sha1);
+    const gateId = `merge-approval-${sha1}`;
+    state = upsertGate(state, { id: gateId, type: "human", question: "Merge?" });
+    state = resolveGate(state, gateId, {
+      result: "passed",
+      decision: { approved: true, by: "alice", at: "2026-07-30T10:00:00.000Z" },
+    });
+
+    state = bindPullRequest(state, 42, sha2);
+    expect(state.gates.some((gate) => gate.id === gateId)).toBe(false);
+    expect(state.pullRequestHeadSha).toBe(sha2);
   });
 
   it("binding the same PR+SHA twice is idempotent (no gate invalidation)", () => {

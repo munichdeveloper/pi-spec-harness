@@ -40,4 +40,14 @@ describe("GitHub workflow contracts", () => {
     expect(workflow).not.toContain("sort -V");
     expect(workflow).not.toContain("tail -1");
   });
+
+  it("exposes every structured decision-context field through gate-open", async () => {
+    const cli = await readFile("src/cli.ts", "utf8");
+    for (const option of ["scope", "criterion", "risk", "non-goal", "follow-up-action"]) {
+      expect(cli).toContain(`.option("${option}"`);
+    }
+    expect(cli).toContain("decisionContext");
+    expect(cli).toContain("prepareHumanGateIssue");
+    expect(cli.indexOf("await store.save(state)")).toBeLessThan(cli.indexOf("publishHumanGateIssue(state, argv.gateId)"));
+  });
 });

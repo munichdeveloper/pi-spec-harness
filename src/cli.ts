@@ -6,10 +6,10 @@ import {
   acknowledgeRejectedHumanGate,
   checkHumanGateIssue,
   computeGateDecision,
-  openHumanGateIssue,
+  prepareHumanGateIssue,
+  publishHumanGateIssue,
   postGateDecision,
 } from "./gates/human-gate.js";
-import { GATE_LABEL } from "./gates/human-gate.js";
 import { github } from "./github/gh.js";
 import { getSpecAssignee } from "./spec/spec-parser.js";
 import { IssueStateStore, RUN_ISSUE_LABEL, ensureRunIssue, findRunIssue, parseStateFromBody } from "./state/issue-store.js";
@@ -20,6 +20,7 @@ import {
   computeNextAction,
   bindPullRequest,
   findGate,
+  findPendingGateCleanup,
   finishIteration,
   initRunState,
   reconcileInit,
@@ -28,7 +29,7 @@ import {
   transitionPhase,
   upsertGate,
 } from "./state/state-machine.js";
-import type { GateType, PhaseId, RunState } from "./state/types.js";
+import type { GateDecisionContext, GateType, PhaseId, RunState } from "./state/types.js";
 import { SCHEMA_VERSION } from "./state/types.js";
 
 interface StoreArgs {
@@ -58,6 +59,42 @@ async function resolveExistingStore(argv: StoreArgs): Promise<StateStore> {
 
 function printResult(command: string, result: unknown, nextAction: string): void {
   console.log(JSON.stringify({ schemaVersion: SCHEMA_VERSION, command, result, nextAction }, null, 2));
+}
+
+function decisionContextFromArgs(argv: {
+  scope?: string;
+  criterion?: string[];
+  risk?: string[];
+  nonGoal?: string[];
+  followUpAction?: string;
+}): GateDecisionContext | undefined {
+  const context: GateDecisionContext = {
+    scope: argv.scope,
+    criteria: argv.criterion,
+    risks: argv.risk,
+    nonGoals: argv.nonGoal,
+    followUpAction: argv.followUpAction,
+  };
+  return Object.values(context).some((value) => value !== undefined) ? context : undefined;
+}
+
+async function retryPendingGateCleanup(store: StateStore, initial: RunState): Promise<RunState> {
+  let state = initial;
+  let pending = findPendingGateCleanup(state);
+  while (pending) {
+    if (!pending.decision) throw new Error(`gate '${pending.id}' has cleanupPending without a decision`);
+    if (!pending.issue) throw new Error(`gate '${pending.id}' has cleanupPending without a tracking issue`);
+    state = await postGateDecision(state, pending.id, {
+      resolved: true,
+      approved: pending.decision.approved,
+      by: pending.decision.by,
+      at: pending.decision.at,
+      note: pending.decision.note,
+    });
+    await store.save(state);
+    pending = findPendingGateCleanup(state);
+  }
+  return state;
 }
 
 async function cmdInit(argv: {
@@ -111,6 +148,7 @@ async function cmdResume(argv: StoreArgs): Promise<void> {
   // human gates, polls the backing GitHub issue for a resolved decision.
   const store = await resolveExistingStore(argv);
   let state = await store.load();
+  state = await retryPendingGateCleanup(store, state);
   const next = computeNextAction(state);
 
   if (next.action === "await-human-gate" && next.gate?.issue) {
@@ -120,8 +158,8 @@ async function cmdResume(argv: StoreArgs): Promise<void> {
       const decided = computeGateDecision(state, next.gate.id, decision);
       await store.save(decided);
       // TAC-07: cleanup is idempotent and can be retried if it fails.
-      await postGateDecision(decided, next.gate.id, decision);
-      state = decided;
+      state = await postGateDecision(decided, next.gate.id, decision);
+      await store.save(state);
       const updatedNext = computeNextAction(state);
       printResult("resume", { state, nextAction: updatedNext }, updatedNext.detail);
       return;
@@ -165,25 +203,36 @@ async function cmdGateOpen(
     title: string;
     question: string;
     context?: string[];
+    scope?: string;
+    criterion?: string[];
+    risk?: string[];
+    nonGoal?: string[];
+    followUpAction?: string;
   },
 ): Promise<void> {
   const store = await resolveExistingStore(argv);
   let state = await store.load();
-  state = upsertGate(state, { id: argv.gateId, type: argv.type, question: argv.question });
+  const decisionContext = decisionContextFromArgs(argv);
+  state = upsertGate(state, { id: argv.gateId, type: argv.type, question: argv.question, context: decisionContext });
+  if (decisionContext) state = resolveGate(state, argv.gateId, { context: decisionContext });
   if (argv.type === "human") {
     if (!store.issueRef) {
       throw new Error(
         "human gates require the GitHub-issue backend (--repository + --run-id); the file backend has no tracking issue to attach the gate to",
       );
     }
-    state = await openHumanGateIssue({
+    state = prepareHumanGateIssue({
       runState: state,
       gateId: argv.gateId,
       title: argv.title,
       question: argv.question,
       context: argv.context ?? [],
+      decisionContext,
       runIssue: store.issueRef,
     });
+    // TAC-03: the prepared checkpoint is canonical before any label/comment write.
+    await store.save(state);
+    state = await publishHumanGateIssue(state, argv.gateId);
   }
   await store.save(state);
   const next = computeNextAction(state);
@@ -306,48 +355,23 @@ async function cmdIssueCreate(
     ].join("\n");
   }
 
-  const repository = argv.repository || "";
-  const issueRef = await github.createIssue(repository, {
+  const issueRef = await github.createIssue(argv.repository || "", {
     title: argv.title,
     body: bodyWithNote,
     labels: argv.labels,
   });
 
-  // Attempt assignee: for @github-copilot try the real account name; skip gracefully on failure.
-  let assigneeVerified = false;
-  const actualAssignee = assignee === "@github-copilot" ? "github-copilot[bot]" : assignee;
-  if (assignee) {
-    try {
-      await github.addAssignees(repository, issueRef.number, [actualAssignee]);
-      assigneeVerified = true;
-    } catch {
-      // Non-fatal: Copilot or assignee may not be available in this repository.
-      assigneeVerified = false;
-    }
-  }
-
-  // TAC-12: verify labels were actually applied by reading the issue back.
-  const requestedLabels = argv.labels ?? [];
-  let labelsVerified = false;
-  if (requestedLabels.length > 0) {
-    const created = await github.viewIssue(repository, issueRef.number);
-    const actualLabels = new Set(created.labels.map((l) => l.name));
-    labelsVerified = requestedLabels.every((l) => actualLabels.has(l));
-    if (!labelsVerified) {
-      const missing = requestedLabels.filter((l) => !actualLabels.has(l));
-      throw new Error(
-        `issue-create verification failed: labels not applied on #${issueRef.number}: ${missing.join(", ")}`,
-      );
-    }
-  } else {
-    labelsVerified = true;
+  // SPEC-002 deliberately leaves Coding Agent assignment unchanged. The
+  // verified Agent Assignment API belongs to SPEC-003.
+  if (assignee && assignee !== "@github-copilot") {
+    await github.addAssignees(argv.repository || "", issueRef.number, [assignee]);
   }
 
   // Open the issue-ready gate and store issue number for later phases
   const gateId = "issue-ready";
   state = upsertGate(state, { id: gateId, type: "issue", question: `Implementation issue ${issueRef.number} created and assignee set to ${assignee}` });
   state.issue = issueRef.number;
-  const labels = new Set(requestedLabels);
+  const labels = new Set(argv.labels ?? []);
   if (labels.has("status:ready") && labels.has("ai:allowed")) {
     state = resolveGate(state, gateId, {
       result: "passed",
@@ -363,8 +387,6 @@ async function cmdIssueCreate(
       issueNumber: issueRef.number,
       issueUrl: issueRef.url,
       assignee,
-      assigneeVerified,
-      labelsVerified,
       gate: gateId,
     },
     next.detail,
@@ -379,7 +401,9 @@ async function cmdIssueCreate(
  * yet active or had transiently failed (missed-event recovery).
  */
 async function cmdReconcile(argv: { repository: string }): Promise<void> {
-  const issues = await github.findIssuesWithLabels(argv.repository, [RUN_ISSUE_LABEL, GATE_LABEL]);
+  // Include resolved gates with durable cleanupPending even if a partial
+  // cleanup already removed harness:gate-open.
+  const issues = await github.findIssuesWithLabels(argv.repository, [RUN_ISSUE_LABEL]);
 
   const results: Array<{ issueNumber: number; runId?: string; action?: string; error?: string }> = [];
 
@@ -387,16 +411,18 @@ async function cmdReconcile(argv: { repository: string }): Promise<void> {
     try {
       const runState = parseStateFromBody(issue.body);
       const store = new IssueStateStore(argv.repository, issue.number);
-      const next = computeNextAction(runState);
+      let state = await retryPendingGateCleanup(store, runState);
+      const next = computeNextAction(state);
 
       if (next.action === "await-human-gate" && next.gate?.issue) {
         const gateId = next.gate.id;
-        const decision = await checkHumanGateIssue(runState, gateId);
+        const decision = await checkHumanGateIssue(state, gateId);
         if (decision.resolved) {
           // TAC-06: persist first, then cleanup
-          const decided = computeGateDecision(runState, gateId, decision);
+          const decided = computeGateDecision(state, gateId, decision);
           await store.save(decided);
-          await postGateDecision(decided, gateId, decision);
+          state = await postGateDecision(decided, gateId, decision);
+          await store.save(state);
           results.push({
             issueNumber: issue.number,
             runId: runState.runId,
@@ -507,7 +533,12 @@ await yargs(hideBin(process.argv))
         .option("type", { type: "string", demandOption: true, choices: ["spec", "issue", "runtime", "review", "human", "merge"] as const })
         .option("title", { type: "string", default: "" })
         .option("question", { type: "string", default: "" })
-        .option("context", { type: "array", string: true }),
+        .option("context", { type: "array", string: true })
+        .option("scope", { type: "string" })
+        .option("criterion", { type: "array", string: true })
+        .option("risk", { type: "array", string: true })
+        .option("non-goal", { type: "array", string: true })
+        .option("follow-up-action", { type: "string" }),
     async (argv) =>
       cmdGateOpen({
         state: argv.state,
@@ -518,6 +549,11 @@ await yargs(hideBin(process.argv))
         title: argv.title,
         question: argv.question,
         context: argv.context as string[] | undefined,
+        scope: argv.scope,
+        criterion: argv.criterion as string[] | undefined,
+        risk: argv.risk as string[] | undefined,
+        nonGoal: argv.nonGoal as string[] | undefined,
+        followUpAction: argv.followUpAction,
       }),
   )
   .command(
