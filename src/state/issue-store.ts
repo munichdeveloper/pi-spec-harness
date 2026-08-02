@@ -25,6 +25,41 @@ export function renderStateBody(state: RunState): string {
     .map((g) => `| \`${g.id}\` | ${g.type} | ${g.result} |`)
     .join("\n");
 
+  // TAC-02: render structured context for the open gate
+  const openGateSection: string[] = [];
+  if (openGate) {
+    openGateSection.push(`### Offenes Human-Gate: \`${openGate.id}\``);
+    openGateSection.push(openGate.question ?? "");
+    openGateSection.push("");
+    if (openGate.context?.scope) {
+      openGateSection.push(`**Scope:** ${openGate.context.scope}`, "");
+    }
+    if (openGate.context?.criteria && openGate.context.criteria.length > 0) {
+      openGateSection.push("**Akzeptanzkriterien:**");
+      openGateSection.push(...openGate.context.criteria.map((c) => `- ${c}`));
+      openGateSection.push("");
+    }
+    if (openGate.context?.risks && openGate.context.risks.length > 0) {
+      openGateSection.push("**Risiken:**");
+      openGateSection.push(...openGate.context.risks.map((r) => `- ${r}`));
+      openGateSection.push("");
+    }
+    if (openGate.context?.nonGoals && openGate.context.nonGoals.length > 0) {
+      openGateSection.push("**Nicht-Ziele:**");
+      openGateSection.push(...openGate.context.nonGoals.map((n) => `- ${n}`));
+      openGateSection.push("");
+    }
+    if (openGate.context?.followUpAction) {
+      openGateSection.push(`**Folgeaktion:** ${openGate.context.followUpAction}`, "");
+    }
+    // TAC-02: show PR number and full head SHA for merge/PR-related gates
+    if (state.pullRequest) {
+      openGateSection.push(`**PR:** #${state.pullRequest}${state.pullRequestHeadSha ? ` · **Head-SHA:** \`${state.pullRequestHeadSha}\`` : ""}`, "");
+    }
+    openGateSection.push(`Label \`harness:gate-approved\` zum Freigeben, \`harness:gate-rejected\` zum Ablehnen.`);
+    openGateSection.push("");
+  }
+
   const summary = [
     `## Harness Run: \`${state.runId}\``,
     "",
@@ -33,15 +68,7 @@ export function renderStateBody(state: RunState): string {
       (state.pullRequest ? ` · **PR:** #${state.pullRequest}` : ""),
     `**Phase:** \`${state.phase}\` · **Iterationen:** ${state.iterations.length}/${state.maxAutomaticIterations}`,
     "",
-    ...(openGate
-      ? [
-          `### Offenes Human-Gate: \`${openGate.id}\``,
-          openGate.question ?? "",
-          "",
-          `Label \`harness:gate-approved\` zum Freigeben, \`harness:gate-rejected\` zum Ablehnen.`,
-          "",
-        ]
-      : []),
+    ...openGateSection,
     "### Gates",
     "| id | type | result |",
     "|---|---|---|",

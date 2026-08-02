@@ -25,10 +25,18 @@ Lesezugriff auf das Issue sieht denselben Stand.
    Unklarheit im Requirement/Spec/Issue).
 3. Pi registriert ein Gate vom Typ `human` und ruft `gate-open --type human`
    auf. Es wird **kein neues Issue erzeugt** -- stattdessen:
+   - Das Gate wird zuerst mit `publication.status: prepared`, strukturiertem
+     Entscheidungskontext und stabilem Kommentar-Marker im
+     kanonischen State gespeichert.
+   - Nach dem Bereinigen alter Decision-Labels werden `openedAt` und
+     `publication.status: publishing` gespeichert. Erst danach wird das Gate
+     extern sichtbar.
    - Labels `status:needs-human` + `harness:gate-open` werden auf das
      bestehende Tracking-Issue gesetzt.
-   - Ein Kommentar mit Frage und Kontext wird angehängt (Entscheidungsjournal).
-   - Der Issue-Body wird mit dem aktualisierten Run-State überschrieben.
+   - Ein Kommentar mit Frage und Kontext wird idempotent angehängt
+     (Entscheidungsjournal), danach wird `publication.status: open` gespeichert.
+   Ein Abbruch zwischen diesen Schritten ist wiederaufnehmbar und erzeugt
+   keinen zweiten Gate-Kommentar.
 4. Pi verweist im Chat kurz auf das Issue und pausiert die Arbeit an diesem
    Run.
 5. Ein Mensch beantwortet die Frage **ausschließlich** durch Setzen von:
@@ -37,9 +45,12 @@ Lesezugriff auf das Issue sieht denselben Stand.
    Kommentare sind für Kontext willkommen, zählen aber nicht als Entscheidung.
 6. `harness resume` (manuell, durch Pi, oder durch eine GitHub Action, siehe
    unten) pollt das Issue, übernimmt die Entscheidung in den Run-State
-   (`applyGateDecision`), kommentiert das Ergebnis und **entfernt die
+   (`computeGateDecision`), speichert gleichzeitig `cleanupPending: true`,
+   kommentiert danach das Ergebnis und **entfernt die
    transienten Labels** (`harness:gate-open`, `status:needs-human`,
-   `harness:gate-approved`/`-rejected`). Das Issue bleibt offen -- es wird
+   `harness:gate-approved`/`-rejected`). Erst nach erfolgreichem Cleanup wird
+   `cleanupPending` gelöscht. `resume` und `reconcile` wiederholen einen
+   unterbrochenen Cleanup idempotent. Das Issue bleibt offen -- es wird
    nur geschlossen, wenn der gesamte Run `complete` erreicht.
    Der Befehl `harness advance` darf anschließend genau eine Phase
    weiterschalten, sofern `computeNextAction` das erlaubt. Er überspringt
@@ -78,6 +89,11 @@ npm run harness -- gate-open \
   --type human \
   --title "Merge PR #42 freigeben" \
   --question "PR #42 implementiert SPEC-011 (Kaufprofil-Wizard, risk: medium). CI grün, keine offenen Review-Threads. Freigabe zum Merge?" \
+  --scope "Merge des verifizierten SPEC-011-Slices" \
+  --criterion "Alle erforderlichen Checks sind grün" \
+  --risk "Medium: Änderung am produktiven Suchprofilfluss" \
+  --non-goal "Keine Datenmigration" \
+  --follow-up-action "SHA-spezifisch nach main mergen" \
   --context "PR: https://github.com/munichdeveloper/Immogent/pull/42" \
   --context "Spec: docs/30-specifications/SPEC-011-authentifizierte-kaufprofil-erstellung.md"
 ```
