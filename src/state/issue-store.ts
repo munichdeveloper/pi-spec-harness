@@ -52,6 +52,15 @@ export function renderStateBody(state: RunState): string {
     if (openGate.context?.followUpAction) {
       openGateSection.push(`**Folgeaktion:** ${openGate.context.followUpAction}`, "");
     }
+    const evidence = [
+      ...(openGate.evidence ?? []),
+      ...(openGate.publication?.legacyContext ?? []),
+    ].filter((item, index, items) => items.indexOf(item) === index);
+    if (evidence.length > 0) {
+      openGateSection.push("**Evidence:**");
+      openGateSection.push(...evidence.map((item) => `- ${item}`));
+      openGateSection.push("");
+    }
     // TAC-02: show PR number and full head SHA for merge/PR-related gates
     if (state.pullRequest) {
       openGateSection.push(`**PR:** #${state.pullRequest}${state.pullRequestHeadSha ? ` · **Head-SHA:** \`${state.pullRequestHeadSha}\`` : ""}`, "");

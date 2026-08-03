@@ -29,16 +29,35 @@ An additional pre-merge review found and fixed a retry race: after the
 `publishing` checkpoint, a retry no longer removes a newly applied human
 decision.
 
+After explicit human approval for private-code disclosure, Copilot reviewed
+delivery PR #6 at head
+`ae1ece561761ef5e16ff3a3667fb9d96f7fccd4b`. All seven findings were treated
+as actionable and addressed in a second review iteration:
+
+1. reconciliation issue discovery now follows every REST page instead of
+   silently stopping after 100 results;
+2. label timelines use paginated, slurped responses and deterministic
+   chronological ordering;
+3. gate preparation rejects unregistered or questionless gates explicitly;
+4. the deprecated decision wrapper is compute-only, so cleanup cannot run
+   before persistence;
+5. legacy CLI context is visible as Evidence in the tracking-issue summary;
+6. SPEC-002 describes state-based reconciliation candidate selection;
+7. the CLI documentation describes the same robust selection logic.
+
 PR #9 was merged at exact head
 `cc5d66f18885a4af06e551de190a3aa8f57fc2cb` into the delivery branch as
 commit `979121cf9da7f9cd9acaf77d9dde3a9d6f00f2da`.
 
 ## Verification
 
-- `npm run check`: typecheck, lint, and 57 tests passed.
+- Before Copilot review, `npm run check` passed with 57 tests.
+- After the seven review fixes, `npm run check` passed with 62 tests across
+  seven test files.
 - GitHub CI passed on the delivery head.
 - GitGuardian passed on the delivery head.
-- All six review threads are resolved.
+- All six implementation-PR review threads are resolved. The seven delivery-
+  PR threads are answered and resolved after their fixes are published.
 
 ### Missed-event reconciliation smoke
 
@@ -68,6 +87,6 @@ description, correlation IDs, and evidence. Idempotency keys use the prefix
 
 ## Remaining gate
 
-After this document and the final verification evidence are part of one exact
-delivery head, RUN-003 requires a SHA-specific human merge approval before PR
-#6 may be merged into `main`.
+After the Copilot findings are published, answered, resolved, and verified on
+one exact delivery head, RUN-003 requires a separate SHA-specific human merge
+approval before PR #6 may be merged into `main`.

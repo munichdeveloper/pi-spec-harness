@@ -20,6 +20,7 @@ import {
   GATE_APPROVED_LABEL,
   GATE_REJECTED_LABEL,
   prepareHumanGateIssue,
+  applyGateDecision,
   selectCurrentGateDecision,
 } from "../src/gates/human-gate.js";
 import { parseStateFromBody, renderStateBody } from "../src/state/issue-store.js";
@@ -130,6 +131,20 @@ describe("conflict detection (TAC-05)", () => {
 // TAC-06/TAC-07: computeGateDecision is pure; state persisted before cleanup
 // ---------------------------------------------------------------------------
 describe("computeGateDecision is pure (TAC-06)", () => {
+  it("keeps the compatibility wrapper compute-only so cleanup cannot precede persistence", () => {
+    let state = baseRun();
+    state = upsertGate(state, { id: "g1", type: "human", question: "Approve?" });
+    const decided = applyGateDecision(state, "g1", {
+      resolved: true,
+      approved: true,
+      by: "human",
+      at: "2026-08-03T06:00:00.000Z",
+    });
+
+    expect(decided.gates[0].result).toBe("passed");
+    expect(decided.gates[0].cleanupPending).toBe(true);
+  });
+
   it("returns decided state without performing any I/O (pure function)", () => {
     let state = baseRun();
     const gateId = "spec-approval";
@@ -260,6 +275,23 @@ describe("reconciliation candidate selection", () => {
 // TAC-01/TAC-02: GateRecord context and openedAt; renderStateBody gate summary
 // ---------------------------------------------------------------------------
 describe("gate context and renderStateBody (TAC-01/TAC-02)", () => {
+  it("rejects publication preparation for an unregistered or questionless gate", () => {
+    const state = baseRun();
+    const options = {
+      runState: state,
+      gateId: "missing",
+      title: "Missing",
+      question: "Approve?",
+      context: [],
+      runIssue: { repository: state.repository, number: 7, url: "https://example.test/issues/7" },
+    };
+    expect(() => prepareHumanGateIssue(options)).toThrow(/not registered/);
+
+    const questionless = upsertGate(state, { id: "questionless", type: "human" });
+    expect(() => prepareHumanGateIssue({ ...options, runState: questionless, gateId: "questionless" }))
+      .toThrow(/no decision question/);
+  });
+
   it("persists a prepared publication with structured CLI-equivalent context before GitHub writes", () => {
     let state = baseRun();
     const ctx: GateDecisionContext = {
@@ -362,6 +394,24 @@ describe("gate context and renderStateBody (TAC-01/TAC-02)", () => {
     expect(body).toContain("High risk: gate path");
     expect(body).toContain("No polling");
     expect(body).toContain("Advance to merge");
+  });
+
+  it("renderStateBody exposes legacy CLI context as decision evidence (TAC-02)", () => {
+    let state = baseRun();
+    state = upsertGate(state, { id: "evidence-gate", type: "human", question: "Approve?" });
+    state = prepareHumanGateIssue({
+      runState: state,
+      gateId: "evidence-gate",
+      title: "Evidence",
+      question: "Approve?",
+      context: ["CI run 123 passed", "Preview smoke passed"],
+      runIssue: { repository: state.repository, number: 7, url: "https://example.test/issues/7" },
+    });
+
+    const body = renderStateBody(state);
+    expect(body).toContain("**Evidence:**");
+    expect(body).toContain("- CI run 123 passed");
+    expect(body).toContain("- Preview smoke passed");
   });
 
   it("renderStateBody shows PR number and full head SHA for PR-related gates (TAC-02)", () => {

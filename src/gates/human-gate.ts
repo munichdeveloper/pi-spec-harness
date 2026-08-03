@@ -64,6 +64,12 @@ export interface OpenHumanGateOptions {
 export function prepareHumanGateIssue(opts: OpenHumanGateOptions): RunState {
   const { runState, gateId, title, context, decisionContext, runIssue } = opts;
   const existingGate = runState.gates.find((g) => g.id === gateId);
+  if (!existingGate) {
+    throw new Error(`gate '${gateId}' is not registered; call upsertGate before preparing publication`);
+  }
+  if (!existingGate.question?.trim()) {
+    throw new Error(`gate '${gateId}' has no decision question`);
+  }
   if (existingGate?.issue) {
     return runState;
   }
@@ -269,21 +275,18 @@ export async function postGateDecision(
 }
 
 /**
- * Convenience wrapper kept for backward compatibility: apply decision and
- * run side-effects. Callers that need guaranteed TAC-06 ordering (save
- * before cleanup) should use computeGateDecision + store.save + postGateDecision
- * directly instead.
+ * Pure compatibility wrapper. It deliberately computes only the durable
+ * decision checkpoint; callers must persist the returned state before they
+ * invoke postGateDecision (TAC-06).
  *
  * @deprecated Use computeGateDecision + store.save + postGateDecision instead.
  */
-export async function applyGateDecision(
+export function applyGateDecision(
   runState: RunState,
   gateId: string,
   decision: GateCheckResult,
-): Promise<RunState> {
-  const next = computeGateDecision(runState, gateId, decision);
-  // Note: caller is responsible for persisting `next` before postGateDecision.
-  return postGateDecision(next, gateId, decision);
+): RunState {
+  return computeGateDecision(runState, gateId, decision);
 }
 
 /**

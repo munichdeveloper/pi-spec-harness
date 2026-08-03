@@ -408,9 +408,9 @@ async function cmdIssueCreate(
 }
 
 /**
- * TAC-08: Reconcile all open harness gates in a repository. Finds every
- * open tracking issue carrying both `harness:run` and `harness:gate-open`,
- * then applies the same label-timeline-based resume logic for each run.
+ * TAC-08: Reconcile all recoverable human-gate work in a repository. Finds
+ * every open `harness:run` tracking issue, then uses the canonical state to
+ * select only pending publication, open decisions, or pending cleanup.
  * This handles label events that arrived while the trigger workflow was not
  * yet active or had transiently failed (missed-event recovery).
  */

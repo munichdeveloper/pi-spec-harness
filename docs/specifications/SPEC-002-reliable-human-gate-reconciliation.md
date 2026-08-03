@@ -9,7 +9,7 @@ requirements:
   - REQ-002
 implementation_assignee: "@github-copilot"
 created: 2026-07-30
-updated: 2026-07-30
+updated: 2026-08-03
 ---
 
 # SPEC-002: Dauerhafte Human-Gate-Entscheidungen und Event-Reconciliation
@@ -37,8 +37,11 @@ Periodisches Polling ist nicht Teil des Standards.
    Ein vorhandenes Label ohne gültiges Event nach `openedAt` zählt nicht.
 4. State-Persistenz und GitHub-Aufräumaktionen werden getrennt: Persistenz ist
    verbindlich, Kommentare und Label-Cleanup sind idempotente Folgeaktionen.
-5. `reconcile` durchsucht ausschließlich offene Tracking-Issues mit
-   `harness:run` und `harness:gate-open` im explizit angegebenen Repository.
+5. `reconcile` durchsucht offene Tracking-Issues mit `harness:run` im explizit
+   angegebenen Repository und wählt anhand des kanonischen States nur Runs
+   mit ausstehender Veröffentlichung, offener Entscheidung oder nachholbarem
+   Cleanup aus. So bleibt Cleanup auch nach Entfernen von `harness:gate-open`
+   wiederholbar.
 6. Der Workflow serialisiert Gate-Verarbeitung repositoryweit über eine
    Concurrency-Gruppe.
 7. Reconciliation wird eventgetrieben, per `workflow_dispatch` und bei
