@@ -21,6 +21,49 @@ export interface IssueRef {
   url: string;
 }
 
+export interface LabelEvent {
+  label: string;
+  actor: string;
+  createdAt: string;
+}
+
+interface TimelineEvent {
+  event: string;
+  label?: { name: string };
+  actor?: { login: string };
+  created_at?: string;
+}
+
+interface ApiIssue {
+  number: number;
+  title: string;
+  body: string | null;
+  pull_request?: unknown;
+}
+
+/** Parse `gh api --paginate --slurp` timeline output deterministically. */
+export function parsePaginatedLabelEvents(out: string): LabelEvent[] {
+  const pages = JSON.parse(out) as TimelineEvent[][];
+  return pages
+    .flat()
+    .filter((event) => event.event === "labeled" && event.label?.name && event.actor?.login && event.created_at)
+    .map((event) => ({
+      label: event.label!.name,
+      actor: event.actor!.login,
+      createdAt: event.created_at!,
+    }))
+    .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+}
+
+/** Parse all paginated issue results and exclude pull requests. */
+export function parsePaginatedIssues(out: string): { number: number; title: string; body: string }[] {
+  const pages = JSON.parse(out) as ApiIssue[][];
+  return pages
+    .flat()
+    .filter((issue) => !issue.pull_request)
+    .map((issue) => ({ number: issue.number, title: issue.title, body: issue.body ?? "" }));
+}
+
 /**
  * Thin, explicit wrapper around the `gh` CLI. Every write action here is a
  * deliberate, named function -- there is no generic "run arbitrary gh
@@ -144,5 +187,42 @@ export const github = {
     const match = url.match(/\/pull\/(\d+)/);
     const number = match ? Number(match[1]) : Number.NaN;
     return { number, url };
+  },
+
+  /**
+   * Read label-timeline events for an issue. Returns only "labeled" events
+   * with actor login and creation timestamp, which are used by the gate
+   * decision logic to filter events by the gate's openedAt timestamp (TAC-04).
+   */
+  async listIssueLabelEvents(repository: string, number: number): Promise<LabelEvent[]> {
+    const out = await runGh([
+      "api",
+      `repos/${repository}/issues/${number}/timeline`,
+      "--paginate",
+      "--slurp",
+    ]);
+    return parsePaginatedLabelEvents(out);
+  },
+
+  /**
+   * List every open issue that carries all of the given labels. REST
+   * pagination avoids silently dropping tracking issues after a fixed limit.
+   */
+  async findIssuesWithLabels(
+    repository: string,
+    labels: string[],
+  ): Promise<{ number: number; title: string; body: string }[]> {
+    const args = [
+      "api",
+      "--method", "GET",
+      `repos/${repository}/issues`,
+      "-f", "state=open",
+      "-f", `labels=${labels.join(",")}`,
+      "-f", "per_page=100",
+      "--paginate",
+      "--slurp",
+    ];
+    const out = await runGh(args);
+    return parsePaginatedIssues(out);
   },
 };

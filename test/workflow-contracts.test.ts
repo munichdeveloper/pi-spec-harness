@@ -7,7 +7,6 @@ describe("GitHub workflow contracts", () => {
 
     expect(workflow).toContain("issues:");
     expect(workflow).toContain("harness:run");
-    expect(workflow).toContain("github.event.issue.number");
     expect(workflow).toContain("GITHUB_EVENT_PATH");
     expect(workflow).toContain("try capture");
     expect(workflow).toContain("catch {}");
@@ -18,6 +17,40 @@ describe("GitHub workflow contracts", () => {
     expect(workflow).not.toContain("sort -V");
     expect(workflow).not.toContain("tail -1");
     expect(workflow).not.toContain("git push");
+  });
+
+  // TAC-09: workflow supports workflow_dispatch and push (own file on default branch)
+  it("supports workflow_dispatch and push triggers for bootstrap reconciliation (TAC-09)", async () => {
+    const workflow = await readFile(".github/workflows/harness-gate-trigger.yml", "utf8");
+
+    expect(workflow).toContain("workflow_dispatch");
+    expect(workflow).toContain("push:");
+    expect(workflow).toContain("harness-gate-trigger.yml");
+  });
+
+  // TAC-10: repo-wide concurrency, no newest-issue selection
+  it("serialises gate processing repo-wide and does not select by newest issue (TAC-10)", async () => {
+    const workflow = await readFile(".github/workflows/harness-gate-trigger.yml", "utf8");
+
+    // Repo-wide concurrency group -- not per-issue
+    expect(workflow).toContain("github.repository");
+    // The resume job only fires on the issues event, not all events
+    expect(workflow).toContain("github.event_name");
+    // reconcile command used for bootstrap
+    expect(workflow).toContain("reconcile");
+    // No "newest issue" selection patterns
+    expect(workflow).not.toContain("sort -V");
+    expect(workflow).not.toContain("tail -1");
+  });
+
+  it("exposes every structured decision-context field through gate-open", async () => {
+    const cli = await readFile("src/cli.ts", "utf8");
+    for (const option of ["scope", "criterion", "risk", "non-goal", "follow-up-action"]) {
+      expect(cli).toContain(`.option("${option}"`);
+    }
+    expect(cli).toContain("decisionContext");
+    expect(cli).toContain("prepareHumanGateIssue");
+    expect(cli.indexOf("await store.save(state)")).toBeLessThan(cli.indexOf("publishHumanGateIssue(state, argv.gateId,"));
   });
 
   it("documents the target-repository merge transaction and check permissions", async () => {
