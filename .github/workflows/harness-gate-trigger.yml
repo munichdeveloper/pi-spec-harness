@@ -3,6 +3,12 @@ name: Harness Gate Trigger
 on:
   issues:
     types: [labeled]
+  pull_request:
+    types: [closed]
+  pull_request_review:
+    types: [submitted]
+  check_suite:
+    types: [completed]
   workflow_dispatch: {}
   push:
     branches: [main]
@@ -21,6 +27,7 @@ concurrency:
 
 jobs:
   resume:
+    # Gate decision on the tracking issue (label-based human gate)
     if: >-
       github.event_name == 'issues' &&
       contains(github.event.issue.labels.*.name, 'harness:run') &&
@@ -60,16 +67,49 @@ jobs:
           )"
           printf '%s\n' "$result"
           action="$(printf '%s\n' "$result" | sed -n '/^{/,$p' | jq -r '.result.nextAction.action')"
-          gate_id="$(printf '%s\n' "$result" | sed -n '/^{/,$p' | jq -r '
-            [.result.state.gates[] | select(.type == "human")][-1].id // empty
-          ')"
-          if [[ "$action" == "advance-phase" && ! "$gate_id" =~ ^merge-approval($|-) ]]; then
-            npm run harness -- advance \
+          if [[ "$action" == "advance-phase" ]]; then
+            npm run harness -- orchestrate \
               --repository "${{ github.repository }}" \
               --run-id "${{ steps.run.outputs.run_id }}"
-          elif [[ "$action" == "advance-phase" ]]; then
-            echo "::notice::Merge approval is recorded; phase completion waits for the bound merge effect."
           fi
+
+  orchestrate-on-pr-event:
+    # Orchestrate after implementation PR is merged or CI/review events occur
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20.9"
+          cache: npm
+
+      - run: npm ci
+
+      - name: Resolve run from PR body
+        id: run
+        shell: bash
+        run: |
+          run_id="$(jq -r '.pull_request.body | (try capture("harness:(?<id>[a-z0-9_-]+)") catch {}) | .id // empty' "$GITHUB_EVENT_PATH")"
+          if [[ -z "$run_id" ]]; then
+            echo "::notice::No harness run id found in PR body; skipping orchestration."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Orchestrate after PR merge
+        if: steps.run.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          npm run harness -- orchestrate \
+            --repository "${{ github.repository }}" \
+            --run-id "${{ steps.run.outputs.run_id }}"
 
   reconcile:
     if: github.event_name == 'workflow_dispatch' || github.event_name == 'push'

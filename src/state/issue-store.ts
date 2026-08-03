@@ -74,7 +74,12 @@ export function renderStateBody(state: RunState): string {
     "",
     `**Repository:** ${state.repository} · **Requirement:** ${state.requirement} · **Spec:** ${state.spec}` +
       (state.issue ? ` · **Issue:** #${state.issue}` : "") +
-      (state.pullRequest ? ` · **PR:** #${state.pullRequest}` : ""),
+      (state.deliveryPullRequest
+        ? ` · **Delivery-PR:** #${state.deliveryPullRequest}`
+        : state.pullRequest
+          ? ` · **PR:** #${state.pullRequest}`
+          : "") +
+      (state.implementationPullRequest ? ` · **Impl-PR:** #${state.implementationPullRequest}` : ""),
     `**Phase:** \`${state.phase}\` · **Iterationen:** ${state.iterations.length}/${state.maxAutomaticIterations}`,
     "",
     ...openGateSection,

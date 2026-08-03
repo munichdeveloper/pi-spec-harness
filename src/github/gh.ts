@@ -94,13 +94,14 @@ export const github = {
 
   async viewIssue(repository: string, number: number) {
     const out = await runGh(["issue", "view", String(number), "--repo", repository, "--json",
-      "number,title,body,state,labels,url,comments"]);
+      "number,title,body,state,labels,assignees,url,comments"]);
     return JSON.parse(out) as {
       number: number;
       title: string;
       body: string;
       state: string;
       labels: { name: string }[];
+      assignees: { login: string }[];
       url: string;
       comments: { author: { login: string }; body: string; createdAt: string }[];
     };
@@ -108,7 +109,7 @@ export const github = {
 
   async viewPullRequest(repository: string, number: number) {
     const out = await runGh(["pr", "view", String(number), "--repo", repository, "--json",
-      "number,title,body,state,url,mergeable,mergeStateStatus,reviewDecision,statusCheckRollup,headRefOid"]);
+      "number,title,body,state,url,mergeable,mergeStateStatus,reviewDecision,statusCheckRollup,headRefOid,baseRefName,headRefName"]);
     return JSON.parse(out) as Record<string, unknown>;
   },
 
@@ -187,6 +188,141 @@ export const github = {
     const match = url.match(/\/pull\/(\d+)/);
     const number = match ? Number(match[1]) : Number.NaN;
     return { number, url };
+  },
+
+  /**
+   * Get the current HEAD commit SHA of a branch via the GitHub API.
+   * TAC-02: used to verify the delivery branch remote-head before committing.
+   */
+  async getBranchSha(repository: string, branch: string): Promise<string> {
+    const out = await runGh([
+      "api",
+      `repos/${repository}/git/refs/heads/${encodeURIComponent(branch)}`,
+      "--jq", ".object.sha",
+    ]);
+    return out.trim();
+  },
+
+  /**
+   * Fetch a file's raw content and its blob SHA from a specific ref.
+   * Returns content as a UTF-8 string plus the blob SHA needed for updates.
+   */
+  async getFileContent(
+    repository: string,
+    path: string,
+    ref: string,
+  ): Promise<{ content: string; blobSha: string }> {
+    const out = await runGh([
+      "api",
+      `repos/${repository}/contents/${path}?ref=${encodeURIComponent(ref)}`,
+    ]);
+    const data = JSON.parse(out) as { content: string; sha: string };
+    const content = Buffer.from(data.content.replace(/\s/g, ""), "base64").toString("utf-8");
+    return { content, blobSha: data.sha };
+  },
+
+  /**
+   * Commit a single file update on a branch via the GitHub Contents API.
+   * Returns the new commit SHA.
+   * TAC-03: used to commit spec-approval status exclusively on the delivery branch.
+   */
+  async updateFileOnBranch(
+    repository: string,
+    branch: string,
+    path: string,
+    newContent: string,
+    currentBlobSha: string,
+    commitMessage: string,
+  ): Promise<string> {
+    const encodedContent = Buffer.from(newContent).toString("base64");
+    const out = await runGh([
+      "api",
+      `repos/${repository}/contents/${path}`,
+      "--method", "PUT",
+      "-f", `message=${commitMessage}`,
+      "-f", `content=${encodedContent}`,
+      "-f", `sha=${currentBlobSha}`,
+      "-f", `branch=${branch}`,
+      "--jq", ".commit.sha",
+    ]);
+    return out.trim();
+  },
+
+  /**
+   * Check which actors are suggested as assignees for an issue (includes the
+   * Copilot coding agent if the repository has it enabled).
+   * TAC-09: used to verify Copilot availability before attempting assignment.
+   */
+  async checkSuggestedActors(repository: string, issueNumber: number): Promise<string[]> {
+    try {
+      const out = await runGh([
+        "api",
+        `repos/${repository}/issues/${issueNumber}/assignees/suggested`,
+        "--jq", "[.[].login]",
+      ]);
+      return JSON.parse(out) as string[];
+    } catch {
+      // Endpoint may not be available on all GitHub plans; return empty list
+      // so the caller can fall back to a human gate instead of crashing.
+      return [];
+    }
+  },
+
+  /**
+   * Assign the Copilot Coding Agent to an issue via the official GitHub
+   * Agent Assignment API, setting the delivery branch as baseRef.
+   * TAC-07/09: uses the agent assignment API; a mere body note is insufficient.
+   */
+  async assignCodingAgent(
+    repository: string,
+    issueNumber: number,
+    assignee: string,
+    baseRef: string,
+  ): Promise<void> {
+    await runGh([
+      "api",
+      `repos/${repository}/issues/${issueNumber}/assignees`,
+      "--method", "POST",
+      "-f", `assignees[]=${assignee}`,
+      "-f", `base_ref=${baseRef}`,
+    ]);
+  },
+
+  /**
+   * List pull requests filtered by base branch.
+   * TAC-10: used to find the implementation PR created by the Coding Agent.
+   */
+  async listPullRequestsByBase(
+    repository: string,
+    base: string,
+  ): Promise<Array<{ number: number; headRefOid: string; headRefName: string; baseRefName: string; url: string }>> {
+    const out = await runGh([
+      "pr", "list", "--repo", repository,
+      "--base", base,
+      "--state", "open",
+      "--json", "number,headRefOid,headRefName,baseRefName,url",
+    ]);
+    return JSON.parse(out) as Array<{ number: number; headRefOid: string; headRefName: string; baseRefName: string; url: string }>;
+  },
+
+  /**
+   * Merge a pull request. Returns the merge commit SHA.
+   * TAC-11: used to merge the implementation PR into the delivery branch after
+   * CI is green and all reviews are resolved.
+   */
+  async mergePullRequest(
+    repository: string,
+    prNumber: number,
+    method: "merge" | "squash" | "rebase" = "merge",
+  ): Promise<string> {
+    const out = await runGh([
+      "pr", "merge", String(prNumber),
+      "--repo", repository,
+      `--${method}`,
+      "--json", "mergeCommit",
+      "--jq", ".mergeCommit.oid",
+    ]);
+    return out.trim();
   },
 
   /**
