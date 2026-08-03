@@ -9,13 +9,20 @@ on:
     types: [submitted]
   check_suite:
     types: [completed]
+  workflow_dispatch: {}
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/harness-gate-trigger.yml'
 
 permissions:
   contents: read
   issues: write
 
+# TAC-10: serialise all gate processing repo-wide to avoid concurrent writes
+# to the same canonical issue-state.
 concurrency:
-  group: harness-gate-${{ github.event.issue.number || github.event.pull_request.number || github.event.check_suite.id }}
+  group: harness-gate-${{ github.repository }}
   cancel-in-progress: false
 
 jobs:
@@ -104,3 +111,24 @@ jobs:
             --repository "${{ github.repository }}" \
             --run-id "${{ steps.run.outputs.run_id }}"
 
+  reconcile:
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20.9"
+          cache: npm
+
+      - run: npm ci
+
+      # TAC-09/TAC-10: Bootstrap reconciliation on workflow installation or manual dispatch.
+      # Processes all open harness gates in the repository without selecting by "newest" issue.
+      - name: Reconcile all open harness gates
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          npm run harness -- reconcile --repository "${{ github.repository }}"
