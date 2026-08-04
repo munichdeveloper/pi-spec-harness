@@ -82,7 +82,11 @@ describe("GitHub workflow contracts", () => {
     expect(workflow).toContain("workflow_call");
     expect(workflow).toContain("claude-code-action-version");
     expect(workflow).toContain("preview-verify-command");
-    expect(workflow).toContain("anthropics/claude-code-action@${{ inputs.claude-code-action-version }}");
+    // NOTE: a step's 'uses:' cannot reference the 'inputs' context in GitHub
+    // Actions, so the actual pin is hardcoded; this asserts the hardcoded
+    // pin matches the documented minimum version instead of the old
+    // (invalid) templated form.
+    expect(workflow).toContain("anthropics/claude-code-action@v1.0.94");
     expect(workflow).toContain(">=1.0.94");
     expect(workflow).toContain("bug-pipeline:in-progress");
     expect(workflow).toContain("bug-pipeline:completed");

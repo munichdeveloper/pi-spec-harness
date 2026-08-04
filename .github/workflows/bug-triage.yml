@@ -28,7 +28,7 @@ on:
         type: string
         default: ""
       claude-code-action-version:
-        description: Pinned claude-code-action version (tag vX.Y.Z or 40-char SHA).
+        description: Pinned claude-code-action version (tag vX.Y.Z or 40-char SHA). NOTE informational only -- see comment at the step below, GitHub Actions cannot use this input inside a step's uses:.
         required: false
         type: string
         default: v1.0.94
@@ -88,6 +88,12 @@ jobs:
             exit 1
           fi
 
+          pinned_uses_ref="v1.0.94"
+
+          if [[ "$ref" != "$pinned_uses_ref" ]]; then
+            echo "::warning::claude-code-action-version input is '$ref' but the actual pinned 'uses:' below is hardcoded to $pinned_uses_ref (GitHub Actions does not support the inputs context in a step's uses:). Update the hardcoded pin in bug-triage.yml to match."
+          fi
+
       - name: Checkout repository
         if: steps.guard.outputs.is_bug == 'true'
         uses: actions/checkout@v4
@@ -136,7 +142,10 @@ jobs:
       - name: Claude bug analysis + fix + PR
         if: steps.guard.outputs.is_bug == 'true' && steps.idempotency.outputs.run == 'true'
         id: claude
-        uses: anthropics/claude-code-action@${{ inputs.claude-code-action-version }}
+        # NOTE: a step's 'uses:' only supports github/needs/strategy/matrix/vars
+        # contexts, not 'inputs'. The version is therefore hardcoded here and
+        # must be bumped together with the default above and the validator.
+        uses: anthropics/claude-code-action@v1.0.94
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
