@@ -165,6 +165,10 @@ jobs:
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # TEMPORARY DEBUG (remove once diagnosed): full SDK output so we can
+          # see why Claude is not posting its own findings/uncertainty
+          # comment as required by the mandatory sequence below (steps 3/4).
+          show_full_output: true
           prompt: |
             You are running inside the repository where issue #${{ inputs.issue-number }} was opened.
 
