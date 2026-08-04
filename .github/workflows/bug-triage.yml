@@ -98,6 +98,21 @@ jobs:
         if: steps.guard.outputs.is_bug == 'true'
         uses: actions/checkout@v4
 
+      - name: Ensure pipeline labels exist
+        if: steps.guard.outputs.is_bug == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # 'gh issue edit --add-label' fails if the label does not already
+          # exist in the target repository. This pipeline must work
+          # identically in every repository that references it (AC-10), so
+          # required labels are created here idempotently rather than
+          # assumed to pre-exist.
+          gh label create "bug-pipeline:in-progress" --repo "${{ github.repository }}" --color "fbca04" --description "Harness bug pipeline run in progress" --force
+          gh label create "bug-pipeline:completed" --repo "${{ github.repository }}" --color "0e8a16" --description "Harness bug pipeline run completed" --force
+          gh label create "status:needs-human" --repo "${{ github.repository }}" --color "d93f0b" --description "Waiting on a human decision" --force
+
       - name: Detect idempotency labels
         if: steps.guard.outputs.is_bug == 'true'
         id: idempotency
