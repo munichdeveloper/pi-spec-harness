@@ -138,6 +138,8 @@ jobs:
         id: claude
         uses: anthropics/claude-code-action@${{ inputs.claude-code-action-version }}
         with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           prompt: |
             You are running inside the repository where issue #${{ inputs.issue-number }} was opened.
 
