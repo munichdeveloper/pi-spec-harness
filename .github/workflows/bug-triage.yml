@@ -88,8 +88,10 @@ jobs:
             exit 1
           fi
 
-          if [[ "$ref" != "v1.0.94" ]]; then
-            echo "::warning::claude-code-action-version input is '$ref' but the actual pinned 'uses:' below is hardcoded to v1.0.94 (GitHub Actions does not support the inputs context in a step's uses:). Update the hardcoded pin in bug-triage.yml to match."
+          pinned_uses_ref="v1.0.94"
+
+          if [[ "$ref" != "$pinned_uses_ref" ]]; then
+            echo "::warning::claude-code-action-version input is '$ref' but the actual pinned 'uses:' below is hardcoded to $pinned_uses_ref (GitHub Actions does not support the inputs context in a step's uses:). Update the hardcoded pin in bug-triage.yml to match."
           fi
 
       - name: Checkout repository
