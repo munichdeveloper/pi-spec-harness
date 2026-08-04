@@ -75,4 +75,31 @@ describe("GitHub workflow contracts", () => {
     expect(contract).toContain("Reconcile");
     expect(contract).toContain("Tracking-Issue");
   });
+
+  it("defines reusable bug-triage workflow contract with version gate and idempotency labels (TAC-01/TAC-05/TAC-08)", async () => {
+    const workflow = await readFile(".github/workflows/bug-triage.yml", "utf8");
+
+    expect(workflow).toContain("workflow_call");
+    expect(workflow).toContain("claude-code-action-version");
+    expect(workflow).toContain("preview-verify-command");
+    expect(workflow).toContain("anthropics/claude-code-action@${{ inputs.claude-code-action-version }}");
+    expect(workflow).toContain(">=1.0.94");
+    expect(workflow).toContain("bug-pipeline:in-progress");
+    expect(workflow).toContain("bug-pipeline:completed");
+    expect(workflow).toContain("status:needs-human");
+    expect(workflow).toContain("Post kickoff issue comment");
+    expect(workflow).toContain("Add pipeline result comment");
+  });
+
+  it("includes strict bug trigger filtering in the thin reference workflow template (TAC-02/TAC-04)", async () => {
+    const cli = await readFile("src/cli.ts", "utf8");
+    const helper = await readFile("src/bug/workflow-reference.ts", "utf8");
+
+    expect(cli).toContain("install-bug-workflow");
+    expect(cli).toContain("workflow conflict");
+    expect(helper).toContain("types: [opened, typed, labeled]");
+    expect(helper).toContain("github.event.issue.type.name == 'Bug'");
+    expect(helper).toContain("contains(github.event.issue.labels.*.name, 'type:bug')");
+    expect(helper).toContain("/.github/workflows/bug-triage.yml@");
+  });
 });

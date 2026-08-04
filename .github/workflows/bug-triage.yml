@@ -1,0 +1,230 @@
+name: Harness Bug Triage Reusable
+
+on:
+  workflow_call:
+    inputs:
+      issue-number:
+        description: GitHub issue number from the caller repository.
+        required: true
+        type: number
+      issue-type-name:
+        description: Issue type name from the triggering event.
+        required: false
+        type: string
+        default: ""
+      issue-labels-json:
+        description: JSON array of issue labels from the triggering event.
+        required: false
+        type: string
+        default: "[]"
+      issue-author:
+        description: Login of the issue author.
+        required: false
+        type: string
+        default: ""
+      reviewer:
+        description: Explicit reviewer/assignee login for the generated PR.
+        required: false
+        type: string
+        default: ""
+      claude-code-action-version:
+        description: Pinned claude-code-action version (tag vX.Y.Z or 40-char SHA).
+        required: false
+        type: string
+        default: v1.0.94
+      preview-verify-command:
+        description: Optional repository-specific preview verification command.
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+jobs:
+  triage:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Guard non-bug events (server-side)
+        id: guard
+        shell: bash
+        run: |
+          labels='${{ inputs.issue-labels-json }}'
+          type_name='${{ inputs.issue-type-name }}'
+          if [[ "$type_name" == "Bug" ]] || printf '%s' "$labels" | jq -e '. | index("type:bug") != null' >/dev/null; then
+            echo "is_bug=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "is_bug=false" >> "$GITHUB_OUTPUT"
+            echo "SKIP_REASON=Issue is neither type Bug nor labeled type:bug." >> "$GITHUB_ENV"
+          fi
+
+      - name: Stop when event is not a bug
+        if: steps.guard.outputs.is_bug != 'true'
+        shell: bash
+        run: |
+          echo "Skipping run: $SKIP_REASON"
+
+      - name: Validate claude-code-action pin and minimum version (>=1.0.94)
+        if: steps.guard.outputs.is_bug == 'true'
+        shell: bash
+        run: |
+          ref='${{ inputs.claude-code-action-version }}'
+          if [[ "$ref" =~ ^[0-9a-f]{40}$ ]]; then
+            exit 0
+          fi
+
+          if [[ ! "$ref" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+            echo "::error::claude-code-action-version must be pinned to a semver tag (vX.Y.Z) or 40-char SHA. Got '$ref'."
+            exit 1
+          fi
+
+          major="${BASH_REMATCH[1]}"
+          minor="${BASH_REMATCH[2]}"
+          patch="${BASH_REMATCH[3]}"
+          if (( major < 1 )) || (( major == 1 && minor == 0 && patch < 94 )) || (( major == 1 && minor < 0 )); then
+            echo "::error::claude-code-action-version must be >= v1.0.94. Got '$ref'."
+            exit 1
+          fi
+
+      - name: Checkout repository
+        if: steps.guard.outputs.is_bug == 'true'
+        uses: actions/checkout@v4
+
+      - name: Detect idempotency labels
+        if: steps.guard.outputs.is_bug == 'true'
+        id: idempotency
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          issue='${{ inputs.issue-number }}'
+          labels="$(gh issue view "$issue" --repo "${{ github.repository }}" --json labels --jq '.labels[].name')"
+
+          if printf '%s\n' "$labels" | grep -Fxq 'bug-pipeline:completed'; then
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "reason=Already completed for this issue." >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if printf '%s\n' "$labels" | grep -Fxq 'bug-pipeline:in-progress'; then
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "reason=An existing bug pipeline run is in progress for this issue." >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          gh issue edit "$issue" --repo "${{ github.repository }}" --add-label bug-pipeline:in-progress
+          echo "run=true" >> "$GITHUB_OUTPUT"
+
+      - name: Exit on duplicate delivery
+        if: steps.guard.outputs.is_bug == 'true' && steps.idempotency.outputs.run != 'true'
+        shell: bash
+        run: |
+          echo "Skipping duplicate run: ${{ steps.idempotency.outputs.reason }}"
+
+      - name: Post kickoff issue comment (must exist before any PR)
+        if: steps.guard.outputs.is_bug == 'true' && steps.idempotency.outputs.run == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          gh issue comment '${{ inputs.issue-number }}' \
+            --repo '${{ github.repository }}' \
+            --body $'Harness Bug Pipeline gestartet.\n\n- Analyse und Reproduktionsversuch laufen jetzt.\n- Danach wird im selben Lauf ein Fix + PR erstellt oder bei Unsicherheit `status:needs-human` gesetzt.'
+
+      - name: Claude bug analysis + fix + PR
+        if: steps.guard.outputs.is_bug == 'true' && steps.idempotency.outputs.run == 'true'
+        id: claude
+        uses: anthropics/claude-code-action@${{ inputs.claude-code-action-version }}
+        with:
+          prompt: |
+            You are running inside the repository where issue #${{ inputs.issue-number }} was opened.
+
+            Mandatory sequence:
+            1. Analyze the issue and identify expected behavior vs current behavior.
+            2. Attempt a concrete reproduction first (prefer a failing automated test).
+            3. Post an issue comment summarizing findings and reproduction result before creating any PR.
+            4. If reproduction/verification is inconclusive, stop without creating a PR and explain uncertainty in an issue comment.
+            5. If reproduction is clear, implement the fix, add/adjust tests, run verification, and open a PR in one continuous run.
+            6. Link the PR to issue #${{ inputs.issue-number }}.
+
+            Optional repository verification command:
+            ${{ inputs.preview-verify-command }}
+
+      - name: Discover PR linked to issue
+        if: always() && steps.guard.outputs.is_bug == 'true' && steps.idempotency.outputs.run == 'true'
+        id: pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          issue='${{ inputs.issue-number }}'
+          pr_number="$(gh pr list \
+            --repo '${{ github.repository }}' \
+            --state open \
+            --search "#${issue} in:body" \
+            --json number \
+            --jq '.[0].number // empty')"
+
+          if [[ -n "$pr_number" ]]; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "number=$pr_number" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Mark issue for human follow-up when no PR was produced
+        if: steps.guard.outputs.is_bug == 'true' && steps.idempotency.outputs.run == 'true' && steps.pr.outputs.exists != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          gh issue edit '${{ inputs.issue-number }}' \
+            --repo '${{ github.repository }}' \
+            --add-label status:needs-human
+
+      - name: Assign reviewer and assignee on PR
+        if: steps.guard.outputs.is_bug == 'true' && steps.idempotency.outputs.run == 'true' && steps.pr.outputs.exists == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          reviewer='${{ inputs.reviewer }}'
+          if [[ -z "$reviewer" ]]; then
+            reviewer='${{ inputs.issue-author }}'
+          fi
+
+          if [[ -n "$reviewer" ]]; then
+            gh pr edit '${{ steps.pr.outputs.number }}' --repo '${{ github.repository }}' --add-assignee "$reviewer" || true
+            gh pr edit '${{ steps.pr.outputs.number }}' --repo '${{ github.repository }}' --add-reviewer "$reviewer" || true
+          fi
+
+      - name: Add pipeline result comment
+        if: always() && steps.guard.outputs.is_bug == 'true' && steps.idempotency.outputs.run == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          if [[ '${{ steps.pr.outputs.exists }}' == 'true' ]]; then
+            gh issue comment '${{ inputs.issue-number }}' \
+              --repo '${{ github.repository }}' \
+              --body $'Harness Bug Pipeline abgeschlossen.\n\n- Ergebnis: PR erstellt.\n- PR: #${{ steps.pr.outputs.number }}\n- Reviewer/Assignee wurden hinzugefügt (wenn Berechtigungen vorhanden waren).'
+            gh issue edit '${{ inputs.issue-number }}' \
+              --repo '${{ github.repository }}' \
+              --add-label bug-pipeline:completed || true
+          else
+            gh issue comment '${{ inputs.issue-number }}' \
+              --repo '${{ github.repository }}' \
+              --body $'Harness Bug Pipeline beendet ohne PR.\n\n- Reproduktion oder Verifikation war nicht eindeutig.\n- Label `status:needs-human` wurde gesetzt.'
+          fi
+
+      - name: Cleanup idempotency label
+        if: always() && steps.guard.outputs.is_bug == 'true' && steps.idempotency.outputs.run == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          gh issue edit '${{ inputs.issue-number }}' \
+            --repo '${{ github.repository }}' \
+            --remove-label bug-pipeline:in-progress || true
