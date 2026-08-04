@@ -13,6 +13,11 @@ import {
 import { github } from "./github/gh.js";
 import { orchestrate } from "./orchestrator.js";
 import { getSpecAssignee } from "./spec/spec-parser.js";
+import {
+  BUG_WORKFLOW_REFERENCE_PATH,
+  decideBugWorkflowInstall,
+  renderBugWorkflowReference,
+} from "./bug/workflow-reference.js";
 import { IssueStateStore, RUN_ISSUE_LABEL, ensureRunIssue, findRunIssue, parseStateFromBody } from "./state/issue-store.js";
 import type { StateStore } from "./state/state-store.js";
 import { FileStateStore } from "./state/store.js";
@@ -126,6 +131,13 @@ async function cmdInit(argv: {
   specPath?: string;
   deliveryPullRequest?: number;
   deliveryHeadSha?: string;
+  installBugWorkflow?: boolean;
+  bugWorkflowRef?: string;
+  bugWorkflowRepository?: string;
+  bugWorkflowPath?: string;
+  bugWorkflowReviewer?: string;
+  bugWorkflowClaudeVersion?: string;
+  bugWorkflowPreviewCommand?: string;
 }): Promise<void> {
   const initial = initRunState(argv);
   let store: StateStore;
@@ -149,11 +161,74 @@ async function cmdInit(argv: {
     state = reconcileInit(existing, argv);
   }
 
-  printResult(
-    "init",
-    { location: argv.state ?? store.issueRef?.url, state },
-    computeNextAction(state).detail,
-  );
+  let bugWorkflow:
+    | undefined
+    | {
+      path: string;
+      action: "created" | "updated" | "noop";
+      commitSha?: string;
+      harnessRef: string;
+      repository: string;
+    };
+
+  if (argv.installBugWorkflow) {
+    const path = argv.bugWorkflowPath ?? BUG_WORKFLOW_REFERENCE_PATH;
+    const expectedContent = renderBugWorkflowReference({
+      harnessRef: argv.bugWorkflowRef,
+      reusableRepository: argv.bugWorkflowRepository,
+      reviewer: argv.bugWorkflowReviewer,
+      claudeCodeActionVersion: argv.bugWorkflowClaudeVersion,
+      previewVerifyCommand: argv.bugWorkflowPreviewCommand,
+    });
+    const existing = await github.getFileContentIfExists(argv.repository, path);
+    const decision = decideBugWorkflowInstall(existing?.content, expectedContent);
+
+    if (decision === "conflict") {
+      throw new Error(
+        `workflow conflict at '${path}': existing file is not managed by pi-spec-harness; refusing to overwrite manual content`,
+      );
+    }
+
+    if (decision === "create") {
+      const commitSha = await github.createFileOnDefaultBranch(
+        argv.repository,
+        path,
+        expectedContent,
+        `ci: install bug workflow reference [harness:${argv.runId}]`,
+      );
+      bugWorkflow = {
+        path,
+        action: "created",
+        commitSha,
+        harnessRef: argv.bugWorkflowRef ?? "v0.1.0",
+        repository: argv.bugWorkflowRepository ?? "munichdeveloper/pi-spec-harness",
+      };
+    } else if (decision === "update-managed") {
+      const commitSha = await github.updateFileOnDefaultBranch(
+        argv.repository,
+        path,
+        expectedContent,
+        existing!.blobSha,
+        `ci: update bug workflow reference [harness:${argv.runId}]`,
+      );
+      bugWorkflow = {
+        path,
+        action: "updated",
+        commitSha,
+        harnessRef: argv.bugWorkflowRef ?? "v0.1.0",
+        repository: argv.bugWorkflowRepository ?? "munichdeveloper/pi-spec-harness",
+      };
+    } else {
+      bugWorkflow = {
+        path,
+        action: "noop",
+        harnessRef: argv.bugWorkflowRef ?? "v0.1.0",
+        repository: argv.bugWorkflowRepository ?? "munichdeveloper/pi-spec-harness",
+      };
+    }
+  }
+
+  printResult("init", { location: argv.state ?? store.issueRef?.url, state, bugWorkflow }, computeNextAction(state).detail);
 }
 
 async function cmdStatus(argv: StoreArgs): Promise<void> {
@@ -959,7 +1034,38 @@ await yargs(hideBin(process.argv))
         .option("requirement-path", { type: "string", describe: "Explicit path to the requirement document (repo-relative)" })
         .option("spec-path", { type: "string", describe: "Explicit path to the spec document (repo-relative)" })
         .option("delivery-pull-request", { type: "number", describe: "Delivery PR number if already known" })
-        .option("delivery-head-sha", { type: "string", describe: "Delivery PR HEAD SHA if already known" }),
+        .option("delivery-head-sha", { type: "string", describe: "Delivery PR HEAD SHA if already known" })
+        .option("install-bug-workflow", {
+          type: "boolean",
+          default: false,
+          describe: "Install/update managed bug-triage workflow reference in the target repository",
+        })
+        .option("bug-workflow-ref", {
+          type: "string",
+          describe: "Pinned ref for munichdeveloper/pi-spec-harness reusable bug workflow (tag or SHA)",
+        })
+        .option("bug-workflow-repository", {
+          type: "string",
+          default: "munichdeveloper/pi-spec-harness",
+          describe: "Repository that hosts the reusable bug-triage workflow",
+        })
+        .option("bug-workflow-path", {
+          type: "string",
+          default: ".github/workflows/harness-bug-triage.yml",
+          describe: "Path of the thin bug-triage reference workflow in the target repository",
+        })
+        .option("bug-workflow-reviewer", {
+          type: "string",
+          describe: "Optional fixed reviewer/assignee login for PRs created by the bug pipeline",
+        })
+        .option("bug-workflow-claude-version", {
+          type: "string",
+          describe: "Pinned claude-code-action version to embed in the reference workflow",
+        })
+        .option("bug-workflow-preview-command", {
+          type: "string",
+          describe: "Optional preview verification command embedded in the reference workflow",
+        }),
     async (argv) =>
       cmdInit({
         runId: argv.runId,
@@ -974,6 +1080,13 @@ await yargs(hideBin(process.argv))
         specPath: argv["spec-path"] as string | undefined,
         deliveryPullRequest: argv["delivery-pull-request"] as number | undefined,
         deliveryHeadSha: argv["delivery-head-sha"] as string | undefined,
+        installBugWorkflow: argv["install-bug-workflow"] as boolean | undefined,
+        bugWorkflowRef: argv["bug-workflow-ref"] as string | undefined,
+        bugWorkflowRepository: argv["bug-workflow-repository"] as string | undefined,
+        bugWorkflowPath: argv["bug-workflow-path"] as string | undefined,
+        bugWorkflowReviewer: argv["bug-workflow-reviewer"] as string | undefined,
+        bugWorkflowClaudeVersion: argv["bug-workflow-claude-version"] as string | undefined,
+        bugWorkflowPreviewCommand: argv["bug-workflow-preview-command"] as string | undefined,
       }),
   )
   .command(

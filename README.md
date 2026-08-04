@@ -133,6 +133,26 @@ npm run harness -- orchestrate \
   --repository owner/repo --run-id run-001
 ```
 
+## Bug-zu-PR-Track (SPEC-004)
+
+Optional kann `harness init` im Zielrepository eine minimale Referenzdatei für
+den Bug-Track installieren:
+
+```bash
+npm run harness -- init \
+  --run-id run-001 \
+  --repository owner/repo \
+  --requirement REQ-004 \
+  --spec SPEC-004 \
+  --install-bug-workflow \
+  --bug-workflow-ref v0.1.0
+```
+
+Die Referenzdatei enthält nur Trigger + `uses:` auf den zentralen reusable
+Workflow in diesem Repo. Bei manueller, nicht vom Harness verwalteter
+Abweichung bricht `init` mit einem Konflikt ab, statt stillschweigend zu
+überschreiben.
+
 ## Lokale Entwicklung
 
 Voraussetzungen: Node.js 20.9+, `gh` CLI mit bestehender Anmeldung und

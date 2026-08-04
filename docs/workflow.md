@@ -52,3 +52,28 @@ Iterationsgrenze: `maxAutomaticIterations` (Default 3). Danach zwingt
 - Ein PR wird mit Nummer und vollständigem Head-SHA an den Run gebunden.
 - Ein neuer SHA desselben PR setzt bestehende Review-Evidence zurück.
 - Ein anderer PR kann nicht stillschweigend an denselben Run gebunden werden.
+
+## Bug-Track (SPEC-004)
+
+Neben dem Feature-Run gibt es einen separaten, schlanken Bug-Track:
+
+1. Ein Zielrepository installiert eine dünne Referenzdatei
+   `.github/workflows/harness-bug-triage.yml` (über `harness init --install-bug-workflow`).
+2. Diese Datei triggert auf `issues` (`opened`, `typed`, `labeled`) und ruft
+   den zentral gepflegten reusable Workflow
+   `munichdeveloper/pi-spec-harness/.github/workflows/bug-triage.yml@<pinned-ref>`
+   auf.
+3. Der Trigger filtert serverseitig: nur `issue.type.name == Bug` oder Label
+   `type:bug` starten den Agent.
+4. Der reusable Workflow erzwingt eine gepinnte
+   `claude-code-action`-Version `>= v1.0.94`, setzt Idempotenz-Labels
+   (`bug-pipeline:in-progress` / `bug-pipeline:completed`) und kommentiert
+   das Issue vor jedem PR-Pfad.
+5. Ohne eindeutige Reproduktion/Verifikation wird kein PR erstellt; stattdessen
+   wird `status:needs-human` gesetzt.
+6. Bei erfolgreichem PR werden Issue-Autor oder konfigurierter Owner als
+   Reviewer/Assignee eingetragen.
+
+Der Bug-Track ersetzt nicht den bestehenden Feature-Run und fügt keinen neuen
+Auto-Merge-Pfad hinzu. CI, Review-Threads und Merge-/Human-Gates bleiben
+unverändert zuständig.

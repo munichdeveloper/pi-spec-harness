@@ -222,6 +222,29 @@ export const github = {
   },
 
   /**
+   * Fetch a file from a repository when it may not exist. Returns undefined
+   * on 404 so callers can implement idempotent install/update flows.
+   */
+  async getFileContentIfExists(
+    repository: string,
+    path: string,
+    ref?: string,
+  ): Promise<{ content: string; blobSha: string } | undefined> {
+    const endpoint = ref
+      ? `repos/${repository}/contents/${path}?ref=${encodeURIComponent(ref)}`
+      : `repos/${repository}/contents/${path}`;
+    try {
+      const out = await runGh(["api", endpoint]);
+      const data = JSON.parse(out) as { content: string; sha: string };
+      const content = Buffer.from(data.content.replace(/\s/g, ""), "base64").toString("utf-8");
+      return { content, blobSha: data.sha };
+    } catch (err) {
+      if (err instanceof GhError && /404|not found/i.test(err.message)) return undefined;
+      throw err;
+    }
+  },
+
+  /**
    * Commit a single file update on a branch via the GitHub Contents API.
    * Returns the new commit SHA.
    * TAC-03: used to commit spec-approval status exclusively on the delivery branch.
@@ -243,6 +266,52 @@ export const github = {
       "-f", `content=${encodedContent}`,
       "-f", `sha=${currentBlobSha}`,
       "-f", `branch=${branch}`,
+      "--jq", ".commit.sha",
+    ]);
+    return out.trim();
+  },
+
+  /**
+   * Create a new file on the repository default branch via Contents API.
+   * Returns the resulting commit SHA.
+   */
+  async createFileOnDefaultBranch(
+    repository: string,
+    path: string,
+    content: string,
+    commitMessage: string,
+  ): Promise<string> {
+    const encodedContent = Buffer.from(content).toString("base64");
+    const out = await runGh([
+      "api",
+      `repos/${repository}/contents/${path}`,
+      "--method", "PUT",
+      "-f", `message=${commitMessage}`,
+      "-f", `content=${encodedContent}`,
+      "--jq", ".commit.sha",
+    ]);
+    return out.trim();
+  },
+
+  /**
+   * Update an existing file on the repository default branch via Contents API.
+   * Returns the resulting commit SHA.
+   */
+  async updateFileOnDefaultBranch(
+    repository: string,
+    path: string,
+    content: string,
+    currentBlobSha: string,
+    commitMessage: string,
+  ): Promise<string> {
+    const encodedContent = Buffer.from(content).toString("base64");
+    const out = await runGh([
+      "api",
+      `repos/${repository}/contents/${path}`,
+      "--method", "PUT",
+      "-f", `message=${commitMessage}`,
+      "-f", `content=${encodedContent}`,
+      "-f", `sha=${currentBlobSha}`,
       "--jq", ".commit.sha",
     ]);
     return out.trim();
