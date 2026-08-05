@@ -165,7 +165,7 @@ jobs:
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          settings: '{"permissions":{"allow":["Bash(*)"]}}'
+          settings: '{"permissions":{"allow":["Bash(*)","Write","Edit"]}}'
           # TEMPORARY DEBUG (remove once diagnosed): full SDK output so we can
           # see why Claude is not posting its own findings/uncertainty
           # comment as required by the mandatory sequence below (steps 3/4).
