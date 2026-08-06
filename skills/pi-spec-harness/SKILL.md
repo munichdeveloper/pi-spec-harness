@@ -97,11 +97,20 @@ Wichtige Befehle:
    `@github-copilot`). Nutze:
    ```
    harness issue-create --repository owner/repo --run-id <run-id> \
-     --title "<Kurzer Titel>" --body "<Markdown-Beschreibung>" \
+     --title "<SPEC-ID>: <Kurzer Titel>" --body "<Markdown-Beschreibung>" \
      --labels "status:ready" "ai:allowed" --assignee <override-optional>
    ```
    Der Harness liest `implementation_assignee` aus der SPEC, erstellt das
    Issue, assignt es automatisch und öffnet das `issue-ready`-Gate.
+
+   **Wichtig:** `--title` muss die SPEC-ID enthalten (z. B. `SPEC-014: ...`).
+   Ziel-Repos wie Immogent können eine eigene, spec-getriebene
+   Issue-Automatisierung besitzen (`spec-to-issue.yml`), die beim Mergen
+   einer freigegebenen Spec ebenfalls automatisch ein Issue anlegt. Diese
+   erkennt bereits vorhandene Issues nur über die SPEC-ID im Titel. Fehlt
+   sie im von `harness issue-create` erzeugten Titel, kann es zu einem
+   doppelten Issue kommen, wenn dieselbe Spec sowohl über die Harness-CLI
+   als auch direkt per Merge auf `main` bearbeitet wird.
 4. **Implementierung:** eigener Branch, kleiner Scope, Tests mitliefern.
    Nutze deine normalen Tools (`bash`, `read`, `edit`, `write`) direkt im
    Ziel-Repo-Checkout -- das Harness bucht nur mit, es tut die Arbeit nicht

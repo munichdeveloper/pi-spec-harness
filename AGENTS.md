@@ -30,6 +30,13 @@ siehe [`skills/pi-spec-harness/SKILL.md`](skills/pi-spec-harness/SKILL.md).
 - Neue CLI-Befehle liefern `{ schemaVersion, command, result, nextAction }`.
 - Tests für neues Verhalten in `test/` ergänzen; `npm run check` muss grün
   bleiben.
+- `issue-create`-Titel müssen die SPEC-ID enthalten (z. B. `SPEC-014: ...`).
+  Ziel-Repos können eine eigene Spec→Issue-Automatisierung besitzen, die
+  Duplikate ausschließlich über die SPEC-ID im Issue-Titel erkennt (siehe
+  `skills/pi-spec-harness/SKILL.md`, Abschnitt "Issue-Gate"). Ohne die
+  SPEC-ID im Titel drohen doppelte Issues, wenn eine Spec sowohl über die
+  Harness-CLI als auch ohne sie (direkter Merge im Ziel-Repo) bearbeitet
+  wird.
 
 ## Definition of Done für Änderungen an diesem Repo
 
