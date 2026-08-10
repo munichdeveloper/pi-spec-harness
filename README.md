@@ -153,6 +153,33 @@ Workflow in diesem Repo. Bei manueller, nicht vom Harness verwalteter
 Abweichung bricht `init` mit einem Konflikt ab, statt stillschweigend zu
 überschreiben.
 
+## Generischer Workflow-Vorlagen-Katalog (SPEC-006)
+
+`--install-bug-workflow` ist der erste Eintrag eines generischen Katalogs
+installierbarer, reaktiver Workflow-Vorlagen. Weitere Vorlagen (u. a.
+`spec-to-issue`, `label-approval-bundling`, siehe SPEC-007) lassen sich
+über `--install-workflows <name>[,<name>...]` installieren, ohne den
+Installationsmechanismus selbst zu ändern:
+
+```bash
+npm run harness -- init \
+  --run-id run-001 \
+  --repository owner/repo \
+  --requirement REQ-006 \
+  --spec SPEC-006 \
+  --install-workflows bug-triage,spec-to-issue,label-approval-bundling
+```
+
+Details, verfügbare Vorlagennamen und der reaktive Spec-zu-Issue-
+Einstiegspunkt: siehe `docs/workflow.md`.
+
+## Verwalteter AGENTS.md-Kontextblock (SPEC-008)
+
+`--install-agents-context` fügt einen abgegrenzten, versionierten
+Harness-Kontextblock in die `AGENTS.md` des Zielrepositories ein bzw.
+aktualisiert ihn, ohne bestehenden, produktspezifischen Inhalt zu
+verändern. Details: `docs/workflow.md`.
+
 ## Lokale Entwicklung
 
 Voraussetzungen: Node.js 20.9+, `gh` CLI mit bestehender Anmeldung und

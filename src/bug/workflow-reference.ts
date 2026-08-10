@@ -1,3 +1,6 @@
+import { decideWorkflowInstall, type WorkflowInstallDecision } from "../workflows/install-decision.js";
+export type { WorkflowInstallDecision } from "../workflows/install-decision.js";
+
 export const BUG_WORKFLOW_REFERENCE_PATH = ".github/workflows/harness-bug-triage.yml";
 export const BUG_WORKFLOW_REFERENCE_MARKER = "# Managed by pi-spec-harness: bug-workflow-reference v1";
 export const DEFAULT_BUG_TRIAGE_WORKFLOW_REF = "v0.1.0";
@@ -47,11 +50,12 @@ jobs:
 `;
 }
 
-export type WorkflowInstallDecision = "create" | "noop" | "update-managed" | "conflict";
-
+/**
+ * Thin, bug-specific wrapper kept for backwards compatibility (SPEC-006
+ * TAC-02/TAC-08). The actual decision logic now lives in the generic
+ * `decideWorkflowInstall()` in `src/workflows/install-decision.ts`, which
+ * every catalog entry (including this one) uses uniformly.
+ */
 export function decideBugWorkflowInstall(existingContent: string | undefined, expectedContent: string): WorkflowInstallDecision {
-  if (existingContent === undefined) return "create";
-  if (existingContent === expectedContent) return "noop";
-  if (existingContent.includes(BUG_WORKFLOW_REFERENCE_MARKER)) return "update-managed";
-  return "conflict";
+  return decideWorkflowInstall(existingContent, expectedContent, BUG_WORKFLOW_REFERENCE_MARKER);
 }

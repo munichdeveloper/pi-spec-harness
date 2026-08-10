@@ -173,6 +173,24 @@ export const github = {
     return match ? { repository, number: match.number, url: match.url } : undefined;
   },
 
+  /**
+   * Find an open-or-closed issue whose title *contains* the given query
+   * (not an exact match). SPEC-007 TAC-04/TAC-06/TAC-07: used for the
+   * spec-to-issue idempotency check, which intentionally searches broadly
+   * "in:title" for the spec-id so both the reactive pipeline and a manually
+   * created issue (via `harness issue-create --from-spec-path`) are found.
+   */
+  async findIssuesByTitleContains(repository: string, query: string): Promise<IssueRef[]> {
+    const out = await runGh([
+      "issue", "list", "--repo", repository, "--state", "all",
+      "--search", `in:title "${query}"`,
+      "--json", "number,title,url",
+      "--limit", "20",
+    ]);
+    const issues = JSON.parse(out) as { number: number; title: string; url: string }[];
+    return issues.map((issue) => ({ repository, number: issue.number, url: issue.url }));
+  },
+
   async createPullRequest(
     repository: string,
     opts: { title: string; body: string; base: string; head: string; draft?: boolean },

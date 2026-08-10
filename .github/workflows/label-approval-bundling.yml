@@ -1,0 +1,100 @@
+name: Harness Label Approval Bundling Reusable
+
+on:
+  workflow_call:
+    inputs:
+      trigger-label:
+        description: Label that, when set on an implementation issue, triggers bundling of target-labels.
+        required: true
+        type: string
+      target-labels:
+        description: JSON array of labels to add in a single action once trigger-label is set.
+        required: true
+        type: string
+      harness-ref:
+        description: Pinned ref (tag or SHA) of munichdeveloper/pi-spec-harness to run `harness init` from for the automatic run bootstrap (TAC-12).
+        required: false
+        type: string
+        default: main
+
+permissions:
+  issues: write
+
+jobs:
+  bundle:
+    # Reasserted server-side even though the thin reference file already
+    # filters on github.event.label.name -- keeps this reusable workflow
+    # self-contained/correct if referenced directly.
+    if: github.event.label.name == inputs.trigger-label
+    runs-on: ubuntu-latest
+    steps:
+      - name: Bundle target labels in a single action (AC-05/TAC-08)
+        id: bundle
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -e
+          issue='${{ github.event.issue.number }}'
+          labels_json='${{ inputs.target-labels }}'
+          add_args=()
+          while IFS= read -r label; do
+            [[ -z "$label" ]] && continue
+            add_args+=(--add-label "$label")
+          done < <(printf '%s' "$labels_json" | jq -r '.[]')
+
+          # TAC-09: repeated labeling is a no-op for GitHub (labels are a
+          # set); re-adding an already-present label must not fail the job.
+          gh issue edit "$issue" --repo '${{ github.repository }}' "${add_args[@]}"
+          echo "issue=$issue" >> "$GITHUB_OUTPUT"
+
+      - name: Setup Node for the harness CLI
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20.9"
+
+      - name: Checkout pi-spec-harness (source of the harness CLI)
+        uses: actions/checkout@v4
+        with:
+          repository: munichdeveloper/pi-spec-harness
+          ref: ${{ inputs.harness-ref }}
+          path: .pi-spec-harness
+
+      - name: Install harness CLI dependencies
+        working-directory: .pi-spec-harness
+        run: npm ci
+
+      - name: Derive requirement/spec references from the implementation issue body
+        id: refs
+        shell: bash
+        run: |
+          body="$(jq -r '.issue.body // ""' "$GITHUB_EVENT_PATH")"
+          # Matches the body format produced by buildIssueFromSpec()
+          # ("**Requirement(s):** REQ-006, REQ-007" / "**Spec:** SPEC-007 (...)").
+          requirement="$(printf '%s\n' "$body" | grep -oE 'REQ-[0-9]+' | head -1 || true)"
+          spec="$(printf '%s\n' "$body" | grep -oE 'SPEC-[0-9]+' | head -1 || true)"
+          echo "requirement=$requirement" >> "$GITHUB_OUTPUT"
+          echo "spec=$spec" >> "$GITHUB_OUTPUT"
+
+      - name: Bootstrap the harness run for this implementation issue (TAC-12/TAC-13/TAC-14)
+        if: steps.refs.outputs.requirement != '' && steps.refs.outputs.spec != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        working-directory: .pi-spec-harness
+        shell: bash
+        run: |
+          # SPEC-007 5b: run-id is deterministically derived from the
+          # implementation issue number so any later call (manual or by
+          # another action) resolves to the same run instead of creating a
+          # second tracking issue. `harness init` is idempotent
+          # (find-or-create); an immutable-field mismatch against a
+          # pre-existing, differently-parameterised run for the same run-id
+          # is intentionally left untouched rather than overwritten.
+          run_id="issue-${{ steps.bundle.outputs.issue }}"
+          npm run harness -- init \
+            --repository '${{ github.repository }}' \
+            --run-id "$run_id" \
+            --requirement '${{ steps.refs.outputs.requirement }}' \
+            --spec '${{ steps.refs.outputs.spec }}' \
+            --issue '${{ steps.bundle.outputs.issue }}' \
+            || echo "::notice::harness init for run '$run_id' left an existing, differently-parameterised run untouched."

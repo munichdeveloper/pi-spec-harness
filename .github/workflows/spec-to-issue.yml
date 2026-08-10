@@ -1,0 +1,106 @@
+name: Harness Spec to Issue Reusable
+
+on:
+  workflow_call:
+    inputs:
+      spec-path-glob:
+        description: Path glob (relative to repo root) that identifies spec files, e.g. docs/specifications/**/*.md.
+        required: true
+        type: string
+      default-branch:
+        description: Default branch the pipeline runs against.
+        required: false
+        type: string
+        default: main
+      harness-ref:
+        description: Pinned ref (tag or SHA) of munichdeveloper/pi-spec-harness to check out and run buildIssueFromSpec()/spec-to-issue from.
+        required: false
+        type: string
+        default: main
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  auto-create-issue:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout caller repository
+        uses: actions/checkout@v4
+        with:
+          # Full history: the before/after diff base below can be further
+          # back than one commit for multi-commit pushes/squash-merges.
+          fetch-depth: 0
+
+      - name: Determine changed spec files under the configured glob (AC-01)
+        id: changed
+        shell: bash
+        run: |
+          glob='${{ inputs.spec-path-glob }}'
+          # Prefer the push event's actual before/after SHAs over HEAD~1:
+          # a squash-merge or multi-commit push makes HEAD~1 the wrong base
+          # (it would miss files changed in earlier commits of the same
+          # push). Fall back to HEAD~1/empty-tree only for non-push events
+          # (e.g. manual workflow_dispatch of the caller) or a repo's first
+          # commit, where before/after are unavailable or all-zero.
+          before='${{ github.event.before }}'
+          after='${{ github.event.after }}'
+          if [[ -n "$before" && "$before" != "0000000000000000000000000000000000000000" && -n "$after" ]]; then
+            base="$before"
+            head="$after"
+          elif git rev-parse HEAD~1 >/dev/null 2>&1; then
+            base="HEAD~1"
+            head="HEAD"
+          else
+            base="$(git hash-object -t tree /dev/null)"
+            head="HEAD"
+          fi
+          files="$(git diff --name-only "$base" "$head" -- "$glob" || true)"
+          {
+            echo "files<<HARNESS_EOF"
+            echo "$files"
+            echo "HARNESS_EOF"
+          } >> "$GITHUB_OUTPUT"
+          if [[ -z "$files" ]]; then
+            echo "any=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "any=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Setup Node for the harness CLI
+        if: steps.changed.outputs.any == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20.9"
+
+      - name: Checkout pi-spec-harness (source of buildIssueFromSpec())
+        if: steps.changed.outputs.any == 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: munichdeveloper/pi-spec-harness
+          ref: ${{ inputs.harness-ref }}
+          path: .pi-spec-harness
+
+      - name: Install harness CLI dependencies
+        if: steps.changed.outputs.any == 'true'
+        working-directory: .pi-spec-harness
+        run: npm ci
+
+      - name: Run spec-to-issue for every changed spec file (AC-02/AC-03/AC-04)
+        if: steps.changed.outputs.any == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        working-directory: .pi-spec-harness
+        shell: bash
+        run: |
+          set -e
+          while IFS= read -r file; do
+            [[ -z "$file" ]] && continue
+            [[ ! -f "../$file" ]] && continue
+            echo "::group::spec-to-issue ../$file"
+            npm run harness -- spec-to-issue \
+              --repository '${{ github.repository }}' \
+              --spec-path "../$file"
+            echo "::endgroup::"
+          done <<< "${{ steps.changed.outputs.files }}"
