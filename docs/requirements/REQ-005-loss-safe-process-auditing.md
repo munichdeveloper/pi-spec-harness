@@ -156,4 +156,11 @@ Governance-Entscheidungen liegen zentral im Harness-Namensraum.
 
 ## Offene Fragen
 
-Keine.
+Der Beobachter-Trigger muss aus technischen Gründen (siehe
+Betriebshinweis) repo-lokal bleiben. Die Payload-Konstruktionslogik
+dahinter könnte künftig, analog zu REQ-006/SPEC-006, als reusable
+Workflow zentralisiert und über den dortigen Installationsmechanismus
+verteilt werden, sodass nur noch der zwingend repo-lokale Trigger-Teil
+projektspezifisch bleibt. Dies ist keine Voraussetzung für dieses
+Requirement und wird hier nur als mögliche spätere Vereinheitlichung
+vermerkt.
