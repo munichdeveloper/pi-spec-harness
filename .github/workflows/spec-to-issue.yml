@@ -24,6 +24,7 @@ permissions:
 
 jobs:
   auto-create-issue:
+    if: github.ref_name == inputs.default-branch
     runs-on: ubuntu-latest
     steps:
       - name: Checkout caller repository
@@ -56,7 +57,9 @@ jobs:
             base="$(git hash-object -t tree /dev/null)"
             head="HEAD"
           fi
-          files="$(git diff --name-only "$base" "$head" -- "$glob" || true)"
+          # Explicit glob pathspec magic makes `**` recursive and avoids
+          # relying on Git's default pathspec interpretation.
+          files="$(git diff --name-only "$base" "$head" -- ":(glob)$glob" || true)"
           {
             echo "files<<HARNESS_EOF"
             echo "$files"

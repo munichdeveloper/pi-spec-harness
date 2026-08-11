@@ -61,10 +61,12 @@ describe("WORKFLOW_TEMPLATE_CATALOG", () => {
     expect(rendered).toContain("push:");
     expect(rendered).toContain("docs/specs/**/*.md");
     expect(rendered).toContain("uses: munichdeveloper/pi-spec-harness/.github/workflows/spec-to-issue.yml@v1.2.3");
+    expect(rendered).toContain("harness-ref: 'v1.2.3'");
   });
 
   it("renders a minimal label-approval-bundling reference file with configurable labels", () => {
     const rendered = renderLabelApprovalBundlingReference({
+      harnessRef: "8f7e6d5c4b3a29180706050403020100ffeeddcc",
       triggerLabel: "harness:approved-for-agent",
       targetLabels: ["status:ready", "ai:allowed"],
     });
@@ -73,6 +75,7 @@ describe("WORKFLOW_TEMPLATE_CATALOG", () => {
     expect(rendered).toContain("types: [labeled]");
     expect(rendered).toContain("harness:approved-for-agent");
     expect(rendered).toContain('["status:ready","ai:allowed"]');
+    expect(rendered).toContain("harness-ref: '8f7e6d5c4b3a29180706050403020100ffeeddcc'");
   });
 });
 

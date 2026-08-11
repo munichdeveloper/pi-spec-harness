@@ -43,6 +43,7 @@ jobs:
     with:
       spec-path-glob: '${specPathGlob}'
       default-branch: '${defaultBranch}'
+      harness-ref: '${harnessRef}'
     secrets: inherit
 `;
 }
@@ -79,6 +80,7 @@ jobs:
     with:
       trigger-label: '${triggerLabel}'
       target-labels: '${targetLabelsJson}'
+      harness-ref: '${harnessRef}'
     secrets: inherit
 `;
 }

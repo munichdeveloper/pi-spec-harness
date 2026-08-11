@@ -113,6 +113,8 @@ describe("GitHub workflow contracts", () => {
     expect(workflow).toContain("spec-path-glob");
     expect(workflow).toContain("spec-to-issue");
     expect(workflow).toContain("issues: write");
+    expect(workflow).toContain("if: github.ref_name == inputs.default-branch");
+    expect(workflow).toContain('":(glob)$glob"');
     expect(workflow).not.toContain("contents: write");
   });
 
