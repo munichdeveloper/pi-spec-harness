@@ -1,7 +1,9 @@
-# Konzeptskizze: Reaktive Workflows als installierbare Vorlagen
+# Reaktive Workflows als installierbare Vorlagen
 
-> Status: informelle Skizze, keine Spec. Dient dazu, das Zielbild zu schärfen,
-> bevor daraus ein Requirement/eine Spec wird. Entstanden aus der
+> Status: historisches Konzept und Entscheidungsherkunft. Der generische
+> Katalog, Spec→Issue, Label-Bündelung und der verwaltete `AGENTS.md`-Kontext
+> sind inzwischen durch REQ/SPEC-006 bis -008 spezifiziert und implementiert.
+> Verbindlich sind diese Specs sowie `docs/workflow.md`. Entstanden aus der
 > Beobachtung, dass Immogent eigene, handgeschriebene GitHub-Actions-Workflows
 > (`spec-to-issue.yml`, `harness-approve-for-agent.yml`,
 > `process-audit-automation.yml`) besitzt, die denselben reaktiven Anspruch
@@ -49,32 +51,22 @@ bleibt zwangsläufig im Zielrepo (GitHub liefert diese Events nicht
 repo-übergreifend), aber die **Logik** dahinter ist zentral im Harness
 gepflegt und wird nur referenziert, nicht dupliziert.
 
-## Übertragung auf die fehlenden reaktiven Flows
+## Umgesetzte reaktive Flows
 
 ### 1. Spec → Issue
 
-Heute: Immogent `spec-to-issue.yml`, Job `auto-create-issue`, mit
-`scripts/create_issue_from_spec.py` als Immogent-lokalem Python-Skript.
-
-Zielbild: Eine dünne Referenzdatei (`harness-spec-to-issue.yml`), Trigger
+Umgesetzt ist eine dünne Referenzdatei (`harness-spec-to-issue.yml`), Trigger
 `push` auf `docs/**/*.md` mit Pfadfilter, die einen reusable Workflow im
 Harness aufruft. Die Titel-/Body-Generierung aus der Spec-Frontmatter ist
-bereits generisch (Spec-ID, Requirements-Liste, "Zerlegung in Issues"
--Abschnitt) und ließe sich als Harness-Funktion statt als
-Immogent-Python-Skript pflegen. Der Zielrepo-Pfad zu den Specs
-(`docs/30-specifications/`) müsste als Parameter in die Referenzdatei
-wandern, weil er projektspezifisch ist.
+generisch in `src/spec/issue-from-spec.ts` umgesetzt. Der Zielrepo-Pfad zu
+den Specs wird als projektspezifischer Parameter übergeben.
 
 ### 2. Label-Bündelung (Freigabe-Gate)
 
-Heute: Immogent `harness-approve-for-agent.yml`, bündelt
+Die Vorlage `label-approval-bundling` bündelt
 `harness:approved-for-agent` zu `status:ready` + `ai:allowed` +
-`harness:implementation`.
-
-Zielbild: Diese Logik ist bereits nahezu 1:1 das, was
-`harness-gate-trigger.yml` für das Tracking-Issue tut (Label liest, Zustand
-setzt) -- nur auf das Implementierungs-Issue statt das Tracking-Issue
-bezogen. Vermutlich der einfachste der drei Flows, um zu generalisieren.
+`harness:implementation` und bootstrapped den deterministischen Run
+`issue-<issue-number>` idempotent.
 
 ### 3. Prozess-Audit-Observer
 
@@ -90,13 +82,13 @@ ist generisch und könnte als reusable Workflow zentralisiert werden; nur die
 Liste der zu beobachtenden Workflow-Namen bleibt zwangsläufig
 projektspezifisch und gehört in die Referenzdatei-Parameter.
 
-## Vorschlag für den Installationsbefehl
+## Installationsbefehl
 
 Statt drei separater `--install-*-workflow`-Flags (wie aktuell nur für Bugs)
 läge ein generalisierter Ansatz näher:
 
 ```
-harness init --install-workflows spec-to-issue,label-approval,process-audit \
+harness init --install-workflows spec-to-issue,label-approval-bundling \
   --workflow-ref <tag/sha> ...
 ```
 
@@ -112,20 +104,18 @@ handgebauten Artefakte durch installierte Referenzdateien ersetzt:
 - `.github/workflows/harness-approve-for-agent.yml`
 - `scripts/create_issue_from_spec.py` (Logik wandert in den Harness)
 
-Die heute als Übergangslösung eingebaute breite Spec-ID-Suche im
-Idempotenz-Check (`spec-to-issue.yml`) wird dann überflüssig, weil es nur
-noch eine Quelle für diesen Schritt gibt statt zwei koexistierender
-Systeme.
+Bis zu einer bewussten Migration koexistieren lokale Zielrepo-Automationen
+und die installierbaren Vorlagen. Die breite Spec-ID-Suche verhindert dabei
+Duplikate über beide Einstiegspfade hinweg.
 
 ## Bewusst offen gelassen
 
-- Versionierungs-/Update-Strategie über den Bug-Workflow hinaus (wer stößt
-  `update-managed` an, wie wird ein neuer Ref ausgerollt).
+- Release- und Rollout-Strategie für neue gepinnte Workflow-Refs.
 - Migrationsreihenfolge/-plan für Immogent (welcher Flow zuerst).
 - Ob ein `harness reconcile`-Äquivalent (wie für Gates bereits vorhanden)
   auch für Spec→Issue und Label-Bündelung nötig ist.
-- Ob `create_issue_from_spec.py` 1:1 nach TypeScript im Harness portiert
-  wird oder der reusable Workflow weiterhin ein Python-Skript aufruft.
+- Eine installierbare Vorlage für den Prozess-Audit-Observer; dessen Scope
+  bleibt gemäß REQ/SPEC-005 auf Harness-ausgelöste Wirkungen begrenzt.
 
-Diese Punkte gehören in ein formales Requirement/eine Spec, sobald die
-Richtung bestätigt ist.
+Diese Punkte benötigen bei Umsetzung jeweils ein formales Requirement und
+eine freigegebene Spec.

@@ -28,17 +28,25 @@ Quelle der Wahrheit.
   Iterationslimit.
 - `src/state/issue-store.ts`: persistenter State im Tracking-Issue.
 - `src/cli.ts`: auditierbare Befehle.
+- `src/workflows/template-catalog.ts`: installierbare Workflow-Vorlagen.
+- `src/spec/issue-from-spec.ts`: gemeinsame Spec-zu-Issue-Abbildung.
+- `src/agents-context/managed-block.ts`: verwalteter Harness-Kontext in
+  Zielrepository-`AGENTS.md`-Dateien.
 - `skills/pi-spec-harness/SKILL.md`: verpflichtendes Agentenprotokoll.
 - `docs/event-driven-workflow.md`: sichere Ereigniskette.
 - `.github/workflows/harness-gate-trigger.yml`: Self-Hosting-Gate-Trigger.
 
-### Zielrepository
+### Zielrepository (installierte Referenzen)
 
 - `.github/workflows/harness-gate-trigger.yml`
-- `.github/workflows/harness-issue-create-trigger.yml`
-- `.github/workflows/copilot-solve-issue.yml`
-- `.github/workflows/pr-verification-trigger.yml`
-- `.github/workflows/agent-fix-failing-tests.yml`
+- `.github/workflows/harness-spec-to-issue.yml`
+- `.github/workflows/harness-label-approval-bundling.yml`
+- optional `.github/workflows/harness-bug-triage.yml`
+
+Weitere produkt- oder agentenspezifische Workflows können hinzukommen. Die
+installierten Harness-Dateien bleiben dünne, markierte Referenzen auf zentral
+versionierte reusable Workflows und dürfen nicht handschriftlich dupliziert
+werden.
 
 Ein eigener Cherry-Pick-nach-main-Workflow ist ausdrücklich unzulässig.
 
@@ -91,6 +99,15 @@ npm run harness -- pr-bind \
   --run-id run-id \
   --pull-request 42 \
   --head-sha <40-character-sha>
+
+npm run harness -- init \
+  --repository owner/repo \
+  --run-id bootstrap-001 \
+  --requirement REQ-001 \
+  --spec SPEC-001 \
+  --install-workflows spec-to-issue,label-approval-bundling \
+  --workflow-ref <release-tag-or-full-sha> \
+  --install-agents-context
 ```
 
 `advance` erlaubt genau einen monotonen Schritt. Pending,
@@ -116,16 +133,24 @@ npm run harness -- pr-bind \
 
 ## Start eines neuen SaaS-Repositories
 
-1. Harness-CLI und Skill verfügbar machen.
-2. Labels für Run, Implementation und Gates anlegen.
-3. die fünf Zielrepository-Workflows aus dem gehärteten Referenzprojekt
-   übernehmen und Repository-/CI-Namen anpassen.
-4. `COPILOT_ASSIGN_PAT` nur dann als eng begrenztes Secret hinterlegen, wenn
+1. Einen unveränderlichen Harness-Release-Tag oder vollständigen SHA wählen.
+2. Harness-CLI und Skill verfügbar machen.
+3. Labels für Run, Implementation und Gates anlegen.
+4. `spec-to-issue` und `label-approval-bundling` über
+   `--install-workflows` installieren; optional `bug-triage` ergänzen.
+5. Den verwalteten `AGENTS.md`-Block über `--install-agents-context`
+   installieren und produktspezifischen Kontext außerhalb der Marker belassen.
+6. `COPILOT_ASSIGN_PAT` nur dann als eng begrenztes Secret hinterlegen, wenn
    GitHub Copilot Issues automatisch übernehmen soll.
-5. Branch Protection und erforderliche CI-Checks konfigurieren.
-6. einen synthetischen Smoke-Run durchführen:
-   Gate → Issue → PR → Check-Failure/Recovery → erfolgreicher SHA →
-   Merge-Gate.
+7. Branch Protection und erforderliche CI-Checks konfigurieren.
+8. Einen synthetischen Smoke-Run durchführen:
+   freigegebene Spec → Issue → Freigabelabel → deterministischer Run →
+   Delivery-PR → Implementation-PR → Verification/Recovery → Merge-Gate →
+   nachgewiesener Merge-Effekt.
+
+Bestehende Zielrepositories werden nicht automatisch migriert. Lokale
+Äquivalente werden erst in einem bewussten, separat geprüften Change durch
+die installierten Referenzen ersetzt.
 
 ## Sicherheitsprüfung vor Aktivierung
 
