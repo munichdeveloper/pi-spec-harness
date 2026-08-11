@@ -13,7 +13,7 @@ const DEFAULT_REUSABLE_WORKFLOW_REPOSITORY = "munichdeveloper/pi-spec-harness";
 
 export const SPEC_TO_ISSUE_REFERENCE_PATH = ".github/workflows/harness-spec-to-issue.yml";
 export const SPEC_TO_ISSUE_REFERENCE_MARKER = "# Managed by pi-spec-harness: spec-to-issue-reference v1";
-export const DEFAULT_SPEC_TO_ISSUE_WORKFLOW_REF = "v0.1.0";
+export const DEFAULT_SPEC_TO_ISSUE_WORKFLOW_REF = "v0.1.1";
 
 export interface SpecToIssueReferenceOptions {
   harnessRef?: string;
@@ -44,13 +44,12 @@ jobs:
       spec-path-glob: '${specPathGlob}'
       default-branch: '${defaultBranch}'
       harness-ref: '${harnessRef}'
-    secrets: inherit
 `;
 }
 
 export const LABEL_APPROVAL_BUNDLING_REFERENCE_PATH = ".github/workflows/harness-label-approval-bundling.yml";
 export const LABEL_APPROVAL_BUNDLING_REFERENCE_MARKER = "# Managed by pi-spec-harness: label-approval-bundling-reference v1";
-export const DEFAULT_LABEL_APPROVAL_BUNDLING_WORKFLOW_REF = "v0.1.0";
+export const DEFAULT_LABEL_APPROVAL_BUNDLING_WORKFLOW_REF = "v0.1.1";
 
 export interface LabelApprovalBundlingReferenceOptions {
   harnessRef?: string;
@@ -81,7 +80,6 @@ jobs:
       trigger-label: '${triggerLabel}'
       target-labels: '${targetLabelsJson}'
       harness-ref: '${harnessRef}'
-    secrets: inherit
 `;
 }
 
