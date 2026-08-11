@@ -18,6 +18,11 @@ import {
   decideBugWorkflowInstall,
   renderBugWorkflowReference,
 } from "./bug/workflow-reference.js";
+import { findWorkflowTemplate, resolveWorkflowInstallPlan } from "./workflows/template-catalog.js";
+import { decideWorkflowInstall } from "./workflows/install-decision.js";
+import { upsertManagedBlock, renderHarnessContextBlock, AGENTS_MD_PATH } from "./agents-context/managed-block.js";
+import { buildIssueFromSpec } from "./spec/issue-from-spec.js";
+import { runSpecToIssuePipeline } from "./spec/spec-to-issue-pipeline.js";
 import { IssueStateStore, RUN_ISSUE_LABEL, ensureRunIssue, findRunIssue, parseStateFromBody } from "./state/issue-store.js";
 import type { StateStore } from "./state/state-store.js";
 import { FileStateStore } from "./state/store.js";
@@ -118,7 +123,7 @@ async function retryPendingGatePublication(store: StateStore, initial: RunState)
   return state;
 }
 
-async function cmdInit(argv: {
+interface CmdInitArgs {
   runId: string;
   repository: string;
   requirement: string;
@@ -138,7 +143,57 @@ async function cmdInit(argv: {
   bugWorkflowReviewer?: string;
   bugWorkflowClaudeVersion?: string;
   bugWorkflowPreviewCommand?: string;
-}): Promise<void> {
+  installWorkflows?: string;
+  workflowRef?: string;
+  workflowRepository?: string;
+  specPathGlob?: string;
+  specToIssueDefaultBranch?: string;
+  triggerLabel?: string;
+  targetLabels?: string[];
+  installAgentsContext?: boolean;
+}
+
+/**
+ * SPEC-006 technical decision 6: project-specific parameters per catalog
+ * entry are taken as CLI args here and embedded as `with:` inputs of the
+ * rendered reference file, never baked into the reusable workflow itself.
+ */
+function buildWorkflowRenderOptions(name: string, argv: CmdInitArgs): Record<string, unknown> | undefined {
+  if (name === "bug-triage") {
+    return {
+      harnessRef: argv.workflowRef,
+      reusableRepository: argv.workflowRepository,
+    };
+  }
+  if (name === "spec-to-issue") {
+    return {
+      harnessRef: argv.workflowRef,
+      reusableRepository: argv.workflowRepository,
+      specPathGlob: argv.specPathGlob,
+      defaultBranch: argv.specToIssueDefaultBranch,
+    };
+  }
+  if (name === "label-approval-bundling") {
+    return {
+      harnessRef: argv.workflowRef,
+      reusableRepository: argv.workflowRepository,
+      triggerLabel: argv.triggerLabel,
+      targetLabels: argv.targetLabels,
+    };
+  }
+  return undefined;
+}
+
+async function cmdInit(argv: CmdInitArgs): Promise<void> {
+  // TAC-04: validate every requested-but-unknown catalog name up front,
+  // before any file is written (including the legacy bug-workflow path).
+  // TAC-07: also combines/de-dupes with --install-bug-workflow so the same
+  // catalog entry is never processed twice.
+  const combinedWorkflowNames = resolveWorkflowInstallPlan({
+    installBugWorkflow: argv.installBugWorkflow,
+    installWorkflows: argv.installWorkflows,
+  });
+
   const initial = initRunState(argv);
   let store: StateStore;
   let state: RunState;
@@ -228,7 +283,108 @@ async function cmdInit(argv: {
     }
   }
 
-  printResult("init", { location: argv.state ?? store.issueRef?.url, state, bugWorkflow }, computeNextAction(state).detail);
+  // SPEC-006: generic install for any additionally requested catalog
+  // entries. "bug-triage" is skipped here if --install-bug-workflow already
+  // handled it above, so the same catalog entry is never written twice in a
+  // single invocation (TAC combined-flags test).
+  const workflows: Record<
+    string,
+    {
+      path: string;
+      action: "created" | "updated" | "noop";
+      commitSha?: string;
+      harnessRef: string;
+      repository: string;
+    }
+  > = {};
+  const conflicts: string[] = [];
+
+  const namesToInstallGenerically = combinedWorkflowNames.filter(
+    (name) => !(name === "bug-triage" && argv.installBugWorkflow),
+  );
+
+  for (const name of namesToInstallGenerically) {
+    const template = findWorkflowTemplate(name)!;
+    const renderOptions = buildWorkflowRenderOptions(name, argv);
+    const expectedContent = template.renderReference(renderOptions);
+    const existing = await github.getFileContentIfExists(argv.repository, template.targetPath);
+    const decision = decideWorkflowInstall(existing?.content, expectedContent, template.marker);
+    const harnessRefUsed = (renderOptions?.harnessRef as string | undefined) ?? template.defaultRef;
+    const repositoryUsed = (renderOptions?.reusableRepository as string | undefined) ?? "munichdeveloper/pi-spec-harness";
+
+    if (decision === "conflict") {
+      // TAC-06: no file write; caller-visible via result.conflicts[].
+      conflicts.push(template.targetPath);
+      continue;
+    }
+
+    if (decision === "create") {
+      const commitSha = await github.createFileOnDefaultBranch(
+        argv.repository,
+        template.targetPath,
+        expectedContent,
+        `ci: install ${name} workflow reference [harness:${argv.runId}]`,
+      );
+      workflows[name] = { path: template.targetPath, action: "created", commitSha, harnessRef: harnessRefUsed, repository: repositoryUsed };
+    } else if (decision === "update-managed") {
+      const commitSha = await github.updateFileOnDefaultBranch(
+        argv.repository,
+        template.targetPath,
+        expectedContent,
+        existing!.blobSha,
+        `ci: update ${name} workflow reference [harness:${argv.runId}]`,
+      );
+      workflows[name] = { path: template.targetPath, action: "updated", commitSha, harnessRef: harnessRefUsed, repository: repositoryUsed };
+    } else {
+      workflows[name] = { path: template.targetPath, action: "noop", harnessRef: harnessRefUsed, repository: repositoryUsed };
+    }
+  }
+
+  // SPEC-008: independent, optional managed context block in AGENTS.md.
+  let agentsContext:
+    | undefined
+    | {
+      path: string;
+      action: "created" | "updated" | "noop" | "conflict";
+      commitSha?: string;
+    };
+
+  if (argv.installAgentsContext) {
+    const blockContent = renderHarnessContextBlock({ repository: argv.repository });
+    const existing = await github.getFileContentIfExists(argv.repository, AGENTS_MD_PATH);
+    const upserted = upsertManagedBlock(existing?.content, blockContent);
+
+    if (upserted.decision === "conflict") {
+      agentsContext = { path: AGENTS_MD_PATH, action: "conflict" };
+      conflicts.push(AGENTS_MD_PATH);
+    } else if (upserted.decision === "noop") {
+      agentsContext = { path: AGENTS_MD_PATH, action: "noop" };
+    } else if (upserted.decision === "create") {
+      const commitSha = await github.createFileOnDefaultBranch(
+        argv.repository,
+        AGENTS_MD_PATH,
+        upserted.content,
+        `docs: install harness context block [harness:${argv.runId}]`,
+      );
+      agentsContext = { path: AGENTS_MD_PATH, action: "created", commitSha };
+    } else {
+      // update-managed or insert-appended: both require an existing blob SHA.
+      const commitSha = await github.updateFileOnDefaultBranch(
+        argv.repository,
+        AGENTS_MD_PATH,
+        upserted.content,
+        existing!.blobSha,
+        `docs: update harness context block [harness:${argv.runId}]`,
+      );
+      agentsContext = { path: AGENTS_MD_PATH, action: "updated", commitSha };
+    }
+  }
+
+  printResult(
+    "init",
+    { location: argv.state ?? store.issueRef?.url, state, bugWorkflow, workflows, conflicts, agentsContext },
+    computeNextAction(state).detail,
+  );
 }
 
 async function cmdStatus(argv: StoreArgs): Promise<void> {
@@ -411,9 +567,10 @@ async function cmdNote(argv: StoreArgs & { text: string }): Promise<void> {
 
 async function cmdIssueCreate(
   argv: StoreArgs & {
-    title: string;
+    title?: string;
     body?: string;
     bodyFile?: string;
+    fromSpecPath?: string;
     labels?: string[];
     assignee?: string;
   },
@@ -421,13 +578,26 @@ async function cmdIssueCreate(
   const store = await resolveExistingStore(argv);
   let state = await store.load();
 
-  // Read body from file or direct argument
+  let title = argv.title;
   let body = argv.body;
-  if (argv.bodyFile) {
+
+  if (argv.fromSpecPath) {
+    // SPEC-007 TAC-03: --from-spec-path uses the same buildIssueFromSpec()
+    // logic as the reactive spec-to-issue pipeline, so both paths produce
+    // identical title/body for the same spec.
+    const specContent = await readFile(argv.fromSpecPath, "utf-8");
+    const built = buildIssueFromSpec(specContent, { specPath: argv.fromSpecPath });
+    title = built.title;
+    body = built.body;
+  } else if (argv.bodyFile) {
     body = await readFile(argv.bodyFile, "utf-8");
   }
+
+  if (!title) {
+    throw new Error("--title or --from-spec-path is required");
+  }
   if (!body) {
-    throw new Error("--body or --body-file is required");
+    throw new Error("--body or --body-file or --from-spec-path is required");
   }
 
   // If spec is provided in the state and no assignee override, read from spec frontmatter
@@ -452,7 +622,7 @@ async function cmdIssueCreate(
   }
 
   const issueRef = await github.createIssue(argv.repository || "", {
-    title: argv.title,
+    title,
     body: bodyWithNote,
     labels: argv.labels,
   });
@@ -487,6 +657,17 @@ async function cmdIssueCreate(
     },
     next.detail,
   );
+}
+
+async function cmdSpecToIssue(argv: { repository: string; specPath: string }): Promise<void> {
+  const result = await runSpecToIssuePipeline({ repository: argv.repository, specPath: argv.specPath });
+  const detail =
+    result.action === "created"
+      ? `Created implementation issue #${result.issue.number} for ${result.specId}.`
+      : result.action === "skipped-duplicate"
+        ? `Skipped: issue #${result.existingIssue.number} already exists for ${result.specId}.`
+        : `Skipped: ${result.reason}`;
+  printResult("spec-to-issue", result, detail);
 }
 
 /**
@@ -1065,6 +1246,40 @@ await yargs(hideBin(process.argv))
         .option("bug-workflow-preview-command", {
           type: "string",
           describe: "Optional preview verification command embedded in the reference workflow",
+        })
+        .option("install-workflows", {
+          type: "string",
+          describe: "Comma-separated list of WORKFLOW_TEMPLATE_CATALOG names to install/update (e.g. bug-triage,spec-to-issue,label-approval-bundling)",
+        })
+        .option("workflow-ref", {
+          type: "string",
+          describe: "Pinned ref (tag or SHA) for reusable workflows installed via --install-workflows (defaults to each template's own default ref)",
+        })
+        .option("workflow-repository", {
+          type: "string",
+          describe: "Repository that hosts the reusable workflows installed via --install-workflows",
+        })
+        .option("spec-path-glob", {
+          type: "string",
+          describe: "Path glob that triggers the installed spec-to-issue reference workflow",
+        })
+        .option("spec-to-issue-default-branch", {
+          type: "string",
+          describe: "Default branch that triggers the installed spec-to-issue reference workflow",
+        })
+        .option("trigger-label", {
+          type: "string",
+          describe: "Freigabe-Label that triggers the installed label-approval-bundling reference workflow",
+        })
+        .option("target-labels", {
+          type: "array",
+          string: true,
+          describe: "Labels bundled by the installed label-approval-bundling reference workflow",
+        })
+        .option("install-agents-context", {
+          type: "boolean",
+          default: false,
+          describe: "Install/update the managed pi-spec-harness context block in the target repository's AGENTS.md",
         }),
     async (argv) =>
       cmdInit({
@@ -1087,6 +1302,14 @@ await yargs(hideBin(process.argv))
         bugWorkflowReviewer: argv["bug-workflow-reviewer"] as string | undefined,
         bugWorkflowClaudeVersion: argv["bug-workflow-claude-version"] as string | undefined,
         bugWorkflowPreviewCommand: argv["bug-workflow-preview-command"] as string | undefined,
+        installWorkflows: argv["install-workflows"] as string | undefined,
+        workflowRef: argv["workflow-ref"] as string | undefined,
+        workflowRepository: argv["workflow-repository"] as string | undefined,
+        specPathGlob: argv["spec-path-glob"] as string | undefined,
+        specToIssueDefaultBranch: argv["spec-to-issue-default-branch"] as string | undefined,
+        triggerLabel: argv["trigger-label"] as string | undefined,
+        targetLabels: argv["target-labels"] as string[] | undefined,
+        installAgentsContext: argv["install-agents-context"] as boolean | undefined,
       }),
   )
   .command(
@@ -1199,12 +1422,17 @@ await yargs(hideBin(process.argv))
     "Create an implementation issue and assign based on spec's implementation_assignee field",
     (y) =>
       storeOptions(y)
-        .option("title", { type: "string", demandOption: true, describe: "Issue title" })
+        .option("title", { type: "string", describe: "Issue title (omit when --from-spec-path is given)" })
         .option("body", { type: "string", describe: "Issue body (Markdown)" })
         .option("body-file", { type: "string", describe: "Path to file with issue body (markdown)" })
+        .option("from-spec-path", { type: "string", describe: "Path to an approved spec file; derives title/body via buildIssueFromSpec() instead of --title/--body (SPEC-007)" })
         .option("labels", { type: "array", string: true, describe: "Labels to apply" })
         .option("assignee", { type: "string", describe: "Override assignee (defaults to spec's implementation_assignee or @github-copilot)" })
         .check((argv) => {
+          if (argv["from-spec-path"]) return true;
+          if (!argv.title) {
+            throw new Error("--title is required unless --from-spec-path is given");
+          }
           if (!argv.body && !argv["body-file"]) {
             throw new Error("Either --body or --body-file is required");
           }
@@ -1215,11 +1443,25 @@ await yargs(hideBin(process.argv))
         state: argv.state,
         repository: argv.repository,
         runId: argv.runId,
-        title: argv.title,
+        title: argv.title as string | undefined,
         body: argv.body as string | undefined,
         bodyFile: argv["body-file"] as string | undefined,
+        fromSpecPath: argv["from-spec-path"] as string | undefined,
         labels: argv.labels as string[] | undefined,
         assignee: argv.assignee as string | undefined,
+      }),
+  )
+  .command(
+    "spec-to-issue",
+    "Reactive entrypoint (no run/tracking-issue required): create an implementation issue for an approved spec, unless one already exists (SPEC-007)",
+    (y) =>
+      y
+        .option("repository", { type: "string", demandOption: true, describe: "owner/repo" })
+        .option("spec-path", { type: "string", demandOption: true, describe: "Path to the spec file to evaluate" }),
+    async (argv) =>
+      cmdSpecToIssue({
+        repository: argv.repository,
+        specPath: argv["spec-path"] as string,
       }),
   )
   .command(

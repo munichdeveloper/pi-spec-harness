@@ -106,4 +106,52 @@ describe("GitHub workflow contracts", () => {
     expect(helper).toContain("contains(github.event.issue.labels.*.name, 'type:bug')");
     expect(helper).toContain("/.github/workflows/bug-triage.yml@");
   });
+
+  it("defines the reusable spec-to-issue workflow contract with approved-status gating and broad idempotency search (SPEC-007 TAC-04/TAC-05/TAC-06/TAC-10)", async () => {
+    const workflow = await readFile(".github/workflows/spec-to-issue.yml", "utf8");
+    expect(workflow).toContain("workflow_call");
+    expect(workflow).toContain("spec-path-glob");
+    expect(workflow).toContain("spec-to-issue");
+    expect(workflow).toContain("issues: write");
+    expect(workflow).toContain("if: github.ref_name == inputs.default-branch");
+    expect(workflow).toContain('":(glob)$glob"');
+    expect(workflow).not.toContain("contents: write");
+  });
+
+  it("defines the reusable label-approval-bundling workflow contract with single-action label bundling and automatic run bootstrap (SPEC-007 TAC-08/TAC-12/TAC-13/TAC-14)", async () => {
+    const workflow = await readFile(".github/workflows/label-approval-bundling.yml", "utf8");
+    expect(workflow).toContain("workflow_call");
+    expect(workflow).toContain("trigger-label");
+    expect(workflow).toContain("target-labels");
+    expect(workflow).toContain("github.event.label.name == inputs.trigger-label");
+    expect(workflow).toContain("gh issue edit");
+    expect(workflow).toContain("harness init");
+    expect(workflow).toContain("issue-${{");
+    expect(workflow).toContain("issues: write");
+    expect(workflow).not.toContain("contents: write");
+  });
+
+  it("wires --install-workflows, --install-agents-context, spec-to-issue, and issue-create --from-spec-path in the CLI (SPEC-006/SPEC-007/SPEC-008)", async () => {
+    const cli = await readFile("src/cli.ts", "utf8");
+    expect(cli).toContain("install-workflows");
+    expect(cli).toContain("install-agents-context");
+    expect(cli).toContain("resolveWorkflowInstallPlan");
+    expect(cli).toContain("upsertManagedBlock");
+    expect(cli).toContain("from-spec-path");
+    expect(cli).toContain('"spec-to-issue"');
+  });
+
+  it("documents the generic workflow-template catalog and the reactive spec-to-issue entrypoint (TAC-09/TAC-11)", async () => {
+    const [workflowDoc, readme, skill] = await Promise.all([
+      readFile("docs/workflow.md", "utf8"),
+      readFile("README.md", "utf8"),
+      readFile("skills/pi-spec-harness/SKILL.md", "utf8"),
+    ]);
+    const contract = [workflowDoc, readme, skill].join("\n");
+    expect(contract).toContain("WORKFLOW_TEMPLATE_CATALOG");
+    expect(contract).toContain("install-workflows");
+    expect(contract).toContain("spec-to-issue");
+    expect(contract).toContain("label-approval-bundling");
+    expect(contract).toContain("install-agents-context");
+  });
 });

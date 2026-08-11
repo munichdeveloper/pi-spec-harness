@@ -77,3 +77,84 @@ Neben dem Feature-Run gibt es einen separaten, schlanken Bug-Track:
 Der Bug-Track ersetzt nicht den bestehenden Feature-Run und fügt keinen neuen
 Auto-Merge-Pfad hinzu. CI, Review-Threads und Merge-/Human-Gates bleiben
 unverändert zuständig.
+
+## Generischer Workflow-Vorlagen-Katalog (SPEC-006)
+
+`harness init --install-bug-workflow` war ursprünglich fest auf den
+Bug-Track verdrahtet. Seit SPEC-006 ist das der erste Eintrag eines
+generischen Katalogs, `WORKFLOW_TEMPLATE_CATALOG`
+(`src/workflows/template-catalog.ts`): jeder Eintrag beschreibt Zielpfad,
+Managed-Marker, Pfad des reusable Workflows im Harness-Repo und einen
+Default-Ref. Neue reaktive Fähigkeiten werden als zusätzlicher
+Katalogeintrag ergänzt, ohne den Installationsmechanismus selbst zu
+ändern.
+
+Verfügbare Vorlagennamen (für `--install-workflows <name>[,<name>...]`):
+
+| Name | Referenzdatei im Zielrepo | Reusable Workflow (Harness-Repo) |
+|---|---|---|
+| `bug-triage` | `.github/workflows/harness-bug-triage.yml` | `.github/workflows/bug-triage.yml` |
+| `spec-to-issue` | `.github/workflows/harness-spec-to-issue.yml` | `.github/workflows/spec-to-issue.yml` |
+| `label-approval-bundling` | `.github/workflows/harness-label-approval-bundling.yml` | `.github/workflows/label-approval-bundling.yml` |
+
+```bash
+npm run harness -- init \
+  --run-id run-001 \
+  --repository owner/repo \
+  --requirement REQ-006 \
+  --spec SPEC-006 \
+  --install-workflows bug-triage,spec-to-issue,label-approval-bundling \
+  --workflow-ref v0.1.0
+```
+
+`--install-bug-workflow` bleibt unverändert nutzbar und erzeugt
+byteidentische Referenzdateien wie zuvor; beide Flags lassen sich
+kombinieren, ohne dass `bug-triage` doppelt geschrieben wird. Jede
+Installation erkennt `create` / `noop` / `update-managed` / `conflict`; ein
+`conflict` schreibt keine Datei und wird im CLI-Ergebnis unter
+`result.conflicts[]` sichtbar gemacht.
+
+## Reaktive Spec-zu-Issue-Pipeline und Freigabe-Label-Bündelung (SPEC-007)
+
+Zusätzlich zum bestehenden CLI-gesteuerten Pfad (`harness issue-create`,
+optional mit `--from-spec-path <pfad>`, das intern dieselbe
+`buildIssueFromSpec()`-Logik aus `src/spec/issue-from-spec.ts` verwendet)
+gibt es einen rein reaktiven Einstiegspunkt ganz ohne vorherigen `harness
+init`-Aufruf:
+
+1. `spec-to-issue` (Vorlage): triggert auf `push`, der eine Spec unter dem
+   konfigurierten `spec-path-glob` ändert. Nur für `status: approved`
+   erzeugt die Pipeline über `harness spec-to-issue --repository <repo>
+   --spec-path <pfad>` genau ein Issue; vorher wird breit nach der Spec-ID
+   im Titel gesucht (`in:title`), damit sowohl ein über diese Pipeline als
+   auch ein über `harness issue-create` erzeugtes Issue erkannt wird.
+2. `label-approval-bundling` (Vorlage): triggert auf `issues.labeled` mit
+   einem konfigurierbaren `trigger-label` (Default
+   `harness:approved-for-agent`) und setzt die `target-labels` (Default
+   `status:ready`, `ai:allowed`, `harness:implementation`) in einer
+   einzigen Aktion. Im selben Lauf ruft sie anschließend `harness init`
+   non-interaktiv mit einer deterministisch aus der Implementierungs-Issue-
+   Nummer abgeleiteten Run-ID (`issue-<number>`) auf und bootstrapped so,
+   ohne Chat-Sitzung, das kanonische Tracking-Issue für diesen Run. Ein
+   bereits bestehender Run für dieselbe Run-ID (manuell oder automatisch
+   angelegt) wird unverändert weiterverwendet -- es entsteht kein zweites
+   Tracking-Issue.
+
+Referenzprojekte mit heute lokal gepflegten Äquivalenten (z. B. Immogents
+`spec-to-issue.yml` / `harness-approve-for-agent.yml` /
+`scripts/create_issue_from_spec.py`) werden durch die Einführung dieser
+Vorlagen nicht automatisch migriert; die Umstellung auf
+`--install-workflows spec-to-issue,label-approval-bundling` bleibt ein
+bewusster, separater Schritt pro Repository.
+
+## Verwalteter Kontextblock in AGENTS.md (SPEC-008)
+
+`harness init --install-agents-context` fügt einen durch
+`<!-- BEGIN pi-spec-harness managed context v1 -->` /
+`<!-- END pi-spec-harness managed context v1 -->` abgegrenzten Block in die
+`AGENTS.md` des Zielrepositories ein bzw. aktualisiert ihn
+(`src/agents-context/managed-block.ts`). Fehlt die Datei, wird sie
+ausschließlich mit diesem Block angelegt; existiert bereits eigener,
+produktspezifischer Inhalt ohne Marker, wird der Block ergänzt, ohne
+etwas zu verändern oder zu löschen. Die Option ist unabhängig von
+`--install-workflows`/`--install-bug-workflow` und mit ihnen kombinierbar.

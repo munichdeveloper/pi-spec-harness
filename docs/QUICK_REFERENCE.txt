@@ -1,131 +1,93 @@
-╔════════════════════════════════════════════════════════════════════════════╗
-║           PI-SPEC-HARNESS QUICK REFERENCE für neuen Agent                  ║
-╚════════════════════════════════════════════════════════════════════════════╝
+PI-SPEC-HARNESS – QUICK REFERENCE
+=================================
 
-┌─ SYSTEM VERSTEHEN ─────────────────────────────────────────────────────────┐
-│                                                                             │
-│  [Spec Writer (dich)]  ──init──>  [pi-spec-harness]                       │
-│                                         ↓                                   │
-│                                   [GitHub Issue]  ←─ persistent State     │
-│                                         ↑                                   │
-│                                   [GitHub Labels]                          │
-│                           (gate-approved / gate-rejected)                  │
-│                                         ↓                                   │
-│                           [GitHub Actions Workflows]                       │
-│                      (auto-spec, auto-issue, auto-assign)                 │
-│                                         ↓                                   │
-│                            [Copilot Implementation]                        │
-│                                         ↓                                   │
-│                      [Tests ✅ or ❌ w/ Auto-Recover]                       │
-│                                         ↓                                   │
-│                          [Human Gate: Merge? Y/N]                          │
-│                                         ↓                                   │
-│                              [Auto-Merge to Main]                          │
-│                                         ↓                                   │
-│                              [Run Complete]                                │
-│                                                                             │
-└─────────────────────────────────────────────────────────────────────────────┘
+KANONISCHER ABLAUF
 
-┌─ WICHTIGSTE BEFEHLE ───────────────────────────────────────────────────────┐
-│                                                                             │
-│  Init Run (schreib Spec zuerst!):                                         │
-│  $ npm run harness -- init \                                              │
-│      --run-id immogent-run-007-NAME \                                     │
-│      --repository munichdeveloper/Immogent \                              │
-│      --requirement REQ-001 \                                              │
-│      --spec SPEC-XXX                                                      │
-│                                                                             │
-│  Check Status:                                                             │
-│  $ npm run harness -- status \                                            │
-│      --repository munichdeveloper/Immogent \                              │
-│      --run-id immogent-run-007-NAME                                       │
-│                                                                             │
-│  Open Gate:                                                                │
-│  $ npm run harness -- gate-open \                                         │
-│      --repository munichdeveloper/Immogent \                              │
-│      --run-id immogent-run-007-NAME \                                     │
-│      --gate-id spec-approval \                                            │
-│      --type human \                                                        │
-│      --title "SPEC-XXX freigeben?" \                                      │
-│      --question "Frage an Product Owner?"                                 │
-│                                                                             │
-│  Resume (nach Gate-Label, meist automatisch):                             │
-│  $ npm run harness -- resume \                                            │
-│      --repository munichdeveloper/Immogent \                              │
-│      --run-id immogent-run-007-NAME                                       │
-│                                                                             │
-│  Genau eine erlaubte Phase weiterschalten:                                │
-│  $ npm run harness -- advance \                                           │
-│      --repository munichdeveloper/Immogent \                              │
-│      --run-id immogent-run-007-NAME                                       │
-│                                                                             │
-└─────────────────────────────────────────────────────────────────────────────┘
+  approved Spec auf Default-Branch
+    -> spec-to-issue erzeugt dedupliziert ein Implementierungs-Issue
+    -> Mensch setzt genau ein Label: harness:approved-for-agent
+    -> Label-Bündelung ergänzt status:ready, ai:allowed,
+       harness:implementation
+    -> deterministischer Run issue-<issue-number> entsteht
+    -> Delivery-PR gegen main
+    -> Coding-Agent-PR gegen den Delivery-Branch
+    -> CI, Review und höchstens drei automatische Iterationen
+    -> Implementation-PR in Delivery-Branch
+    -> SHA-spezifisches Human-Gate für Medium-/High-Risk-Delivery-Merge
+    -> nachgewiesener Merge-Effekt
+    -> Run complete
 
-┌─ DATEI-ORTE ───────────────────────────────────────────────────────────────┐
-│                                                                             │
-│  Harness-Code:                                                             │
-│  /IdeaProjects/pi-spec-harness/                                           │
-│    ├── src/cli.ts                  ← Befehle (init, gate-open, resume)    │
-│    ├── src/state/state-machine.ts  ← Zustandslogik                        │
-│    ├── src/state/issue-store.ts    ← GitHub Issue Backend                 │
-│    ├── src/github/gh.ts            ← GitHub API Wrapper                   │
-│    ├── AGENTS.md                   ← Regeln für Agenten                   │
-│    └── docs/                                                               │
-│        ├── event-driven-workflow.md ← Workflow Erklärung                  │
-│        └── implementation-guide.md  ← ⭐ FALLSTRICKE                       │
-│                                                                             │
-│  Immogent-Code:                                                            │
-│  /tmp/Immogent/                                                            │
-│    ├── docs/30-specifications/     ← Specs (SPEC-015 ist aktuell)         │
-│    ├── src/domain/offer-evaluation.ts  ← Business Logic                   │
-│    ├── src/application/            ← Services                             │
-│    ├── src/infrastructure/          ← Repositories                        │
-│    ├── drizzle/                    ← DB Migrationen                       │
-│    │   ├── 0008_offer-evaluation.sql                                      │
-│    │   └── meta/_journal.json      ← ⚠️ KRITISCH!                         │
-│    ├── src/e2e/                    ← E2E Tests                            │
-│    └── .github/workflows/          ← GitHub Actions                       │
-│        ├── harness-gate-trigger.yml                                       │
-│        ├── harness-issue-create-trigger.yml                               │
-│        ├── copilot-solve-issue.yml                                        │
-│        ├── pr-verification-trigger.yml                                    │
-│        └── agent-fix-failing-tests.yml                                    │
-│                                                                             │
-└─────────────────────────────────────────────────────────────────────────────┘
+WAHRHEITSQUELLE
 
-┌─ HÄUFIGE PROBLEME & LÖSUNGEN ──────────────────────────────────────────────┐
-│                                                                             │
-│  ❌ "Migration not found / column does not exist"                          │
-│  → drizzle/meta/_journal.json hat Migration nicht?                        │
-│  ✅ Eintrag mit idx, version, digest hinzufügen                           │
-│                                                                             │
-│  ❌ "Type mismatch: string assigned to Date"                              │
-│  → mapOfferRow() konvertiert nicht explizit                               │
-│  ✅ Nutze: value instanceof Date ? value : new Date(value as string)     │
-│                                                                             │
-│  ❌ "Element not found" in E2E                                            │
-│  → Offer wurde korrekt herausgefiltert (neuer Filter!)                   │
-│  ✅ Nutze ?filter=all oder repariere Test-Daten                          │
-│                                                                             │
-│  ❌ "Copilot not assigned"                                                │
-│  → COPILOT_ASSIGN_PAT Secret fehlt                                       │
-│  ✅ Check Settings → Secrets and variables → Actions                     │
-│                                                                             │
-│  ❌ Gate-Label gesetzt, aber keine Reaktion                               │
-│  → Prüfe, ob harness-gate-trigger.yml im Zielrepository vorhanden ist    │
-│  ✅ Action muss die Run-ID aus genau diesem Tracking-Issue lesen          │
-│                                                                             │
-│  ❌ Mehrere parallele Runs werden verwechselt                             │
-│  → Nie „latest issue/spec/PR“ auswählen                                   │
-│  ✅ Run-ID, Issue, PR und Head-SHA aus dem kanonischen State verwenden    │
-│                                                                             │
-└─────────────────────────────────────────────────────────────────────────────┘
+  Genau ein offenes Tracking-Issue [Harness Run] <run-id> mit
+  harness:run. Sein Body enthält den kanonischen State. Chat, lokale
+  Dateien und Suchen nach der "neuesten" Ressource sind keine State-Quelle.
+
+HUMAN GATES
+
+  offen:      harness:gate-open + status:needs-human
+  freigeben:  harness:gate-approved
+  ablehnen:   harness:gate-rejected
+
+  Kommentare oder Chat-Aussagen zählen nicht als Entscheidung.
+
+WICHTIGE BEFEHLE
+
+  npm run harness -- status \
+    --repository owner/repo --run-id <run-id>
+
+  npm run harness -- resume \
+    --repository owner/repo --run-id <run-id>
+
+  npm run harness -- orchestrate \
+    --repository owner/repo --run-id <run-id>
+
+  npm run harness -- delivery-pr-bind \
+    --repository owner/repo --run-id <run-id> \
+    --pull-request <number> --head-sha <full-40-char-sha>
+
+  npm run harness -- impl-pr-bind \
+    --repository owner/repo --run-id <run-id> \
+    --pull-request <number> --head-sha <full-40-char-sha> \
+    --expected-base <delivery-branch>
+
+INSTALLATION IN EIN ZIELREPOSITORY
+
+  Einen existierenden, unveränderlichen Release-Tag oder vollständigen SHA
+  verwenden; niemals einen erfundenen oder noch nicht veröffentlichten Ref.
+
+  npm run harness -- init \
+    --repository owner/repo --run-id bootstrap-001 \
+    --requirement REQ-001 --spec SPEC-001 \
+    --install-workflows bug-triage,spec-to-issue,label-approval-bundling \
+    --workflow-ref <release-tag-or-full-sha> \
+    --install-agents-context
+
+  Installierte Dateien sind markiert. Ergebnis:
+    create          neue Referenz angelegt
+    noop            bereits byteidentisch
+    update-managed  ausschließlich verwaltete Datei aktualisiert
+    conflict        nicht verwaltete Datei bleibt unangetastet
+
+  Bestehende Repositories werden nie automatisch migriert.
 
 SICHERHEITSREGELN
 
-- Genau ein Tracking-Issue mit Label harness:run pro Run.
-- Implementation-Issues tragen harness:implementation, nie harness:run.
-- Technische Gates blockieren bei pending, needs-human und failed.
-- Fehlerhafte Implementierungen nur auf recovery/* sichern; nie nach main pushen.
-- Medium-/High-Risk-Merges benötigen ein Human-Gate.
-- Nach drei fehlgeschlagenen automatischen Iterationen stoppen und eskalieren.
+  - Nie "latest", tail -1 oder --limit 1 zur Ressourcenauswahl nutzen.
+  - PR-Nummer und vollständigen HEAD-SHA im Run-State binden.
+  - Neuer SHA invalidiert alte Review-/Gate-Evidence.
+  - Coding-Agent-PR zielt auf den Delivery-Branch, nicht auf main.
+  - Medium-/High-Risk-Merge benötigt ein SHA-spezifisches Human-Gate.
+  - Gate-Erfolg ist nicht Merge-Erfolg; complete erst nach Merge-Nachweis.
+  - Nach drei fehlgeschlagenen Iterationen stoppen und eskalieren.
+  - Recovery ausschließlich unter recovery/*; niemals direkt nach main.
+  - Keine Secrets oder echten Nutzer-/Produktionsdaten im State/Evidence.
+
+WEITERLESEN
+
+  AGENTS.md
+  skills/pi-spec-harness/SKILL.md
+  docs/workflow.md
+  docs/human-gates.md
+  docs/event-driven-workflow.md
+  docs/implementation-guide.md

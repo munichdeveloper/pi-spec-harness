@@ -85,6 +85,25 @@ Wichtige Befehle:
   Korrekturiterationen zählen; nach `maxAutomaticIterations` (Default 3)
   fehlgeschlagenen Iterationen erzwingt `computeNextAction` eine Eskalation.
 
+## Reaktiver Einstiegspunkt ohne aktiven Run (SPEC-007)
+
+Neben dem obigen, CLI-gesteuerten Pfad (der einen laufenden Run mit
+vorherigem `harness init` voraussetzt) gibt es einen rein reaktiven
+Einstiegspunkt: sobald eine Spec mit `status: approved` nach `main`
+gemergt wird, erzeugt die installierte `spec-to-issue`-Vorlage automatisch
+das Implementierungs-Issue (`harness spec-to-issue --repository <repo>
+--spec-path <pfad>`, intern dieselbe `buildIssueFromSpec()`-Logik wie
+`harness issue-create --from-spec-path`). Ein Mensch bündelt die
+Freigabe-Label anschließend über die `label-approval-bundling`-Vorlage in
+einem Klick; dieselbe Aktion legt non-interaktiv auch das
+Tracking-Issue/den Run-State an (`harness init` mit deterministischer
+Run-ID `issue-<implementation-issue-number>`). Referenzprojekte mit
+heute lokal gepflegten Äquivalenten (z. B. Immogents `spec-to-issue.yml`,
+`harness-approve-for-agent.yml`, `scripts/create_issue_from_spec.py`)
+können auf diese Vorlagen migrieren (`--install-workflows
+spec-to-issue,label-approval-bundling`), müssen es aber nicht sofort tun --
+die Migration ist ein separater, bewusster Schritt pro Repository.
+
 ## Ablauf für ein Slice (Requirement → Merge)
 
 1. **Voraussetzung prüfen:** Requirement und Spec im Ziel-Repo (`docs/`)
