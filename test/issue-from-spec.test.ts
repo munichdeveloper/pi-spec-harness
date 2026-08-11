@@ -108,6 +108,14 @@ describe("buildIssueFromSpec (SPEC-007 TAC-01/TAC-02)", () => {
     expect(result.body).toContain("## Definition of Ready");
   });
 
+  it("preserves a multi-line breakdown through the actual end of a CRLF document", () => {
+    const spec = `---\r\nid: SPEC-045\r\ntitle: CRLF-Spec\r\nstatus: approved\r\nrequirements:\r\n  - REQ-045\r\n---\r\n\r\n## Zerlegung in Issues\r\n\r\n- Teil 1: Backend\r\n- Teil 2: Frontend\r\n`;
+
+    const result = buildIssueFromSpec(spec);
+
+    expect(result.body).toContain("- Teil 1: Backend\r\n- Teil 2: Frontend");
+  });
+
   it("TAC-02: throws a typed IssueFromSpecError for status: draft without returning a partial result", () => {
     expect(() => buildIssueFromSpec(DRAFT_SPEC)).toThrow(IssueFromSpecError);
     expect(() => buildIssueFromSpec(DRAFT_SPEC)).toThrow(/status: approved/);

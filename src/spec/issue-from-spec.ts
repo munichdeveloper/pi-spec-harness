@@ -53,7 +53,7 @@ function stripQuotes(value: string): string {
  * ```
  */
 export function parseSpecFrontmatterForIssue(specContent: string): SpecFrontmatterForIssue {
-  const match = specContent.match(/^---\s*\n([\s\S]*?)\n---\s*\n/);
+  const match = specContent.match(/^---\s*\r?\n([\s\S]*?)\r?\n---\s*\r?\n/);
   if (!match) {
     throw new IssueFromSpecError("spec content has no frontmatter block");
   }
@@ -61,7 +61,7 @@ export function parseSpecFrontmatterForIssue(specContent: string): SpecFrontmatt
   const fm: Record<string, unknown> = {};
   let currentListKey: string | null = null;
 
-  for (const rawLine of match[1].split("\n")) {
+  for (const rawLine of match[1].split(/\r?\n/)) {
     const listItemMatch = rawLine.match(/^\s+-\s*(.+)$/);
     if (listItemMatch && currentListKey) {
       const arr = (fm[currentListKey] as string[] | undefined) ?? [];
@@ -113,7 +113,7 @@ export function parseSpecFrontmatterForIssue(specContent: string): SpecFrontmatt
  */
 function extractSection(specContent: string, heading: string): string | undefined {
   const escaped = heading.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const re = new RegExp(`^##\\s+${escaped}\\s*\\r?\\n([\\s\\S]*?)(?=\\r?\\n##\\s|$)`, "m");
+  const re = new RegExp(`^##\\s+${escaped}\\s*\\r?\\n([\\s\\S]*?)(?=\\r?\\n##\\s|$(?![\\s\\S]))`, "m");
   const match = specContent.match(re);
   if (!match) return undefined;
   const body = match[1].trim();
