@@ -102,7 +102,9 @@ describe("GitHub workflow contracts", () => {
 
     expect(cli).toContain("install-bug-workflow");
     expect(cli).toContain("workflow conflict");
-    expect(helper).toContain("types: [typed, labeled]");
+    expect(helper).toContain("types: [opened, typed, labeled]");
+    expect(helper).toContain("github.event.action == 'opened'");
+    expect(helper).toContain("contains(github.event.issue.labels.*.name, 'type:bug')");
     expect(helper).toContain("github.event.action == 'typed' && github.event.issue.type.name == 'Bug'");
     expect(helper).toContain("github.event.action == 'labeled' && github.event.label.name == 'type:bug'");
     expect(helper).toContain("cancel-in-progress: false");
