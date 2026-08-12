@@ -193,7 +193,7 @@ jobs:
             Optional repository verification command:
             ${{ inputs.preview-verify-command }}
 
-      - name: Discover PR linked to issue
+      - name: Discover PR that closes the issue
         if: always() && steps.guard.outputs.is_bug == 'true' && steps.idempotency.outputs.run == 'true'
         id: pr
         env:
@@ -201,16 +201,30 @@ jobs:
         shell: bash
         run: |
           issue='${{ inputs.issue-number }}'
-          pr_number="$(gh pr list \
+          if [[ ! "$issue" =~ ^[1-9][0-9]*$ ]]; then
+            echo "::error::issue-number must be a positive integer."
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "invalid=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          pr_numbers="$(gh pr list \
             --repo '${{ github.repository }}' \
             --state open \
-            --search "#${issue} in:body" \
-            --json number \
-            --jq '.[0].number // empty')"
+            --limit 1000 \
+            --json number,closingIssuesReferences \
+            --jq ".[] | select(any(.closingIssuesReferences[]?; .number == ${issue})) | .number")"
+          pr_count="$(printf '%s\n' "$pr_numbers" | sed '/^$/d' | wc -l | tr -d ' ')"
+          pr_list="$(printf '%s\n' "$pr_numbers" | sed '/^$/d; s/^/#/' | paste -sd ',' -)"
 
-          if [[ -n "$pr_number" ]]; then
+          if [[ "$pr_count" == "1" ]]; then
             echo "exists=true" >> "$GITHUB_OUTPUT"
-            echo "number=$pr_number" >> "$GITHUB_OUTPUT"
+            echo "number=$pr_numbers" >> "$GITHUB_OUTPUT"
+          elif [[ "$pr_count" -gt 1 ]]; then
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "ambiguous=true" >> "$GITHUB_OUTPUT"
+            echo "matches=$pr_list" >> "$GITHUB_OUTPUT"
+            echo "::error::Multiple open PRs close issue #${issue}; refusing to choose one implicitly."
           else
             echo "exists=false" >> "$GITHUB_OUTPUT"
           fi
@@ -254,6 +268,14 @@ jobs:
             gh issue edit '${{ inputs.issue-number }}' \
               --repo '${{ github.repository }}' \
               --add-label bug-pipeline:completed || true
+          elif [[ '${{ steps.pr.outputs.ambiguous }}' == 'true' ]]; then
+            gh issue comment '${{ inputs.issue-number }}' \
+              --repo '${{ github.repository }}' \
+              --body $'Harness Bug Pipeline benötigt eine menschliche Zuordnung.\n\n- Mehrere offene PRs schließen dieses Issue: ${{ steps.pr.outputs.matches }}\n- Es wurde bewusst kein PR ausgewählt.\n- Label `status:needs-human` wurde gesetzt.'
+          elif [[ '${{ steps.pr.outputs.invalid }}' == 'true' ]]; then
+            gh issue comment '${{ inputs.issue-number }}' \
+              --repo '${{ github.repository }}' \
+              --body $'Harness Bug Pipeline wurde wegen einer ungültigen Issue-Kennung gestoppt.\n\n- Es wurde kein PR ausgewählt.\n- Label `status:needs-human` wurde gesetzt.'
           else
             gh issue comment '${{ inputs.issue-number }}' \
               --repo '${{ github.repository }}' \
