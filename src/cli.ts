@@ -1224,8 +1224,8 @@ async function cmdReviewFix(argv: {
         threadId: thread.id,
         isResolved: thread.isResolved,
         isOutdated: thread.isOutdated,
-        authorLogin: comment?.author.login ?? "unknown",
-        authorType: comment?.author.__typename ?? "Unknown",
+        authorLogin: comment?.author?.login ?? "unknown",
+        authorType: comment?.author?.__typename ?? "Unknown",
         body: comment?.body ?? "",
         reviewId: comment?.reviewId ?? argv.reviewId,
       };
@@ -1237,7 +1237,10 @@ async function cmdReviewFix(argv: {
   );
   await store.save(result.state);
   let dispatched = false;
-  if (result.hasActionable && !result.gateOpened) {
+  const hasOpenHumanGate = result.state.gates.some(
+    (gate) => gate.type === "human" && (gate.result === "pending" || gate.result === "needs-human"),
+  );
+  if (result.hasActionable && !result.gateOpened && !hasOpenHumanGate) {
     const agentMention = argv.fixAgent === "github-copilot"
       ? "@copilot"
       : argv.fixAgent === "claude-code"
@@ -1263,7 +1266,11 @@ async function cmdReviewFix(argv: {
       classifiedKeys: result.classifiedKeys,
       dispatched,
     },
-    result.hasActionable ? "Dispatch the configured review-fix agent for the classified package." : "No remediation required.",
+    dispatched
+      ? "Dispatched the configured review-fix agent for the classified package."
+      : hasOpenHumanGate || result.gateOpened
+        ? "Remediation is blocked by an open human gate."
+        : "No remediation required.",
   );
 }
 

@@ -509,7 +509,7 @@ export const github = {
     comments: Array<{
       databaseId: number;
       reviewId: number;
-      author: { login: string; __typename: string };
+      author: { login: string; __typename: string } | null;
       body: string;
       createdAt: string;
     }>;
@@ -546,7 +546,7 @@ export const github = {
       isResolved: boolean;
       isOutdated: boolean;
       originalCommit?: { oid: string };
-      comments: Array<{ databaseId: number; reviewId: number; author: { login: string; __typename: string }; body: string; createdAt: string }>;
+      comments: Array<{ databaseId: number; reviewId: number; author: { login: string; __typename: string } | null; body: string; createdAt: string }>;
     }> = [];
     let after: string | undefined;
     for (;;) {
@@ -570,7 +570,7 @@ export const github = {
                   isResolved: boolean;
                   isOutdated: boolean;
                   originalCommit?: { oid: string };
-                  comments: { nodes: Array<{ databaseId: number; pullRequestReview: { databaseId: number }; author: { login: string; __typename: string }; body: string; createdAt: string }> };
+                  comments: { nodes: Array<{ databaseId: number; pullRequestReview: { databaseId: number }; author: { login: string; __typename: string } | null; body: string; createdAt: string }> };
                 }>;
               };
             };

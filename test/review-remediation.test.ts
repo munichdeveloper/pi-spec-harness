@@ -787,6 +787,9 @@ describe("GitHub workflow contract — review-fix job (TAC-12)", () => {
     expect(cli).toContain("selfActorLogin: argv.selfActorLogin");
     expect(cli).toContain("@copilot");
     expect(cli).toContain('skipped: "unmanaged-pull-request"');
+    expect(cli).toContain("comment?.author?.login");
+    expect(cli).toContain("hasOpenHumanGate");
+    expect(cli).toContain("Dispatched the configured review-fix agent");
   });
 
   it("enforces immutable refs during self-hosted init", async () => {
