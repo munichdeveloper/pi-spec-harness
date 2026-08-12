@@ -1197,7 +1197,12 @@ async function cmdReviewFix(argv: {
 }): Promise<void> {
   const store = await findRunIssueByPullRequest(argv.repository, argv.pullRequest);
   if (!store) {
-    throw new Error(`no open harness run is bound to PR #${argv.pullRequest} in ${argv.repository}`);
+    printResult(
+      "review-fix",
+      { hasActionable: false, gateOpened: false, classifiedKeys: [], dispatched: false, skipped: "unmanaged-pull-request" },
+      `No open harness run is bound to PR #${argv.pullRequest}; nothing to remediate.`,
+    );
+    return;
   }
   const state = await store.load();
   const threads = await github.listPullRequestReviewThreads(argv.repository, argv.pullRequest);

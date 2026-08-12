@@ -775,6 +775,7 @@ describe("GitHub workflow contract — review-fix job (TAC-12)", () => {
     expect(cli).toContain("cmdReviewFix");
     expect(cli).toContain("selfActorLogin: argv.selfActorLogin");
     expect(cli).toContain("@copilot");
+    expect(cli).toContain('skipped: "unmanaged-pull-request"');
   });
 
   it("enforces immutable refs during self-hosted init", async () => {
@@ -795,6 +796,8 @@ describe("named GitHub review functions (TAC-11/TAC-12)", () => {
     expect(gh).toContain("replyToReviewThread");
     expect(gh).toContain("resolveReviewThread");
     expect(gh).toContain("comments(first: 1)");
+    expect(gh).toContain("pulls/comments/${commentId}/replies");
+    expect(gh).not.toContain("pulls/${prNumber}/comments/${commentId}/replies");
     // Must use named, auditable functions — no generic escape hatch
     expect(gh).not.toContain('"run arbitrary"');
   });

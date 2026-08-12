@@ -597,13 +597,12 @@ export const github = {
    */
   async replyToReviewThread(
     repository: string,
-    prNumber: number,
     commentId: number,
     body: string,
   ): Promise<void> {
     await runGh([
       "api",
-      `repos/${repository}/pulls/${prNumber}/comments/${commentId}/replies`,
+      `repos/${repository}/pulls/comments/${commentId}/replies`,
       "--method", "POST",
       "-f", `body=${body}`,
     ]);
