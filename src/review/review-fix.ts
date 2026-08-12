@@ -153,7 +153,7 @@ export function processReviewEvent(
     const idempotencyKey = buildReviewIdempotencyKey(
       event.repository,
       event.pullRequest,
-      event.reviewId,
+      thread.reviewId,
       thread.threadId,
       event.reviewedHeadSha,
     );
@@ -174,7 +174,7 @@ export function processReviewEvent(
       idempotencyKey,
       repository: event.repository,
       pullRequest: event.pullRequest,
-      reviewId: event.reviewId,
+      reviewId: thread.reviewId,
       threadId: thread.threadId,
       reviewedHeadSha: event.reviewedHeadSha.toLowerCase(),
       reviewer: event.reviewerLogin,

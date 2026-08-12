@@ -321,6 +321,17 @@ describe("invalidateReviewEvidenceForSha (TAC-08)", () => {
     expect(invalidated.reviewThreads![0].status).toBe("outdated");
   });
 
+  it("does not treat arbitrary characters between scope and erweiterung as conflicts", () => {
+    expect(classifyReviewThread({
+      body: "scopeXerweiterung is an unrelated identifier",
+      isResolved: false,
+      isOutdated: false,
+      authorLogin: "trusted",
+      selfActorLogin: "bot",
+      trustedActors: ["trusted"],
+    })).toBe("actionable");
+  });
+
   it("normalizes a stored uppercase SHA before invalidation", () => {
     let state = baseRun();
     const key = buildReviewIdempotencyKey("r/r", 1, 1, "t1", sha("a"));
@@ -796,6 +807,7 @@ describe("named GitHub review functions (TAC-11/TAC-12)", () => {
     expect(gh).toContain("replyToReviewThread");
     expect(gh).toContain("resolveReviewThread");
     expect(gh).toContain("comments(first: 1)");
+    expect(gh).toContain("pullRequestReview { databaseId }");
     expect(gh).toContain("pulls/comments/${commentId}/replies");
     expect(gh).not.toContain("pulls/${prNumber}/comments/${commentId}/replies");
     // Must use named, auditable functions — no generic escape hatch

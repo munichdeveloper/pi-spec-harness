@@ -508,6 +508,7 @@ export const github = {
     originalCommit?: { oid: string };
     comments: Array<{
       databaseId: number;
+      reviewId: number;
       author: { login: string; __typename: string };
       body: string;
       createdAt: string;
@@ -528,6 +529,7 @@ export const github = {
                 comments(first: 1) {
                   nodes {
                     databaseId
+                    pullRequestReview { databaseId }
                     author { login __typename }
                     body
                     createdAt
@@ -544,7 +546,7 @@ export const github = {
       isResolved: boolean;
       isOutdated: boolean;
       originalCommit?: { oid: string };
-      comments: Array<{ databaseId: number; author: { login: string; __typename: string }; body: string; createdAt: string }>;
+      comments: Array<{ databaseId: number; reviewId: number; author: { login: string; __typename: string }; body: string; createdAt: string }>;
     }> = [];
     let after: string | undefined;
     for (;;) {
@@ -568,7 +570,7 @@ export const github = {
                   isResolved: boolean;
                   isOutdated: boolean;
                   originalCommit?: { oid: string };
-                  comments: { nodes: Array<{ databaseId: number; author: { login: string; __typename: string }; body: string; createdAt: string }> };
+                  comments: { nodes: Array<{ databaseId: number; pullRequestReview: { databaseId: number }; author: { login: string; __typename: string }; body: string; createdAt: string }> };
                 }>;
               };
             };
@@ -582,7 +584,13 @@ export const github = {
           isResolved: node.isResolved,
           isOutdated: node.isOutdated,
           originalCommit: node.originalCommit,
-          comments: node.comments.nodes,
+          comments: node.comments.nodes.map((comment) => ({
+            databaseId: comment.databaseId,
+            reviewId: comment.pullRequestReview.databaseId,
+            author: comment.author,
+            body: comment.body,
+            createdAt: comment.createdAt,
+          })),
         });
       }
       if (!page.pageInfo.hasNextPage) break;

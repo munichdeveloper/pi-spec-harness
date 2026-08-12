@@ -549,7 +549,7 @@ export function classifyReviewThread(opts: {
   if (!isTrusted) return "informational";
   // Detect conflict-/gate-triggering keywords (SPEC-009, decision 4).
   const conflictPattern =
-    /\b(conflict|widerspruch|scope.erweiterung|auth(?:orization)?|permission|secret|cost|destruktiv)\b/i;
+    /\b(conflict|widerspruch|scope(?:[-_ ]+)erweiterung|auth(?:orization)?|permission|secret|cost|destruktiv)\b/i;
   if (conflictPattern.test(opts.body)) return "conflicting";
   return "actionable";
 }
