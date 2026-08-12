@@ -193,7 +193,7 @@ jobs:
             Optional repository verification command:
             ${{ inputs.preview-verify-command }}
 
-      - name: Discover PR linked to issue
+      - name: Discover PR that closes the issue
         if: always() && steps.guard.outputs.is_bug == 'true' && steps.idempotency.outputs.run == 'true'
         id: pr
         env:
@@ -201,16 +201,20 @@ jobs:
         shell: bash
         run: |
           issue='${{ inputs.issue-number }}'
-          pr_number="$(gh pr list \
+          pr_numbers="$(gh pr list \
             --repo '${{ github.repository }}' \
             --state open \
-            --search "#${issue} in:body" \
-            --json number \
-            --jq '.[0].number // empty')"
+            --json number,closingIssuesReferences \
+            --jq ".[] | select(any(.closingIssuesReferences[]?; .number == ${issue})) | .number")"
+          pr_count="$(printf '%s\n' "$pr_numbers" | sed '/^$/d' | wc -l | tr -d ' ')"
 
-          if [[ -n "$pr_number" ]]; then
+          if [[ "$pr_count" == "1" ]]; then
             echo "exists=true" >> "$GITHUB_OUTPUT"
-            echo "number=$pr_number" >> "$GITHUB_OUTPUT"
+            echo "number=$pr_numbers" >> "$GITHUB_OUTPUT"
+          elif [[ "$pr_count" -gt 1 ]]; then
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "ambiguous=true" >> "$GITHUB_OUTPUT"
+            echo "::error::Multiple open PRs close issue #${issue}; refusing to choose one implicitly."
           else
             echo "exists=false" >> "$GITHUB_OUTPUT"
           fi

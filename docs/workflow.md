@@ -81,6 +81,11 @@ Neben dem Feature-Run gibt es einen separaten, schlanken Bug-Track:
 6. Bei erfolgreichem PR werden Issue-Autor oder konfigurierter Owner als
    Reviewer/Assignee eingetragen.
 
+Ein PR zählt nur dann als Ergebnis des Bug-Laufs, wenn GitHub ihn über eine
+Closing-Referenz (beispielsweise `Fixes #82`) exakt mit dem auslösenden Issue
+verknüpft. Eine bloße Erwähnung wie `Issue #82` reicht nicht aus; dadurch kann
+ein unabhängiger Infrastruktur-PR nicht versehentlich den Bug-Lauf abschließen.
+
 Der Bug-Track ersetzt nicht den bestehenden Feature-Run und fügt keinen neuen
 Auto-Merge-Pfad hinzu. CI, Review-Threads und Merge-/Human-Gates bleiben
 unverändert zuständig.

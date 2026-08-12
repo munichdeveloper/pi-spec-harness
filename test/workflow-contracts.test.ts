@@ -94,6 +94,10 @@ describe("GitHub workflow contracts", () => {
     expect(workflow).toContain("status:needs-human");
     expect(workflow).toContain("Post kickoff issue comment");
     expect(workflow).toContain("Add pipeline result comment");
+    expect(workflow).toContain("closingIssuesReferences");
+    expect(workflow).not.toContain('--search "#${issue} in:body"');
+    expect(workflow).toContain("Multiple open PRs close issue");
+    expect(workflow).not.toContain("head -n 1");
   });
 
   it("includes strict bug trigger filtering in the thin reference workflow template (TAC-02/TAC-04)", async () => {
