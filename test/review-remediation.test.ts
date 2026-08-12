@@ -315,6 +315,26 @@ describe("invalidateReviewEvidenceForSha (TAC-08)", () => {
     expect(invalidated.reviewThreads![0].status).toBe("outdated");
   });
 
+  it("normalizes a stored uppercase SHA before invalidation", () => {
+    let state = baseRun();
+    const key = buildReviewIdempotencyKey("r/r", 1, 1, "t1", sha("a"));
+    state = upsertReviewThread(state, {
+      idempotencyKey: key,
+      repository: "r/r",
+      pullRequest: 1,
+      reviewId: 1,
+      threadId: "t1",
+      reviewedHeadSha: sha("a").toUpperCase(),
+      reviewer: "reviewer",
+      reviewerType: "User",
+      status: "actionable",
+      auditedAt: new Date().toISOString(),
+    });
+
+    const invalidated = invalidateReviewEvidenceForSha(state, sha("a"));
+    expect(invalidated.reviewThreads![0].status).toBe("outdated");
+  });
+
   it("does not touch threads for a different SHA", () => {
     let state = baseRun();
     const key = buildReviewIdempotencyKey("r/r", 1, 1, "t1", sha("b"));
@@ -471,6 +491,11 @@ describe("processReviewEvent (TAC-04/TAC-05/TAC-09)", () => {
     expect(result.classifiedKeys).toHaveLength(1);
   });
 
+  it("normalizes the persisted GitHub review state", () => {
+    const result = processReviewEvent(boundRun(), REVIEW_EVENT_DEFAULTS, [THREAD_DEFAULTS], opts);
+    expect(result.state.reviews?.[0].state).toBe("CHANGES_REQUESTED");
+  });
+
   it("TAC-05: informational-only threads produce hasActionable=false", () => {
     const state = boundRun();
     const result = processReviewEvent(
@@ -620,8 +645,13 @@ describe("validateSelfHostingRef (TAC-02)", () => {
     expect(err).toMatch(/branch name/i);
   });
 
-  it("rejects an unmergerd feature branch", () => {
+  it("rejects an unmerged feature branch", () => {
     const err = validateSelfHostingRef(src, target, "feat/spec-009");
+    expect(err).toMatch(/immutable ref/i);
+  });
+
+  it("rejects a branch-style ref with a semver prefix", () => {
+    const err = validateSelfHostingRef(src, target, "v1.2.3/feature");
     expect(err).toMatch(/immutable ref/i);
   });
 
@@ -702,11 +732,17 @@ describe("GitHub workflow contract — review-fix job (TAC-12)", () => {
     expect(workflow).not.toContain("tail -1");
     // SPEC-009 TAC-09: deduplication via harness CLI
     expect(workflow).toContain("review-fix");
+    expect(workflow).toContain("actions/checkout@v4");
   });
 
   it("review-fix job requests pull-requests write permission (SPEC-009 TAC-11)", async () => {
     const workflow = await readFile(".github/workflows/harness-gate-trigger.yml", "utf8");
     expect(workflow).toContain("pull-requests: write");
+  });
+
+  it("review-fix reads trusted harness code from the default branch", async () => {
+    const workflow = await readFile(".github/workflows/harness-gate-trigger.yml", "utf8");
+    expect(workflow).toContain("ref: ${{ github.event.repository.default_branch }}");
   });
 });
 
@@ -721,6 +757,7 @@ describe("named GitHub review functions (TAC-11/TAC-12)", () => {
     expect(gh).toContain("listPullRequestReviewThreads");
     expect(gh).toContain("replyToReviewThread");
     expect(gh).toContain("resolveReviewThread");
+    expect(gh).toContain("comments(first: 1)");
     // Must use named, auditable functions — no generic escape hatch
     expect(gh).not.toContain('"run arbitrary"');
   });

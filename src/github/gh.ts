@@ -525,7 +525,7 @@ export const github = {
                 isResolved
                 isOutdated
                 originalCommit { oid }
-                comments(first: 10) {
+                comments(first: 1) {
                   nodes {
                     databaseId
                     author { login __typename }

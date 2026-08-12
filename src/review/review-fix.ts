@@ -116,7 +116,7 @@ export function processReviewEvent(
     reviewer: event.reviewerLogin,
     reviewerType: event.reviewerType,
     submittedAt: event.submittedAt,
-    state: event.reviewState,
+    state: event.reviewState.toUpperCase(),
     repository: event.repository,
     pullRequest: event.pullRequest,
     reviewedHeadSha: event.reviewedHeadSha.toLowerCase(),
@@ -251,7 +251,7 @@ export function validateSelfHostingRef(
 ): string | undefined {
   if (!detectSelfHosting(harnessSourceRepository, targetRepository)) return undefined;
   // A safe ref is either a semver tag (v1.2.3) or a full 40-char SHA.
-  const isTag = /^v\d+\.\d+\.\d+/.test(harnessRef);
+  const isTag = /^v\d+\.\d+\.\d+$/.test(harnessRef);
   const isSha = /^[0-9a-f]{40}$/i.test(harnessRef);
   if (!isTag && !isSha) {
     return (

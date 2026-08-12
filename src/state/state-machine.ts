@@ -627,7 +627,7 @@ export function invalidateReviewEvidenceForSha(state: RunState, oldSha: string):
   if (!state.reviewThreads) return state;
   const normalizedOld = oldSha.toLowerCase();
   const updatedThreads = state.reviewThreads.map((t) =>
-    t.reviewedHeadSha === normalizedOld && t.status !== "resolved"
+    t.reviewedHeadSha.toLowerCase() === normalizedOld && t.status !== "resolved"
       ? { ...t, status: "outdated" as ReviewThreadStatus }
       : t,
   );
@@ -654,7 +654,7 @@ export function reviewLoopCapReached(state: RunState): boolean {
 /**
  * Detect whether the harness source repository and target repository are
  * identical (self-hosting). When true, the bootstrap must use an already
- * published immutable ref — never the unmergerd branch.
+ * published immutable ref — never the unmerged branch.
  * SPEC-009, TAC-02.
  */
 export function detectSelfHosting(
