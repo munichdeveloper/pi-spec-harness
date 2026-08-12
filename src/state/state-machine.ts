@@ -524,7 +524,7 @@ export function buildReviewIdempotencyKey(
   threadId: string,
   reviewedHeadSha: string,
 ): string {
-  return `${repository}:pr${pullRequest}:review${reviewId}:thread${threadId}:sha${reviewedHeadSha.toLowerCase()}`;
+  return `${repository.toLowerCase()}:pr${pullRequest}:review${reviewId}:thread${threadId}:sha${reviewedHeadSha.toLowerCase()}`;
 }
 
 /**

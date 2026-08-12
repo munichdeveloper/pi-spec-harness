@@ -1,0 +1,58 @@
+name: Harness Review Fix Reusable
+
+on:
+  workflow_call:
+    inputs:
+      harness-ref: { required: true, type: string }
+      pull-request: { required: true, type: number }
+      review-id: { required: true, type: number }
+      reviewed-head-sha: { required: true, type: string }
+      reviewer: { required: true, type: string }
+      reviewer-type: { required: true, type: string }
+      review-state: { required: true, type: string }
+      submitted-at: { required: true, type: string }
+      trusted-actors: { required: true, type: string }
+      fix-agent: { required: true, type: string }
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+jobs:
+  review-fix:
+    if: inputs.review-id != 0 && (inputs.review-state == 'changes_requested' || inputs.review-state == 'commented')
+    runs-on: ubuntu-latest
+    concurrency:
+      group: harness-review-fix-${{ github.repository }}-${{ inputs.pull-request }}
+      cancel-in-progress: false
+    steps:
+      - name: Checkout pinned harness implementation
+        uses: actions/checkout@v4
+        with:
+          repository: munichdeveloper/pi-spec-harness
+          ref: ${{ inputs.harness-ref }}
+          path: .pi-spec-harness
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20.9"
+          cache: npm
+          cache-dependency-path: .pi-spec-harness/package-lock.json
+      - run: npm ci
+        working-directory: .pi-spec-harness
+      - name: Process review event and classify threads
+        env:
+          GH_TOKEN: ${{ github.token }}
+        working-directory: .pi-spec-harness
+        run: |
+          npm run harness -- review-fix \
+            --repository "${{ github.repository }}" \
+            --pull-request "${{ inputs.pull-request }}" \
+            --review-id "${{ inputs.review-id }}" \
+            --head-sha "${{ inputs.reviewed-head-sha }}" \
+            --reviewer "${{ inputs.reviewer }}" \
+            --reviewer-type "${{ inputs.reviewer-type }}" \
+            --review-state "${{ inputs.review-state }}" \
+            --submitted-at "${{ inputs.submitted-at }}" \
+            --trusted-actors "${{ inputs.trusted-actors }}" \
+            --fix-agent "${{ inputs.fix-agent }}"

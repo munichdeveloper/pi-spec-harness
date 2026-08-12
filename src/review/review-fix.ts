@@ -77,8 +77,8 @@ export interface ReviewPackageResult {
  * - Active implementation iteration in progress → defer.
  * - Review-loop cap already reached → gate already open, no-op.
  *
- * For every new actionable thread a ReviewThreadRecord is added and
- * a human gate is opened if conflicts are detected.
+ * Every newly observed thread is recorded for auditability. Actionable
+ * threads start remediation; conflicting threads open a human gate.
  * SPEC-009, decisions 1-6 and TAC-04/05/09/10.
  */
 export function processReviewEvent(

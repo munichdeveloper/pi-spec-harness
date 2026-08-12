@@ -178,7 +178,7 @@ jobs:
         run: |
           review_id="${{ github.event.review.id }}"
           pr_number="${{ github.event.pull_request.number }}"
-          head_sha="${{ github.event.pull_request.head.sha }}"
+          head_sha="${{ github.event.review.commit_id }}"
           reviewer="${{ github.event.review.user.login }}"
           reviewer_type="${{ github.event.review.user.type }}"
           review_state="${{ github.event.review.state }}"

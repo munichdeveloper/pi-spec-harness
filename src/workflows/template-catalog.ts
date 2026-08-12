@@ -124,7 +124,7 @@ on:
 
 # SPEC-009 decision 1: one concurrent review-fix job per PR.
 concurrency:
-  group: harness-review-fix-\${{ github.repository }}-\${{ github.event.pull_request.number || github.event.thread.pull_request.number }}
+  group: harness-review-fix-\${{ github.repository }}-\${{ github.event.pull_request.number }}
   cancel-in-progress: false
 
 permissions:
@@ -134,9 +134,16 @@ permissions:
 
 jobs:
   review-fix:
-    uses: ${reusableRepository}/.github/workflows/harness-gate-trigger.yml@${harnessRef}
+    uses: ${reusableRepository}/.github/workflows/review-fix.yml@${harnessRef}
     with:
       harness-ref: '${harnessRef}'
+      pull-request: \${{ github.event.pull_request.number }}
+      review-id: \${{ github.event.review.id || 0 }}
+      reviewed-head-sha: \${{ github.event.review.commit_id || github.event.pull_request.head.sha }}
+      reviewer: \${{ github.event.review.user.login || '' }}
+      reviewer-type: \${{ github.event.review.user.type || '' }}
+      review-state: \${{ github.event.review.state || '' }}
+      submitted-at: \${{ github.event.review.submitted_at || '' }}
       trusted-actors: '${trustedActors.join(",")}'
       fix-agent: '${fixAgent}'
 `;
@@ -171,7 +178,7 @@ export const WORKFLOW_TEMPLATE_CATALOG: WorkflowTemplateDefinition[] = [
     name: "review-fix",
     targetPath: REVIEW_FIX_REFERENCE_PATH,
     marker: REVIEW_FIX_REFERENCE_MARKER,
-    reusableWorkflowRepoPath: ".github/workflows/harness-gate-trigger.yml",
+    reusableWorkflowRepoPath: ".github/workflows/review-fix.yml",
     defaultRef: DEFAULT_REVIEW_FIX_WORKFLOW_REF,
     renderReference: (options) => renderReviewFixReference(options as ReviewFixReferenceOptions | undefined),
   },

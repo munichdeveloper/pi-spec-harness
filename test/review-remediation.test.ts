@@ -161,6 +161,12 @@ describe("buildReviewIdempotencyKey (TAC-11)", () => {
     expect(lower).toBe(upper);
   });
 
+  it("normalises repository casing for cross-event deduplication", () => {
+    const lower = buildReviewIdempotencyKey("owner/repo", 1, 1, "t", sha("a"));
+    const mixed = buildReviewIdempotencyKey("Owner/Repo", 1, 1, "t", sha("a"));
+    expect(mixed).toBe(lower);
+  });
+
   it("produces distinct keys for different thread IDs", () => {
     const k1 = buildReviewIdempotencyKey("r/r", 1, 1, "thread-001", sha("a"));
     const k2 = buildReviewIdempotencyKey("r/r", 1, 1, "thread-002", sha("a"));
@@ -689,7 +695,13 @@ describe("renderReviewFixReference (TAC-12)", () => {
 
   it("references the harness reusable workflow at the given ref", () => {
     const content = renderReviewFixReference({ harnessRef: "v1.0.0" });
-    expect(content).toContain("v1.0.0");
+    expect(content).toContain("/.github/workflows/review-fix.yml@v1.0.0");
+  });
+
+  it("uses the pull request payload consistently for concurrency", () => {
+    const content = renderReviewFixReference();
+    expect(content).toContain("github.event.pull_request.number");
+    expect(content).not.toContain("github.event.thread.pull_request.number");
   });
 
   it("exposes pull-requests write permission", () => {
@@ -743,6 +755,24 @@ describe("GitHub workflow contract — review-fix job (TAC-12)", () => {
   it("review-fix reads trusted harness code from the default branch", async () => {
     const workflow = await readFile(".github/workflows/harness-gate-trigger.yml", "utf8");
     expect(workflow).toContain("ref: ${{ github.event.repository.default_branch }}");
+  });
+
+  it("binds processing to the commit reviewed by GitHub", async () => {
+    const workflow = await readFile(".github/workflows/harness-gate-trigger.yml", "utf8");
+    expect(workflow).toContain('head_sha="${{ github.event.review.commit_id }}"');
+  });
+
+  it("ships a callable reusable review-fix workflow", async () => {
+    const workflow = await readFile(".github/workflows/review-fix.yml", "utf8");
+    expect(workflow).toContain("workflow_call:");
+    expect(workflow).toContain("npm run harness -- review-fix");
+    expect(workflow).toContain("ref: ${{ inputs.harness-ref }}");
+  });
+
+  it("registers the review-fix CLI command", async () => {
+    const cli = await readFile("src/cli.ts", "utf8");
+    expect(cli).toContain('"review-fix"');
+    expect(cli).toContain("cmdReviewFix");
   });
 });
 
