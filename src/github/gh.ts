@@ -570,7 +570,7 @@ export const github = {
                   isResolved: boolean;
                   isOutdated: boolean;
                   originalCommit?: { oid: string };
-                  comments: { nodes: Array<{ databaseId: number; pullRequestReview: { databaseId: number }; author: { login: string; __typename: string } | null; body: string; createdAt: string }> };
+                  comments: { nodes: Array<{ databaseId: number; pullRequestReview: { databaseId: number } | null; author: { login: string; __typename: string } | null; body: string; createdAt: string }> };
                 }>;
               };
             };
@@ -586,7 +586,7 @@ export const github = {
           originalCommit: node.originalCommit,
           comments: node.comments.nodes.map((comment) => ({
             databaseId: comment.databaseId,
-            reviewId: comment.pullRequestReview.databaseId,
+            reviewId: comment.pullRequestReview?.databaseId ?? 0,
             author: comment.author,
             body: comment.body,
             createdAt: comment.createdAt,

@@ -1227,7 +1227,7 @@ async function cmdReviewFix(argv: {
         authorLogin: comment?.author?.login ?? "unknown",
         authorType: comment?.author?.__typename ?? "Unknown",
         body: comment?.body ?? "",
-        reviewId: comment?.reviewId ?? argv.reviewId,
+        reviewId: comment?.reviewId ? comment.reviewId : argv.reviewId,
       };
     }),
     {

@@ -139,6 +139,10 @@ describe("classifyReviewThread (TAC-05/TAC-06)", () => {
   it("resolved takes precedence over outdated (TAC-05)", () => {
     expect(classifyReviewThread({ ...base, isResolved: true, isOutdated: true })).toBe("resolved");
   });
+
+  it("does not treat arbitrary characters between scope and erweiterung as conflicts", () => {
+    expect(classifyReviewThread({ ...base, body: "scopeXerweiterung is an unrelated identifier" })).toBe("actionable");
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -319,17 +323,6 @@ describe("invalidateReviewEvidenceForSha (TAC-08)", () => {
     state = upsertReviewThread(state, thread);
     const invalidated = invalidateReviewEvidenceForSha(state, sha("a"));
     expect(invalidated.reviewThreads![0].status).toBe("outdated");
-  });
-
-  it("does not treat arbitrary characters between scope and erweiterung as conflicts", () => {
-    expect(classifyReviewThread({
-      body: "scopeXerweiterung is an unrelated identifier",
-      isResolved: false,
-      isOutdated: false,
-      authorLogin: "trusted",
-      selfActorLogin: "bot",
-      trustedActors: ["trusted"],
-    })).toBe("actionable");
   });
 
   it("normalizes a stored uppercase SHA before invalidation", () => {
