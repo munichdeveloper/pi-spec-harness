@@ -95,8 +95,12 @@ describe("GitHub workflow contracts", () => {
     expect(workflow).toContain("Post kickoff issue comment");
     expect(workflow).toContain("Add pipeline result comment");
     expect(workflow).toContain("closingIssuesReferences");
+    expect(workflow).toContain("--limit 1000");
+    expect(workflow).toContain("issue-number must be a positive integer");
     expect(workflow).not.toContain('--search "#${issue} in:body"');
     expect(workflow).toContain("Multiple open PRs close issue");
+    expect(workflow).toContain("Mehrere offene PRs schließen dieses Issue");
+    expect(workflow).toContain("steps.pr.outputs.matches");
     expect(workflow).not.toContain("head -n 1");
   });
 

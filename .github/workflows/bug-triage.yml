@@ -201,12 +201,21 @@ jobs:
         shell: bash
         run: |
           issue='${{ inputs.issue-number }}'
+          if [[ ! "$issue" =~ ^[1-9][0-9]*$ ]]; then
+            echo "::error::issue-number must be a positive integer."
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "invalid=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
           pr_numbers="$(gh pr list \
             --repo '${{ github.repository }}' \
             --state open \
+            --limit 1000 \
             --json number,closingIssuesReferences \
             --jq ".[] | select(any(.closingIssuesReferences[]?; .number == ${issue})) | .number")"
           pr_count="$(printf '%s\n' "$pr_numbers" | sed '/^$/d' | wc -l | tr -d ' ')"
+          pr_list="$(printf '%s\n' "$pr_numbers" | sed '/^$/d; s/^/#/' | paste -sd ',' -)"
 
           if [[ "$pr_count" == "1" ]]; then
             echo "exists=true" >> "$GITHUB_OUTPUT"
@@ -214,6 +223,7 @@ jobs:
           elif [[ "$pr_count" -gt 1 ]]; then
             echo "exists=false" >> "$GITHUB_OUTPUT"
             echo "ambiguous=true" >> "$GITHUB_OUTPUT"
+            echo "matches=$pr_list" >> "$GITHUB_OUTPUT"
             echo "::error::Multiple open PRs close issue #${issue}; refusing to choose one implicitly."
           else
             echo "exists=false" >> "$GITHUB_OUTPUT"
@@ -258,6 +268,14 @@ jobs:
             gh issue edit '${{ inputs.issue-number }}' \
               --repo '${{ github.repository }}' \
               --add-label bug-pipeline:completed || true
+          elif [[ '${{ steps.pr.outputs.ambiguous }}' == 'true' ]]; then
+            gh issue comment '${{ inputs.issue-number }}' \
+              --repo '${{ github.repository }}' \
+              --body $'Harness Bug Pipeline benötigt eine menschliche Zuordnung.\n\n- Mehrere offene PRs schließen dieses Issue: ${{ steps.pr.outputs.matches }}\n- Es wurde bewusst kein PR ausgewählt.\n- Label `status:needs-human` wurde gesetzt.'
+          elif [[ '${{ steps.pr.outputs.invalid }}' == 'true' ]]; then
+            gh issue comment '${{ inputs.issue-number }}' \
+              --repo '${{ github.repository }}' \
+              --body $'Harness Bug Pipeline wurde wegen einer ungültigen Issue-Kennung gestoppt.\n\n- Es wurde kein PR ausgewählt.\n- Label `status:needs-human` wurde gesetzt.'
           else
             gh issue comment '${{ inputs.issue-number }}' \
               --repo '${{ github.repository }}' \
