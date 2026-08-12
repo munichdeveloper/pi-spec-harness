@@ -199,8 +199,13 @@ async function cmdInit(argv: CmdInitArgs): Promise<void> {
   // tracking issue, or other repository state can be mutated.
   for (const workflowName of combinedWorkflowNames) {
     const template = findWorkflowTemplate(workflowName)!;
-    const sourceRepository = argv.workflowRepository ?? "munichdeveloper/pi-spec-harness";
-    const harnessRef = argv.workflowRef ?? template.defaultRef;
+    const usesLegacyBugOptions = workflowName === "bug-triage" && argv.installBugWorkflow;
+    const sourceRepository = usesLegacyBugOptions
+      ? argv.bugWorkflowRepository ?? "munichdeveloper/pi-spec-harness"
+      : argv.workflowRepository ?? "munichdeveloper/pi-spec-harness";
+    const harnessRef = usesLegacyBugOptions
+      ? argv.bugWorkflowRef ?? template.defaultRef
+      : argv.workflowRef ?? template.defaultRef;
     const validationError = validateSelfHostingRef(sourceRepository, argv.repository, harnessRef);
     if (validationError) throw new Error(validationError);
   }

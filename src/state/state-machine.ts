@@ -587,7 +587,7 @@ export function recordReview(state: RunState, review: ReviewRecord): RunState {
 }
 
 /**
- * Upsert a review thread record. If a thread with the same idempotencyKey
+ * Insert a review thread record. If a thread with the same idempotencyKey
  * already exists, the call is a no-op (returns state unchanged).
  * SPEC-009, TAC-09.
  */

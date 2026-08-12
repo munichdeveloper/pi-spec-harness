@@ -788,6 +788,8 @@ describe("GitHub workflow contract — review-fix job (TAC-12)", () => {
   it("enforces immutable refs during self-hosted init", async () => {
     const cli = await readFile("src/cli.ts", "utf8");
     expect(cli).toContain("validateSelfHostingRef(sourceRepository, argv.repository, harnessRef)");
+    expect(cli).toContain("argv.bugWorkflowRepository");
+    expect(cli).toContain("argv.bugWorkflowRef");
   });
 });
 
