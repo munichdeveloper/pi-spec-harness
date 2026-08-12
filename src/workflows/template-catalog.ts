@@ -13,7 +13,7 @@ const DEFAULT_REUSABLE_WORKFLOW_REPOSITORY = "munichdeveloper/pi-spec-harness";
 
 export const SPEC_TO_ISSUE_REFERENCE_PATH = ".github/workflows/harness-spec-to-issue.yml";
 export const SPEC_TO_ISSUE_REFERENCE_MARKER = "# Managed by pi-spec-harness: spec-to-issue-reference v1";
-export const DEFAULT_SPEC_TO_ISSUE_WORKFLOW_REF = "v0.1.1";
+export const DEFAULT_SPEC_TO_ISSUE_WORKFLOW_REF = "v0.2.0";
 
 export interface SpecToIssueReferenceOptions {
   harnessRef?: string;
@@ -49,7 +49,7 @@ jobs:
 
 export const LABEL_APPROVAL_BUNDLING_REFERENCE_PATH = ".github/workflows/harness-label-approval-bundling.yml";
 export const LABEL_APPROVAL_BUNDLING_REFERENCE_MARKER = "# Managed by pi-spec-harness: label-approval-bundling-reference v1";
-export const DEFAULT_LABEL_APPROVAL_BUNDLING_WORKFLOW_REF = "v0.1.1";
+export const DEFAULT_LABEL_APPROVAL_BUNDLING_WORKFLOW_REF = "v0.2.0";
 
 export interface LabelApprovalBundlingReferenceOptions {
   harnessRef?: string;
@@ -98,7 +98,7 @@ export interface WorkflowTemplateDefinition {
 
 export const REVIEW_FIX_REFERENCE_PATH = ".github/workflows/harness-review-fix.yml";
 export const REVIEW_FIX_REFERENCE_MARKER = "# Managed by pi-spec-harness: review-fix-reference v1";
-export const DEFAULT_REVIEW_FIX_WORKFLOW_REF = "v0.1.1";
+export const DEFAULT_REVIEW_FIX_WORKFLOW_REF = "v0.2.0";
 
 export interface ReviewFixReferenceOptions {
   harnessRef?: string;

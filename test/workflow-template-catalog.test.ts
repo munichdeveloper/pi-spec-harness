@@ -80,11 +80,11 @@ describe("WORKFLOW_TEMPLATE_CATALOG", () => {
     expect(rendered).not.toContain("secrets: inherit");
   });
 
-  it("defaults secret-free reactive references to the v0.1.1 patch release", () => {
-    expect(renderSpecToIssueReference()).toContain("spec-to-issue.yml@v0.1.1");
-    expect(renderSpecToIssueReference()).toContain("harness-ref: 'v0.1.1'");
-    expect(renderLabelApprovalBundlingReference()).toContain("label-approval-bundling.yml@v0.1.1");
-    expect(renderLabelApprovalBundlingReference()).toContain("harness-ref: 'v0.1.1'");
+  it("defaults reactive references to the v0.2.0 release", () => {
+    expect(renderSpecToIssueReference()).toContain("spec-to-issue.yml@v0.2.0");
+    expect(renderSpecToIssueReference()).toContain("harness-ref: 'v0.2.0'");
+    expect(renderLabelApprovalBundlingReference()).toContain("label-approval-bundling.yml@v0.2.0");
+    expect(renderLabelApprovalBundlingReference()).toContain("harness-ref: 'v0.2.0'");
   });
 });
 

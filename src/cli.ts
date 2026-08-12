@@ -15,6 +15,7 @@ import { orchestrate } from "./orchestrator.js";
 import { getSpecAssignee } from "./spec/spec-parser.js";
 import {
   BUG_WORKFLOW_REFERENCE_PATH,
+  DEFAULT_BUG_TRIAGE_WORKFLOW_REF,
   decideBugWorkflowInstall,
   renderBugWorkflowReference,
 } from "./bug/workflow-reference.js";
@@ -271,7 +272,7 @@ async function cmdInit(argv: CmdInitArgs): Promise<void> {
         path,
         action: "created",
         commitSha,
-        harnessRef: argv.bugWorkflowRef ?? "v0.1.0",
+        harnessRef: argv.bugWorkflowRef ?? DEFAULT_BUG_TRIAGE_WORKFLOW_REF,
         repository: argv.bugWorkflowRepository ?? "munichdeveloper/pi-spec-harness",
       };
     } else if (decision === "update-managed") {
@@ -286,14 +287,14 @@ async function cmdInit(argv: CmdInitArgs): Promise<void> {
         path,
         action: "updated",
         commitSha,
-        harnessRef: argv.bugWorkflowRef ?? "v0.1.0",
+        harnessRef: argv.bugWorkflowRef ?? DEFAULT_BUG_TRIAGE_WORKFLOW_REF,
         repository: argv.bugWorkflowRepository ?? "munichdeveloper/pi-spec-harness",
       };
     } else {
       bugWorkflow = {
         path,
         action: "noop",
-        harnessRef: argv.bugWorkflowRef ?? "v0.1.0",
+        harnessRef: argv.bugWorkflowRef ?? DEFAULT_BUG_TRIAGE_WORKFLOW_REF,
         repository: argv.bugWorkflowRepository ?? "munichdeveloper/pi-spec-harness",
       };
     }
