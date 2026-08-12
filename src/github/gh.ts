@@ -448,4 +448,191 @@ export const github = {
     const out = await runGh(args);
     return parsePaginatedIssues(out);
   },
+
+  // ---------------------------------------------------------------------------
+  // SPEC-009: Named, auditable review functions
+  // ---------------------------------------------------------------------------
+
+  /**
+   * List all reviews submitted on a pull request.
+   * Returns reviewer login, type, review state and submitted-at timestamp.
+   * SPEC-009, decision 2.
+   */
+  async listPullRequestReviews(
+    repository: string,
+    prNumber: number,
+  ): Promise<Array<{
+    id: number;
+    user: { login: string; type: string };
+    state: string;
+    submittedAt: string;
+    commitId: string;
+    body: string;
+  }>> {
+    const out = await runGh([
+      "api",
+      `repos/${repository}/pulls/${prNumber}/reviews`,
+      "--paginate",
+      "--slurp",
+    ]);
+    const pages = JSON.parse(out) as Array<Array<{
+      id: number;
+      user: { login: string; type: string };
+      state: string;
+      submitted_at: string;
+      commit_id: string;
+      body: string;
+    }>>;
+    return pages.flat().map((r) => ({
+      id: r.id,
+      user: r.user,
+      state: r.state,
+      submittedAt: r.submitted_at,
+      commitId: r.commit_id,
+      body: r.body,
+    }));
+  },
+
+  /**
+   * List all review threads on a pull request via the GitHub GraphQL API.
+   * Returns thread id, resolution/outdated state, and the first comment's
+   * author and body. SPEC-009, decision 1 & 3.
+   */
+  async listPullRequestReviewThreads(
+    repository: string,
+    prNumber: number,
+  ): Promise<Array<{
+    id: string;
+    isResolved: boolean;
+    isOutdated: boolean;
+    originalCommit?: { oid: string };
+    comments: Array<{
+      databaseId: number;
+      reviewId: number;
+      author: { login: string; __typename: string } | null;
+      body: string;
+      createdAt: string;
+    }>;
+  }>> {
+    const [owner, repo] = repository.split("/");
+    const query = `
+      query($owner: String!, $repo: String!, $pr: Int!, $after: String) {
+        repository(owner: $owner, name: $repo) {
+          pullRequest(number: $pr) {
+            reviewThreads(first: 100, after: $after) {
+              pageInfo { hasNextPage endCursor }
+              nodes {
+                id
+                isResolved
+                isOutdated
+                originalCommit { oid }
+                comments(first: 1) {
+                  nodes {
+                    databaseId
+                    pullRequestReview { databaseId }
+                    author { login __typename }
+                    body
+                    createdAt
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    `;
+    const threads: Array<{
+      id: string;
+      isResolved: boolean;
+      isOutdated: boolean;
+      originalCommit?: { oid: string };
+      comments: Array<{ databaseId: number; reviewId: number; author: { login: string; __typename: string } | null; body: string; createdAt: string }>;
+    }> = [];
+    let after: string | undefined;
+    for (;;) {
+      const args = [
+        "api", "graphql",
+        "-f", `query=${query}`,
+        "-f", `owner=${owner}`,
+        "-f", `repo=${repo}`,
+        "-F", `pr=${prNumber}`,
+      ];
+      if (after) args.push("-f", `after=${after}`);
+      const out = await runGh(args);
+      const data = JSON.parse(out) as {
+        data: {
+          repository: {
+            pullRequest: {
+              reviewThreads: {
+                pageInfo: { hasNextPage: boolean; endCursor: string };
+                nodes: Array<{
+                  id: string;
+                  isResolved: boolean;
+                  isOutdated: boolean;
+                  originalCommit?: { oid: string };
+                  comments: { nodes: Array<{ databaseId: number; pullRequestReview: { databaseId: number } | null; author: { login: string; __typename: string } | null; body: string; createdAt: string }> };
+                }>;
+              };
+            };
+          };
+        };
+      };
+      const page = data.data.repository.pullRequest.reviewThreads;
+      for (const node of page.nodes) {
+        threads.push({
+          id: node.id,
+          isResolved: node.isResolved,
+          isOutdated: node.isOutdated,
+          originalCommit: node.originalCommit,
+          comments: node.comments.nodes.map((comment) => ({
+            databaseId: comment.databaseId,
+            reviewId: comment.pullRequestReview?.databaseId ?? 0,
+            author: comment.author,
+            body: comment.body,
+            createdAt: comment.createdAt,
+          })),
+        });
+      }
+      if (!page.pageInfo.hasNextPage) break;
+      after = page.pageInfo.endCursor;
+    }
+    return threads;
+  },
+
+  /**
+   * Post a reply to a pull-request review thread (identified by its first
+   * comment's database id). SPEC-009, TAC-06.
+   */
+  async replyToReviewThread(
+    repository: string,
+    commentId: number,
+    body: string,
+  ): Promise<void> {
+    await runGh([
+      "api",
+      `repos/${repository}/pulls/comments/${commentId}/replies`,
+      "--method", "POST",
+      "-f", `body=${body}`,
+    ]);
+  },
+
+  /**
+   * Resolve a pull-request review thread via the GitHub GraphQL API.
+   * Only called after the implementing commit has been verified.
+   * SPEC-009, TAC-07.
+   */
+  async resolveReviewThread(threadId: string): Promise<void> {
+    const mutation = `
+      mutation($threadId: ID!) {
+        resolveReviewThread(input: { threadId: $threadId }) {
+          thread { id isResolved }
+        }
+      }
+    `;
+    await runGh([
+      "api", "graphql",
+      "-f", `query=${mutation}`,
+      "-f", `threadId=${threadId}`,
+    ]);
+  },
 };

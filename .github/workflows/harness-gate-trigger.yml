@@ -132,3 +132,72 @@ jobs:
         shell: bash
         run: |
           npm run harness -- reconcile --repository "${{ github.repository }}"
+
+  review-fix:
+    # SPEC-009 TAC-04/TAC-09: Start a review-fix iteration when a trusted reviewer
+    # submits a review. Bot-own events and duplicate submissions are rejected inside
+    # the harness CLI (idempotency key + loop guard).
+    # pull_request_review_thread.resolved/unresolved events are handled as no-ops
+    # at the CLI level; only pull_request_review.submitted triggers an iteration.
+    if: >-
+      github.event_name == 'pull_request_review' &&
+      (github.event.review.state == 'changes_requested' ||
+       github.event.review.state == 'commented')
+    runs-on: ubuntu-latest
+    # SPEC-009 decision 1: serialise per-run to prevent concurrent SHA mutations.
+    concurrency:
+      group: harness-review-fix-${{ github.repository }}-${{ github.event.pull_request.number }}
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+    steps:
+      # Execute only the already merged harness implementation. Checking out
+      # the reviewed PR head here would run untrusted code with issue/PR write
+      # permissions. The first self-hosting PR therefore needs the documented
+      # manual bootstrap path; subsequent reviews are fully event-driven.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20.9"
+          cache: npm
+
+      - run: npm ci
+
+      - name: Process review event and classify threads
+        id: review
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HARNESS_TRUSTED_REVIEW_ACTORS: ${{ vars.HARNESS_TRUSTED_REVIEW_ACTORS || 'copilot-pull-request-reviewer' }}
+          HARNESS_REVIEW_FIX_AGENT: ${{ vars.HARNESS_REVIEW_FIX_AGENT || 'github-copilot' }}
+        shell: bash
+        run: |
+          review_id="${{ github.event.review.id }}"
+          pr_number="${{ github.event.pull_request.number }}"
+          head_sha="${{ github.event.review.commit_id }}"
+          reviewer="${{ github.event.review.user.login }}"
+          reviewer_type="${{ github.event.review.user.type }}"
+          review_state="${{ github.event.review.state }}"
+          submitted_at="${{ github.event.review.submitted_at }}"
+
+          result="$(
+            npm run harness -- review-fix \
+              --repository "${{ github.repository }}" \
+              --pull-request "$pr_number" \
+              --review-id "$review_id" \
+              --head-sha "$head_sha" \
+              --reviewer "$reviewer" \
+              --reviewer-type "$reviewer_type" \
+              --review-state "$review_state" \
+              --submitted-at "$submitted_at" \
+              --trusted-actors "$HARNESS_TRUSTED_REVIEW_ACTORS" \
+              --fix-agent "$HARNESS_REVIEW_FIX_AGENT" \
+              --self-actor-login "github-actions[bot]"
+          )"
+          printf '%s\n' "$result"
+          has_actionable="$(printf '%s\n' "$result" | sed -n '/^{/,$p' | jq -r '.result.hasActionable // false')"
+          echo "has_actionable=$has_actionable" >> "$GITHUB_OUTPUT"

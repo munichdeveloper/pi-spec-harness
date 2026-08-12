@@ -23,7 +23,8 @@ import { decideWorkflowInstall } from "./workflows/install-decision.js";
 import { upsertManagedBlock, renderHarnessContextBlock, AGENTS_MD_PATH } from "./agents-context/managed-block.js";
 import { buildIssueFromSpec } from "./spec/issue-from-spec.js";
 import { runSpecToIssuePipeline } from "./spec/spec-to-issue-pipeline.js";
-import { IssueStateStore, RUN_ISSUE_LABEL, ensureRunIssue, findRunIssue, parseStateFromBody } from "./state/issue-store.js";
+import { IssueStateStore, RUN_ISSUE_LABEL, ensureRunIssue, findRunIssue, findRunIssueByPullRequest, parseStateFromBody } from "./state/issue-store.js";
+import { processReviewEvent, validateSelfHostingRef } from "./review/review-fix.js";
 import type { StateStore } from "./state/state-store.js";
 import { FileStateStore } from "./state/store.js";
 import {
@@ -193,6 +194,21 @@ async function cmdInit(argv: CmdInitArgs): Promise<void> {
     installBugWorkflow: argv.installBugWorkflow,
     installWorkflows: argv.installWorkflows,
   });
+
+  // SPEC-009 TAC-02: enforce the immutable-ref guard before any target file,
+  // tracking issue, or other repository state can be mutated.
+  for (const workflowName of combinedWorkflowNames) {
+    const template = findWorkflowTemplate(workflowName)!;
+    const usesLegacyBugOptions = workflowName === "bug-triage" && argv.installBugWorkflow;
+    const sourceRepository = usesLegacyBugOptions
+      ? argv.bugWorkflowRepository ?? "munichdeveloper/pi-spec-harness"
+      : argv.workflowRepository ?? "munichdeveloper/pi-spec-harness";
+    const harnessRef = usesLegacyBugOptions
+      ? argv.bugWorkflowRef ?? template.defaultRef
+      : argv.workflowRef ?? template.defaultRef;
+    const validationError = validateSelfHostingRef(sourceRepository, argv.repository, harnessRef);
+    if (validationError) throw new Error(validationError);
+  }
 
   const initial = initRunState(argv);
   let store: StateStore;
@@ -1171,6 +1187,98 @@ async function cmdOrchestrate(argv: StoreArgs & { maxSteps?: number }): Promise<
   );
 }
 
+async function cmdReviewFix(argv: {
+  repository: string;
+  pullRequest: number;
+  reviewId: number;
+  headSha: string;
+  reviewer: string;
+  reviewerType: string;
+  reviewState: string;
+  submittedAt: string;
+  trustedActors: string;
+  fixAgent: string;
+  selfActorLogin: string;
+}): Promise<void> {
+  const store = await findRunIssueByPullRequest(argv.repository, argv.pullRequest);
+  if (!store) {
+    printResult(
+      "review-fix",
+      { hasActionable: false, gateOpened: false, classifiedKeys: [], dispatched: false, skipped: "unmanaged-pull-request" },
+      `No open harness run is bound to PR #${argv.pullRequest}; nothing to remediate.`,
+    );
+    return;
+  }
+  const state = await store.load();
+  const threads = await github.listPullRequestReviewThreads(argv.repository, argv.pullRequest);
+  const result = processReviewEvent(
+    state,
+    {
+      reviewerLogin: argv.reviewer,
+      reviewerType: argv.reviewerType,
+      reviewId: argv.reviewId,
+      reviewState: argv.reviewState,
+      submittedAt: argv.submittedAt,
+      reviewedHeadSha: argv.headSha,
+      pullRequest: argv.pullRequest,
+      repository: argv.repository,
+    },
+    threads.map((thread) => {
+      const comment = thread.comments[0];
+      return {
+        threadId: thread.id,
+        isResolved: thread.isResolved,
+        isOutdated: thread.isOutdated,
+        authorLogin: comment?.author?.login ?? "unknown",
+        authorType: comment?.author?.__typename ?? "Unknown",
+        body: comment?.body ?? "",
+        reviewId: comment?.reviewId ? comment.reviewId : argv.reviewId,
+      };
+    }),
+    {
+      selfActorLogin: argv.selfActorLogin,
+      trustedActors: argv.trustedActors.split(",").map((actor) => actor.trim()).filter(Boolean),
+    },
+  );
+  await store.save(result.state);
+  let dispatched = false;
+  const hasOpenHumanGate = result.state.gates.some(
+    (gate) => gate.type === "human" && (gate.result === "pending" || gate.result === "needs-human"),
+  );
+  if (result.hasActionable && !result.gateOpened && !hasOpenHumanGate) {
+    const agentMention = argv.fixAgent === "github-copilot"
+      ? "@copilot"
+      : argv.fixAgent === "claude-code"
+        ? "@claude"
+        : undefined;
+    if (!agentMention) {
+      throw new Error(`unsupported HARNESS_REVIEW_FIX_AGENT '${argv.fixAgent}'`);
+    }
+    await github.commentIssue(
+      argv.repository,
+      argv.pullRequest,
+      `${agentMention} Please address all unresolved actionable review threads for this PR on the existing PR branch. ` +
+        `Do not create another pull request or expand scope. Run the relevant checks, push the fixes to this branch, ` +
+        `then reply to each implemented thread with commit and test evidence. Review package: ${result.classifiedKeys.join(", ")}`,
+    );
+    dispatched = true;
+  }
+  printResult(
+    "review-fix",
+    {
+      hasActionable: result.hasActionable,
+      gateOpened: result.gateOpened,
+      classifiedKeys: result.classifiedKeys,
+      dispatched,
+    },
+    dispatched
+      ? "Dispatched the configured review-fix agent for the classified package."
+      : hasOpenHumanGate || result.gateOpened
+        ? "Remediation is blocked by an open human gate."
+        : "No remediation required.",
+  );
+}
+
 async function cmdIterationFinish(
   argv: StoreArgs & { index: number; result: "passed" | "failed"; findings?: string[] },
 ): Promise<void> {
@@ -1579,6 +1687,37 @@ await yargs(hideBin(process.argv))
         state: argv.state,
         repository: argv.repository,
         runId: argv.runId,
+      }),
+  )
+  .command(
+    "review-fix",
+    "Persist and classify a submitted review for the exactly bound PR and SHA",
+    (y) =>
+      y
+        .option("repository", { type: "string", demandOption: true })
+        .option("pull-request", { type: "number", demandOption: true })
+        .option("review-id", { type: "number", demandOption: true })
+        .option("head-sha", { type: "string", demandOption: true })
+        .option("reviewer", { type: "string", demandOption: true })
+        .option("reviewer-type", { type: "string", demandOption: true })
+        .option("review-state", { type: "string", demandOption: true })
+        .option("submitted-at", { type: "string", demandOption: true })
+        .option("trusted-actors", { type: "string", demandOption: true })
+        .option("fix-agent", { type: "string", demandOption: true })
+        .option("self-actor-login", { type: "string", demandOption: true }),
+    async (argv) =>
+      cmdReviewFix({
+        repository: argv.repository,
+        pullRequest: argv.pullRequest,
+        reviewId: argv.reviewId,
+        headSha: argv.headSha,
+        reviewer: argv.reviewer,
+        reviewerType: argv.reviewerType,
+        reviewState: argv.reviewState,
+        submittedAt: argv.submittedAt,
+        trustedActors: argv.trustedActors,
+        fixAgent: argv.fixAgent,
+        selfActorLogin: argv.selfActorLogin,
       }),
   )
   .command(
