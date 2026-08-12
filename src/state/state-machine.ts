@@ -1,5 +1,5 @@
 import { nowIso } from "./store.js";
-import type { GateDecisionContext, GateRecord, GateResult, GateType, IterationRecord, PhaseId, RunState } from "./types.js";
+import type { GateDecisionContext, GateRecord, GateResult, GateType, IterationRecord, PhaseId, ReviewRecord, ReviewThreadRecord, ReviewThreadStatus, RunState } from "./types.js";
 import { SCHEMA_VERSION } from "./types.js";
 
 export const PHASE_ORDER: PhaseId[] = [
@@ -506,4 +506,160 @@ export function computeNextAction(state: RunState): NextAction {
 
 export function gateResultOf(state: RunState, gateId: string): GateResult | undefined {
   return findGate(state, gateId)?.result;
+}
+
+// ---------------------------------------------------------------------------
+// SPEC-009: Review-remediation state helpers (pure functions)
+// ---------------------------------------------------------------------------
+
+/**
+ * Build the canonical idempotency key for one review thread.
+ * Key = repository + pullRequest + reviewId + threadId + reviewedHeadSha.
+ * SPEC-009, decision 3.
+ */
+export function buildReviewIdempotencyKey(
+  repository: string,
+  pullRequest: number,
+  reviewId: number,
+  threadId: string,
+  reviewedHeadSha: string,
+): string {
+  return `${repository}:pr${pullRequest}:review${reviewId}:thread${threadId}:sha${reviewedHeadSha.toLowerCase()}`;
+}
+
+/**
+ * Classify one review thread into a ReviewThreadStatus.
+ * Pure function — no I/O, no GitHub calls.
+ * SPEC-009, decisions 2 & 8.
+ */
+export function classifyReviewThread(opts: {
+  body: string;
+  isResolved: boolean;
+  isOutdated: boolean;
+  authorLogin: string;
+  selfActorLogin: string;
+  trustedActors: string[];
+}): ReviewThreadStatus {
+  if (opts.isResolved) return "resolved";
+  if (opts.isOutdated) return "outdated";
+  // Bot-own replies must never start an implementation loop.
+  if (opts.authorLogin.toLowerCase() === opts.selfActorLogin.toLowerCase()) return "informational";
+  // Unknown or untrusted reviewer — treat as informational to avoid scope creep.
+  const isTrusted = opts.trustedActors.some((a) => a.toLowerCase() === opts.authorLogin.toLowerCase());
+  if (!isTrusted) return "informational";
+  // Detect conflict-/gate-triggering keywords (SPEC-009, decision 4).
+  const conflictPattern =
+    /\b(conflict|widerspruch|scope.erweiterung|auth(?:orization)?|permission|secret|cost|destruktiv)\b/i;
+  if (conflictPattern.test(opts.body)) return "conflicting";
+  return "actionable";
+}
+
+/**
+ * True when the run already has an active review-fix iteration in progress
+ * (at least one thread is in 'implementing'). A second event for the same
+ * SHA must not start another iteration. SPEC-009, decision 6.
+ */
+export function isReviewIterationActive(state: RunState): boolean {
+  return (state.reviewThreads ?? []).some((t) => t.status === "implementing");
+}
+
+/**
+ * True when the run has already processed a review for the given idempotency
+ * key. Duplicate event delivery for the same key is a no-op. SPEC-009, TAC-09.
+ */
+export function isReviewThreadAlreadyProcessed(state: RunState, idempotencyKey: string): boolean {
+  return (state.reviewThreads ?? []).some((t) => t.idempotencyKey === idempotencyKey);
+}
+
+/**
+ * Record a new review submission on the run.
+ * Idempotent: if the same reviewId is already recorded, returns state unchanged.
+ * SPEC-009, decision 3 & TAC-09.
+ */
+export function recordReview(state: RunState, review: ReviewRecord): RunState {
+  const existing = (state.reviews ?? []).find((r) => r.reviewId === review.reviewId);
+  if (existing) return state; // idempotent
+  return {
+    ...state,
+    reviews: [...(state.reviews ?? []), review],
+    updatedAt: nowIso(),
+  };
+}
+
+/**
+ * Upsert a review thread record. If a thread with the same idempotencyKey
+ * already exists, the call is a no-op (returns state unchanged).
+ * SPEC-009, TAC-09.
+ */
+export function upsertReviewThread(state: RunState, thread: ReviewThreadRecord): RunState {
+  const alreadyPresent = (state.reviewThreads ?? []).some((t) => t.idempotencyKey === thread.idempotencyKey);
+  if (alreadyPresent) return state;
+  return {
+    ...state,
+    reviewThreads: [...(state.reviewThreads ?? []), thread],
+    updatedAt: nowIso(),
+  };
+}
+
+/**
+ * Update an existing review thread record by idempotency key.
+ * Throws if the thread is not found.
+ */
+export function updateReviewThread(
+  state: RunState,
+  idempotencyKey: string,
+  update: Partial<Omit<ReviewThreadRecord, "idempotencyKey">>,
+): RunState {
+  const threads = state.reviewThreads ?? [];
+  const index = threads.findIndex((t) => t.idempotencyKey === idempotencyKey);
+  if (index < 0) throw new Error(`review thread '${idempotencyKey}' not found on run '${state.runId}'`);
+  const updated = [...threads];
+  updated[index] = { ...updated[index], ...update };
+  return { ...state, reviewThreads: updated, updatedAt: nowIso() };
+}
+
+/**
+ * Invalidate review and CI evidence when the implementation HEAD SHA changes.
+ * All thread records for the old SHA are marked 'outdated'; thread records
+ * for the new SHA are preserved. SPEC-009, TAC-08.
+ */
+export function invalidateReviewEvidenceForSha(state: RunState, oldSha: string): RunState {
+  if (!state.reviewThreads) return state;
+  const normalizedOld = oldSha.toLowerCase();
+  const updatedThreads = state.reviewThreads.map((t) =>
+    t.reviewedHeadSha === normalizedOld && t.status !== "resolved"
+      ? { ...t, status: "outdated" as ReviewThreadStatus }
+      : t,
+  );
+  return { ...state, reviewThreads: updatedThreads, updatedAt: nowIso() };
+}
+
+/**
+ * Increment the review-loop failure counter. Opens a human gate escalation
+ * when the counter reaches the cap. Returns the updated state.
+ * SPEC-009, decision 6.
+ */
+export function incrementReviewLoopCounter(state: RunState): RunState {
+  return { ...state, reviewLoopCounter: (state.reviewLoopCounter ?? 0) + 1, updatedAt: nowIso() };
+}
+
+/**
+ * True when the review-loop failure counter has reached the run's automatic
+ * iteration cap. SPEC-009, decision 6.
+ */
+export function reviewLoopCapReached(state: RunState): boolean {
+  return (state.reviewLoopCounter ?? 0) >= state.maxAutomaticIterations;
+}
+
+/**
+ * Detect whether the harness source repository and target repository are
+ * identical (self-hosting). When true, the bootstrap must use an already
+ * published immutable ref — never the unmergerd branch.
+ * SPEC-009, TAC-02.
+ */
+export function detectSelfHosting(
+  harnessSourceRepository: string,
+  targetRepository: string,
+): boolean {
+  return harnessSourceRepository.toLowerCase() === targetRepository.toLowerCase();
 }

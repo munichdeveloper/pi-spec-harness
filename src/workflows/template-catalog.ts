@@ -92,6 +92,56 @@ export interface WorkflowTemplateDefinition {
   renderReference(options?: Record<string, unknown>): string;
 }
 
+// ---------------------------------------------------------------------------
+// SPEC-009: Review-fix reference workflow template
+// ---------------------------------------------------------------------------
+
+export const REVIEW_FIX_REFERENCE_PATH = ".github/workflows/harness-review-fix.yml";
+export const REVIEW_FIX_REFERENCE_MARKER = "# Managed by pi-spec-harness: review-fix-reference v1";
+export const DEFAULT_REVIEW_FIX_WORKFLOW_REF = "v0.1.1";
+
+export interface ReviewFixReferenceOptions {
+  harnessRef?: string;
+  reusableRepository?: string;
+  trustedActors?: string[];
+  fixAgent?: string;
+}
+
+export function renderReviewFixReference(options: ReviewFixReferenceOptions = {}): string {
+  const harnessRef = options.harnessRef ?? DEFAULT_REVIEW_FIX_WORKFLOW_REF;
+  const reusableRepository = options.reusableRepository ?? DEFAULT_REUSABLE_WORKFLOW_REPOSITORY;
+  const trustedActors = options.trustedActors ?? ["copilot-pull-request-reviewer"];
+  const fixAgent = options.fixAgent ?? "github-copilot";
+
+  return `${REVIEW_FIX_REFERENCE_MARKER}
+name: Harness Review Fix
+
+on:
+  pull_request_review:
+    types: [submitted]
+  pull_request_review_thread:
+    types: [resolved, unresolved]
+
+# SPEC-009 decision 1: one concurrent review-fix job per PR.
+concurrency:
+  group: harness-review-fix-\${{ github.repository }}-\${{ github.event.pull_request.number || github.event.thread.pull_request.number }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+jobs:
+  review-fix:
+    uses: ${reusableRepository}/.github/workflows/harness-gate-trigger.yml@${harnessRef}
+    with:
+      harness-ref: '${harnessRef}'
+      trusted-actors: '${trustedActors.join(",")}'
+      fix-agent: '${fixAgent}'
+`;
+}
+
 export const WORKFLOW_TEMPLATE_CATALOG: WorkflowTemplateDefinition[] = [
   {
     name: "bug-triage",
@@ -116,6 +166,14 @@ export const WORKFLOW_TEMPLATE_CATALOG: WorkflowTemplateDefinition[] = [
     reusableWorkflowRepoPath: ".github/workflows/label-approval-bundling.yml",
     defaultRef: DEFAULT_LABEL_APPROVAL_BUNDLING_WORKFLOW_REF,
     renderReference: (options) => renderLabelApprovalBundlingReference(options as LabelApprovalBundlingReferenceOptions | undefined),
+  },
+  {
+    name: "review-fix",
+    targetPath: REVIEW_FIX_REFERENCE_PATH,
+    marker: REVIEW_FIX_REFERENCE_MARKER,
+    reusableWorkflowRepoPath: ".github/workflows/harness-gate-trigger.yml",
+    defaultRef: DEFAULT_REVIEW_FIX_WORKFLOW_REF,
+    renderReference: (options) => renderReviewFixReference(options as ReviewFixReferenceOptions | undefined),
   },
 ];
 

@@ -97,6 +97,75 @@ export interface IterationRecord {
   findings?: string[];
 }
 
+/**
+ * Lifecycle status for a single review thread.
+ * SPEC-009, decision 3.
+ */
+export type ReviewThreadStatus =
+  | "pending"
+  | "informational"
+  | "actionable"
+  | "implementing"
+  | "implemented"
+  | "declined"
+  | "conflicting"
+  | "needs-human"
+  | "outdated"
+  | "resolved";
+
+/**
+ * Persisted record for one review thread.
+ * The idempotency key (repository + pullRequest + reviewId + threadId +
+ * reviewedHeadSha) prevents duplicate or recursive processing.
+ * SPEC-009, decision 3.
+ */
+export interface ReviewThreadRecord {
+  /** Idempotency key: `${repository}:pr${pullRequest}:review${reviewId}:thread${threadId}:sha${reviewedHeadSha}` */
+  idempotencyKey: string;
+  repository: string;
+  pullRequest: number;
+  reviewId: number;
+  threadId: string;
+  reviewedHeadSha: string;
+  reviewer: string;
+  /** 'User' | 'Bot' | 'Organization' | 'Mannequin' */
+  reviewerType: string;
+  status: ReviewThreadStatus;
+  /** 1-based iteration this thread is part of */
+  iterationIndex?: number;
+  /** Commit SHA produced while implementing this thread */
+  implementedSha?: string;
+  /** Reply text posted back to the thread on GitHub */
+  reply?: string;
+  /** ISO timestamp when the thread was resolved on GitHub */
+  resolvedAt?: string;
+  /** Reason stored for non-implementation decisions */
+  declineReason?: string;
+  classifiedAt?: string;
+  auditedAt: string;
+}
+
+/**
+ * Persisted record for one submitted review event.
+ * SPEC-009, decision 3.
+ */
+export interface ReviewRecord {
+  reviewId: number;
+  reviewer: string;
+  /** 'User' | 'Bot' | 'Organization' | 'Mannequin' */
+  reviewerType: string;
+  submittedAt: string;
+  /** GitHub review state: 'APPROVED' | 'CHANGES_REQUESTED' | 'COMMENTED' */
+  state: string;
+  repository: string;
+  pullRequest: number;
+  reviewedHeadSha: string;
+  processedAt?: string;
+  iterationIndex?: number;
+  /** True when suppressed as a bot-own or duplicate event (loop guard). */
+  loopProtected?: boolean;
+}
+
 export interface RunState {
   schemaVersion: typeof SCHEMA_VERSION;
   runId: string;
@@ -141,6 +210,22 @@ export interface RunState {
   /** Hard iteration cap before a run must escalate to needs-human. */
   maxAutomaticIterations: number;
   notes?: string[];
+  /**
+   * Persisted log of submitted reviews processed for this run.
+   * SPEC-009, decision 3.
+   */
+  reviews?: ReviewRecord[];
+  /**
+   * Persisted log of individual review threads classified and acted upon.
+   * SPEC-009, decision 3.
+   */
+  reviewThreads?: ReviewThreadRecord[];
+  /**
+   * Counter of failed automatic review-fix iterations for this run.
+   * Separate from the general iteration counter so the cap can be applied
+   * independently. SPEC-009, decision 6.
+   */
+  reviewLoopCounter?: number;
 }
 
 export interface CommandResult<TResult = unknown> {
