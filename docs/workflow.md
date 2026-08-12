@@ -60,11 +60,13 @@ Neben dem Feature-Run gibt es einen separaten, schlanken Bug-Track:
 1. Ein Zielrepository installiert eine dünne Referenzdatei
    `.github/workflows/harness-bug-triage.yml` (über `harness init --install-bug-workflow`).
 2. Diese Datei triggert auf die für Bugs relevanten `issues`-Ereignisse
-   (`typed` sowie das Hinzufügen von `type:bug`) und ruft
+   (`opened`, `typed` sowie das Hinzufügen von `type:bug`) und ruft
    den zentral gepflegten reusable Workflow
    `munichdeveloper/pi-spec-harness/.github/workflows/bug-triage.yml@<pinned-ref>`
    auf.
-3. Der Trigger filtert serverseitig auf das konkrete auslösende Ereignis und
+3. `opened` deckt insbesondere Bug-Issue-Templates ab, deren initiales Label
+   kein separates `labeled`-Event erzeugt. Der Trigger filtert serverseitig
+   auf das konkrete auslösende Ereignis und
    serialisiert Läufe pro Repository und Issue. Andere gleichzeitig gesetzte
    Labels starten keine weitere Pipeline.
 4. Der reusable Workflow erzwingt eine gepinnte
