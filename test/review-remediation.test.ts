@@ -773,6 +773,13 @@ describe("GitHub workflow contract — review-fix job (TAC-12)", () => {
     const cli = await readFile("src/cli.ts", "utf8");
     expect(cli).toContain('"review-fix"');
     expect(cli).toContain("cmdReviewFix");
+    expect(cli).toContain("selfActorLogin: argv.selfActorLogin");
+    expect(cli).toContain("@copilot");
+  });
+
+  it("enforces immutable refs during self-hosted init", async () => {
+    const cli = await readFile("src/cli.ts", "utf8");
+    expect(cli).toContain("validateSelfHostingRef(sourceRepository, argv.repository, harnessRef)");
   });
 });
 

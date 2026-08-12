@@ -55,4 +55,5 @@ jobs:
             --review-state "${{ inputs.review-state }}" \
             --submitted-at "${{ inputs.submitted-at }}" \
             --trusted-actors "${{ inputs.trusted-actors }}" \
-            --fix-agent "${{ inputs.fix-agent }}"
+            --fix-agent "${{ inputs.fix-agent }}" \
+            --self-actor-login "github-actions[bot]"

@@ -24,7 +24,7 @@ import { upsertManagedBlock, renderHarnessContextBlock, AGENTS_MD_PATH } from ".
 import { buildIssueFromSpec } from "./spec/issue-from-spec.js";
 import { runSpecToIssuePipeline } from "./spec/spec-to-issue-pipeline.js";
 import { IssueStateStore, RUN_ISSUE_LABEL, ensureRunIssue, findRunIssue, findRunIssueByPullRequest, parseStateFromBody } from "./state/issue-store.js";
-import { processReviewEvent } from "./review/review-fix.js";
+import { processReviewEvent, validateSelfHostingRef } from "./review/review-fix.js";
 import type { StateStore } from "./state/state-store.js";
 import { FileStateStore } from "./state/store.js";
 import {
@@ -194,6 +194,16 @@ async function cmdInit(argv: CmdInitArgs): Promise<void> {
     installBugWorkflow: argv.installBugWorkflow,
     installWorkflows: argv.installWorkflows,
   });
+
+  // SPEC-009 TAC-02: enforce the immutable-ref guard before any target file,
+  // tracking issue, or other repository state can be mutated.
+  for (const workflowName of combinedWorkflowNames) {
+    const template = findWorkflowTemplate(workflowName)!;
+    const sourceRepository = argv.workflowRepository ?? "munichdeveloper/pi-spec-harness";
+    const harnessRef = argv.workflowRef ?? template.defaultRef;
+    const validationError = validateSelfHostingRef(sourceRepository, argv.repository, harnessRef);
+    if (validationError) throw new Error(validationError);
+  }
 
   const initial = initRunState(argv);
   let store: StateStore;
@@ -1183,6 +1193,7 @@ async function cmdReviewFix(argv: {
   submittedAt: string;
   trustedActors: string;
   fixAgent: string;
+  selfActorLogin: string;
 }): Promise<void> {
   const store = await findRunIssueByPullRequest(argv.repository, argv.pullRequest);
   if (!store) {
@@ -1215,17 +1226,37 @@ async function cmdReviewFix(argv: {
       };
     }),
     {
-      selfActorLogin: argv.fixAgent,
+      selfActorLogin: argv.selfActorLogin,
       trustedActors: argv.trustedActors.split(",").map((actor) => actor.trim()).filter(Boolean),
     },
   );
   await store.save(result.state);
+  let dispatched = false;
+  if (result.hasActionable && !result.gateOpened) {
+    const agentMention = argv.fixAgent === "github-copilot"
+      ? "@copilot"
+      : argv.fixAgent === "claude-code"
+        ? "@claude"
+        : undefined;
+    if (!agentMention) {
+      throw new Error(`unsupported HARNESS_REVIEW_FIX_AGENT '${argv.fixAgent}'`);
+    }
+    await github.commentIssue(
+      argv.repository,
+      argv.pullRequest,
+      `${agentMention} Please address all unresolved actionable review threads for this PR on the existing PR branch. ` +
+        `Do not create another pull request or expand scope. Run the relevant checks, push the fixes to this branch, ` +
+        `then reply to each implemented thread with commit and test evidence. Review package: ${result.classifiedKeys.join(", ")}`,
+    );
+    dispatched = true;
+  }
   printResult(
     "review-fix",
     {
       hasActionable: result.hasActionable,
       gateOpened: result.gateOpened,
       classifiedKeys: result.classifiedKeys,
+      dispatched,
     },
     result.hasActionable ? "Dispatch the configured review-fix agent for the classified package." : "No remediation required.",
   );
@@ -1655,7 +1686,8 @@ await yargs(hideBin(process.argv))
         .option("review-state", { type: "string", demandOption: true })
         .option("submitted-at", { type: "string", demandOption: true })
         .option("trusted-actors", { type: "string", demandOption: true })
-        .option("fix-agent", { type: "string", demandOption: true }),
+        .option("fix-agent", { type: "string", demandOption: true })
+        .option("self-actor-login", { type: "string", demandOption: true }),
     async (argv) =>
       cmdReviewFix({
         repository: argv.repository,
@@ -1668,6 +1700,7 @@ await yargs(hideBin(process.argv))
         submittedAt: argv.submittedAt,
         trustedActors: argv.trustedActors,
         fixAgent: argv.fixAgent,
+        selfActorLogin: argv.selfActorLogin,
       }),
   )
   .command(

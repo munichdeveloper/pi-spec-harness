@@ -195,7 +195,8 @@ jobs:
               --review-state "$review_state" \
               --submitted-at "$submitted_at" \
               --trusted-actors "$HARNESS_TRUSTED_REVIEW_ACTORS" \
-              --fix-agent "$HARNESS_REVIEW_FIX_AGENT"
+              --fix-agent "$HARNESS_REVIEW_FIX_AGENT" \
+              --self-actor-login "github-actions[bot]"
           )"
           printf '%s\n' "$result"
           has_actionable="$(printf '%s\n' "$result" | sed -n '/^{/,$p' | jq -r '.result.hasActionable // false')"
