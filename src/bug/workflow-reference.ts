@@ -3,7 +3,7 @@ export type { WorkflowInstallDecision } from "../workflows/install-decision.js";
 
 export const BUG_WORKFLOW_REFERENCE_PATH = ".github/workflows/harness-bug-triage.yml";
 export const BUG_WORKFLOW_REFERENCE_MARKER = "# Managed by pi-spec-harness: bug-workflow-reference v1";
-export const DEFAULT_BUG_TRIAGE_WORKFLOW_REF = "v0.1.0";
+export const DEFAULT_BUG_TRIAGE_WORKFLOW_REF = "v0.2.0";
 
 export interface BugWorkflowReferenceOptions {
   harnessRef?: string;
