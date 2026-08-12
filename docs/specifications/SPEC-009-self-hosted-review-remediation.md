@@ -35,8 +35,9 @@ dem bestehenden 0-Euro-Kostenrahmen.
 
 - `pull_request_review.submitted` ist der einzige Event, der bei mindestens
   einem neuen actionable Thread eine Implementierungsiteration starten darf.
-- `pull_request_review_thread.resolved` und `.unresolved` synchronisieren nur
-  Threadzustand. `unresolved` darf erst bei einem noch nicht verarbeiteten
+- `pull_request_review_thread.resolved` und
+  `pull_request_review_thread.unresolved` synchronisieren nur Threadzustand.
+  `pull_request_review_thread.unresolved` darf erst bei einem noch nicht verarbeiteten
   Thread/SHA-Schlüssel eine spätere Prüfung ermöglichen.
 - `pull_request.synchronize` bindet keinen Run implizit neu, sondern
   invalidiert alte Review-/CI-Evidence für den zuvor gebundenen SHA und stößt
@@ -73,8 +74,8 @@ Run-State-Schema erhält eine versionierte Review-Sektion mit mindestens:
 - Antwort- und Auflösungsstatus.
 
 Zulässige Thread-Status sind `pending`, `informational`, `actionable`,
-`implementing`, `implemented`, `declined`, `conflicting`, `needs-human` und
-`resolved`. Der Idempotenzschlüssel lautet:
+`implementing`, `implemented`, `declined`, `conflicting`, `needs-human`,
+`outdated` und `resolved`. Der Idempotenzschlüssel lautet:
 
 ```text
 repository + pullRequest + reviewId + threadId + reviewedHeadSha
@@ -147,7 +148,7 @@ Für jeden Thread gilt die Reihenfolge Klassifikation, Implementierung oder
 begründete Nicht-Umsetzung, lokale Verifikation, Push, grüne relevante CI,
 Antwort und erst danach Auflösung.
 
-- `informational`, bereits erledigt oder nachweislich sachlich falsch darf mit
+- `informational`, bereits erledigt oder nachweislich sachlich falsch dürfen mit
   überprüfbarer Begründung beantwortet und aufgelöst werden.
 - `conflicting`, scope-erweiternd oder technisch blockiert bleibt offen und
   erzeugt ein Human Gate beziehungsweise `status:needs-human`.
