@@ -10,10 +10,13 @@ describe("bug workflow reference installer", () => {
     const rendered = renderBugWorkflowReference({ harnessRef: "v9.9.9" });
     expect(rendered).toContain(BUG_WORKFLOW_REFERENCE_MARKER);
     expect(rendered).toContain("issues:");
-    expect(rendered).toContain("types: [opened, typed, labeled]");
+    expect(rendered).toContain("types: [typed, labeled]");
+    expect(rendered).toContain("group: harness-bug-triage-${{ github.repository }}-${{ github.event.issue.number }}");
+    expect(rendered).toContain("cancel-in-progress: false");
     expect(rendered).toContain("uses: munichdeveloper/pi-spec-harness/.github/workflows/bug-triage.yml@v9.9.9");
-    expect(rendered).toContain("github.event.issue.type.name == 'Bug'");
-    expect(rendered).toContain("type:bug");
+    expect(rendered).toContain("github.event.action == 'typed' && github.event.issue.type.name == 'Bug'");
+    expect(rendered).toContain("github.event.action == 'labeled' && github.event.label.name == 'type:bug'");
+    expect(rendered).not.toContain("types: [opened,");
   });
 
   it("decides create when file is missing", () => {

@@ -111,6 +111,7 @@ jobs:
           # required labels are created here idempotently rather than
           # assumed to pre-exist.
           gh label create "bug-pipeline:in-progress" --repo "${{ github.repository }}" --color "fbca04" --description "Harness bug pipeline run in progress" --force
+          gh label create "bug-pipeline:started" --repo "${{ github.repository }}" --color "1d76db" --description "Harness bug pipeline was started for this issue" --force
           gh label create "bug-pipeline:completed" --repo "${{ github.repository }}" --color "0e8a16" --description "Harness bug pipeline run completed" --force
           gh label create "status:needs-human" --repo "${{ github.repository }}" --color "d93f0b" --description "Waiting on a human decision" --force
 
@@ -130,13 +131,21 @@ jobs:
             exit 0
           fi
 
+          if printf '%s\n' "$labels" | grep -Fxq 'bug-pipeline:started'; then
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "reason=The bug pipeline was already started for this issue." >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
           if printf '%s\n' "$labels" | grep -Fxq 'bug-pipeline:in-progress'; then
             echo "run=false" >> "$GITHUB_OUTPUT"
             echo "reason=An existing bug pipeline run is in progress for this issue." >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
-          gh issue edit "$issue" --repo "${{ github.repository }}" --add-label bug-pipeline:in-progress
+          gh issue edit "$issue" --repo "${{ github.repository }}" \
+            --add-label bug-pipeline:started \
+            --add-label bug-pipeline:in-progress
           echo "run=true" >> "$GITHUB_OUTPUT"
 
       - name: Exit on duplicate delivery
