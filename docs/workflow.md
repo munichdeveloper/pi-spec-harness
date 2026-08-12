@@ -59,16 +59,21 @@ Neben dem Feature-Run gibt es einen separaten, schlanken Bug-Track:
 
 1. Ein Zielrepository installiert eine dünne Referenzdatei
    `.github/workflows/harness-bug-triage.yml` (über `harness init --install-bug-workflow`).
-2. Diese Datei triggert auf `issues` (`opened`, `typed`, `labeled`) und ruft
+2. Diese Datei triggert auf die für Bugs relevanten `issues`-Ereignisse
+   (`typed` sowie das Hinzufügen von `type:bug`) und ruft
    den zentral gepflegten reusable Workflow
    `munichdeveloper/pi-spec-harness/.github/workflows/bug-triage.yml@<pinned-ref>`
    auf.
-3. Der Trigger filtert serverseitig: nur `issue.type.name == Bug` oder Label
-   `type:bug` starten den Agent.
+3. Der Trigger filtert serverseitig auf das konkrete auslösende Ereignis und
+   serialisiert Läufe pro Repository und Issue. Andere gleichzeitig gesetzte
+   Labels starten keine weitere Pipeline.
 4. Der reusable Workflow erzwingt eine gepinnte
    `claude-code-action`-Version `>= v1.0.94`, setzt Idempotenz-Labels
-   (`bug-pipeline:in-progress` / `bug-pipeline:completed`) und kommentiert
-   das Issue vor jedem PR-Pfad.
+   (`bug-pipeline:started` / `bug-pipeline:in-progress` /
+   `bug-pipeline:completed`) und kommentiert das Issue vor jedem PR-Pfad. Der
+   dauerhafte `started`-Marker schützt auch nach einem Lauf ohne PR gegen
+   verspätete oder doppelt zugestellte Events; ein bewusster Neustart entfernt
+   diesen Marker explizit.
 5. Ohne eindeutige Reproduktion/Verifikation wird kein PR erstellt; stattdessen
    wird `status:needs-human` gesetzt.
 6. Bei erfolgreichem PR werden Issue-Autor oder konfigurierter Owner als

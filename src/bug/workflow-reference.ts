@@ -29,14 +29,18 @@ name: Harness Bug Triage
 
 on:
   issues:
-    types: [opened, typed, labeled]
+    types: [typed, labeled]
+
+concurrency:
+  group: harness-bug-triage-\${{ github.repository }}-\${{ github.event.issue.number }}
+  cancel-in-progress: false
 
 jobs:
   triage:
     if: >-
       github.event_name == 'issues' &&
-      (github.event.issue.type.name == 'Bug' ||
-       contains(github.event.issue.labels.*.name, 'type:bug'))
+      ((github.event.action == 'typed' && github.event.issue.type.name == 'Bug') ||
+       (github.event.action == 'labeled' && github.event.label.name == 'type:bug'))
     uses: ${reusableRepository}/.github/workflows/bug-triage.yml@${harnessRef}
     with:
       issue-number: ${issueNumber}

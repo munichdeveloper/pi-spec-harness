@@ -89,6 +89,7 @@ describe("GitHub workflow contracts", () => {
     expect(workflow).toContain("anthropics/claude-code-action@v1.0.94");
     expect(workflow).toContain(">=1.0.94");
     expect(workflow).toContain("bug-pipeline:in-progress");
+    expect(workflow).toContain("bug-pipeline:started");
     expect(workflow).toContain("bug-pipeline:completed");
     expect(workflow).toContain("status:needs-human");
     expect(workflow).toContain("Post kickoff issue comment");
@@ -101,9 +102,10 @@ describe("GitHub workflow contracts", () => {
 
     expect(cli).toContain("install-bug-workflow");
     expect(cli).toContain("workflow conflict");
-    expect(helper).toContain("types: [opened, typed, labeled]");
-    expect(helper).toContain("github.event.issue.type.name == 'Bug'");
-    expect(helper).toContain("contains(github.event.issue.labels.*.name, 'type:bug')");
+    expect(helper).toContain("types: [typed, labeled]");
+    expect(helper).toContain("github.event.action == 'typed' && github.event.issue.type.name == 'Bug'");
+    expect(helper).toContain("github.event.action == 'labeled' && github.event.label.name == 'type:bug'");
+    expect(helper).toContain("cancel-in-progress: false");
     expect(helper).toContain("/.github/workflows/bug-triage.yml@");
   });
 
