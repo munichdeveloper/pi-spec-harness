@@ -505,7 +505,6 @@ export const github = {
     id: string;
     isResolved: boolean;
     isOutdated: boolean;
-    originalCommit?: { oid: string };
     comments: Array<{
       databaseId: number;
       reviewId: number;
@@ -525,7 +524,6 @@ export const github = {
                 id
                 isResolved
                 isOutdated
-                originalCommit { oid }
                 comments(first: 1) {
                   nodes {
                     databaseId
@@ -545,7 +543,6 @@ export const github = {
       id: string;
       isResolved: boolean;
       isOutdated: boolean;
-      originalCommit?: { oid: string };
       comments: Array<{ databaseId: number; reviewId: number; author: { login: string; __typename: string } | null; body: string; createdAt: string }>;
     }> = [];
     let after: string | undefined;
@@ -569,7 +566,6 @@ export const github = {
                   id: string;
                   isResolved: boolean;
                   isOutdated: boolean;
-                  originalCommit?: { oid: string };
                   comments: { nodes: Array<{ databaseId: number; pullRequestReview: { databaseId: number } | null; author: { login: string; __typename: string } | null; body: string; createdAt: string }> };
                 }>;
               };
@@ -583,7 +579,6 @@ export const github = {
           id: node.id,
           isResolved: node.isResolved,
           isOutdated: node.isOutdated,
-          originalCommit: node.originalCommit,
           comments: node.comments.nodes.map((comment) => ({
             databaseId: comment.databaseId,
             reviewId: comment.pullRequestReview?.databaseId ?? 0,
