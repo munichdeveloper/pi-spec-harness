@@ -182,10 +182,14 @@ jobs:
           edit_ok=false
           file_content_ok=false
 
-          # Parse tool-call evidence from the action's structured output
-          # The claude-code-action sets GITHUB_OUTPUT / stdout with tool events.
-          # We inspect the output from the agent step directly.
-          agent_output="${{ steps.agent.outputs.execution_file }}"
+          # Parse tool-call evidence from the action's structured output file.
+          # execution_file is a path; read its contents before parsing.
+          execution_file_path="${{ steps.agent.outputs.execution_file }}"
+          if [[ -n "$execution_file_path" && -f "$execution_file_path" ]]; then
+            agent_output="$(cat "$execution_file_path")"
+          else
+            agent_output=""
+          fi
 
           # Each check uses jq to find a record where both the tool name and
           # success flag appear in the same JSON object (TAC-04/TAC-05).

@@ -286,12 +286,15 @@ describe("SPEC-010 capability-smoke reusable workflow contracts", () => {
     expect(workflow).not.toContain("ACTION_REF: ${{ inputs.claude-code-action-version }}");
   });
 
-  it("verifier step uses double-quoted expression for agent_output – no single-quote shell syntax error", async () => {
+  it("verifier reads execution_file path and cats its contents – not pipes a path string to jq", async () => {
     const workflow = await readFile(".github/workflows/capability-smoke.yml", "utf8");
     // The previous bug: single-quoted bash string containing || '' terminated the quote early.
     expect(workflow).not.toContain("agent_output='${{ steps.agent.outputs.execution_file");
-    // Must use double quotes so the expression is safely interpolated.
-    expect(workflow).toContain('agent_output="${{ steps.agent.outputs.execution_file }}');
+    // execution_file is a path; must read the file before passing to jq/grep.
+    expect(workflow).toContain('execution_file_path="${{ steps.agent.outputs.execution_file }}');
+    expect(workflow).toContain('agent_output="$(cat "$execution_file_path")"');
+    // Must NOT assign the raw path directly to agent_output (would pipe a path string to jq).
+    expect(workflow).not.toMatch(/agent_output="\$\{\{ steps\.agent\.outputs\.execution_file \}\}"/);
   });
 
   it("TAC-10: thin caller template uses actions:write so the reusable workflow can save cache", async () => {
