@@ -2,7 +2,7 @@
 id: REQ-010
 type: requirement
 title: Verlässlicher Capability-Nachweis für Cloud-Agenten
-status: review
+status: approved
 owner: product
 risk: high
 created: 2026-08-13
