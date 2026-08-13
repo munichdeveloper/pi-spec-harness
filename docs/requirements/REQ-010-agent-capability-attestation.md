@@ -22,8 +22,9 @@ Agent Bash-Befehle ausführen sowie Dateien schreiben und editieren konnte.
 Dieses Fehlverhalten wurde in der Bug-Pipeline beobachtet: Ein Agent verlor den
 Großteil seiner Tool-Aufrufe an nicht erfüllbare Approval-Anforderungen, während
 der umgebende Workflow trotzdem keinen eindeutigen Capability-Fehler meldete.
-Die Berechtigungen `Bash(*)`, `Write` und `Edit` sind inzwischen konfiguriert;
-ein semantischer Nachweis ihrer tatsächlichen Wirksamkeit fehlt jedoch.
+Selbst wenn `Bash(*)`, `Write` und `Edit` in einer konkreten Pipeline
+konfiguriert sind, ersetzt diese deklarative Konfiguration keinen semantischen
+Nachweis ihrer tatsächlichen Wirksamkeit.
 
 ## Nutzer-Outcome
 
@@ -79,4 +80,3 @@ Agentenkosten.
 - Committen synthetischer Smoke-Artefakte,
 - Umgehung oder Aufweichung bestehender Merge- und Human-Gates,
 - Unterstützung zusätzlicher Agent-Anbieter in der ersten Version.
-

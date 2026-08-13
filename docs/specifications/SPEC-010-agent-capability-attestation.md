@@ -49,7 +49,8 @@ Ein deterministisches Harness-Skript erzeugt aus folgenden kanonischen Inputs
 einen SHA-256-Fingerprint:
 
 - tatsächlich verwendeter `claude-code-action`-Ref,
-- kanonisch serialisierte `settings.permissions.allow`,
+- die kanonisch serialisierte, effektiv an `claude-code-action` übergebene
+  `settings.permissions.allow`-Runtime-Konfiguration,
 - konstante Version des Capability-Testvertrags.
 
 Freie Zusatzwerte, Issue-Inhalte, Branchname und Secrets sind ausdrücklich kein
@@ -91,8 +92,11 @@ PRs. Die Testdatei verbleibt im ephemeren Runner-Workspace.
 
 Ein Bug-Lauf prüft zunächst die Attestation. Bei Miss ruft er den Capability-
 Workflow auf. Eine Fingerprint-gebundene Concurrency-Gruppe mit
-`cancel-in-progress: false` serialisiert parallele Smokes. Nach erfolgreichem
-Smoke wird die Attestation erneut validiert, bevor der produktive Agent startet.
+`cancel-in-progress: false` serialisiert parallele Smokes. Der ursprüngliche
+Bug-Run bleibt synchron im selben Workflow-Aufruf gebunden: Nach Ende des
+serialisierten Smoke-Jobs validiert sein abhängiger Gate-Job die Attestation
+erneut und startet erst danach den produktiven Agenten. Es gibt weder Polling
+noch einen ungebundenen Re-Trigger auf einen beliebigen Cache-Write.
 
 Schlägt der Smoke fehl, wird `status:needs-human` gesetzt und ein Kommentar mit
 der fehlgeschlagenen Fähigkeit und dem Workflow-Link erzeugt. Der produktive
@@ -106,8 +110,9 @@ expliziten Aufruf durch die Bug-Pipeline. Reusable Workflow und Caller sind auf
 einen unveränderlichen Harness-Tag oder vollständigen SHA gepinnt.
 
 Unterstützt werden die vorhandenen Credential-Wege `ANTHROPIC_API_KEY` und
-`CLAUDE_CODE_OAUTH_TOKEN`. Sind beide nicht verfügbar, endet eine vorgelagerte
-Prüfung mit klarer Meldung, ohne `claude-code-action` aufzurufen. Secret-Werte
+`CLAUDE_CODE_OAUTH_TOKEN`. Sind beide nicht verfügbar, endet eine gemeinsame,
+jedem Smoke- und Produktiv-Aufruf vorgelagerte Prüfung mit klarer Meldung, ohne
+`claude-code-action` aufzurufen. Secret-Werte
 werden weder in Fingerprint, Cache-Manifest, Logs noch Run-State geschrieben.
 
 ## Technische Akzeptanzkriterien
@@ -171,4 +176,3 @@ Folgechange auf den vorherigen gepinnten Harness-Ref zurückgesetzt. Bereits
 erzeugte Cache-Attestations sind aufgrund des Fingerprints für abweichende
 Konfigurationen nicht gültig. Es werden keine Datenbankmigrationen oder
 persistenten Produktdaten verändert.
-
