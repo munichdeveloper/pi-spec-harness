@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+
 /**
  * SPEC-009: Review-remediation unit, workflow-contract, and synthetic E2E tests.
  *
@@ -695,6 +697,9 @@ describe("renderReviewFixReference (TAC-12)", () => {
     const content = renderReviewFixReference();
     expect(content).not.toContain("concurrency:");
     expect(content).not.toContain("cancel-in-progress:");
+    const reusable = readFileSync(new URL("../.github/workflows/review-fix.yml", import.meta.url), "utf8");
+    expect(reusable).toContain("group: harness-review-fix-${{ github.repository }}-${{ inputs.pull-request }}");
+    expect(reusable).toContain("cancel-in-progress: false");
   });
 
   it("references the harness reusable workflow at the given ref", () => {
