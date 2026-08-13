@@ -1,0 +1,277 @@
+name: Harness Capability Smoke Reusable
+
+on:
+  workflow_call:
+    inputs:
+      claude-code-action-version:
+        description: Pinned claude-code-action version (tag vX.Y.Z or 40-char SHA).
+        required: false
+        type: string
+        default: v1.0.94
+
+# TAC-10: minimal permissions – no contents:write, no pull-requests, no id-token
+permissions:
+  contents: read
+  actions: write   # required only for cache save/restore
+
+concurrency:
+  group: harness-capability-smoke-${{ github.repository }}-${{ inputs.claude-code-action-version }}
+  cancel-in-progress: false
+
+jobs:
+  # ─── Job 1: check credentials before spending any compute ──────────────────
+  check-credentials:
+    name: Check credentials (TAC-11)
+    runs-on: ubuntu-latest
+    outputs:
+      has_credentials: ${{ steps.check.outputs.has_credentials }}
+    steps:
+      - name: Verify at least one credential is available
+        id: check
+        shell: bash
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+        run: |
+          if [[ -z "$ANTHROPIC_API_KEY" && -z "$CLAUDE_CODE_OAUTH_TOKEN" ]]; then
+            echo "::error::Neither ANTHROPIC_API_KEY nor CLAUDE_CODE_OAUTH_TOKEN is set. Capability smoke cannot run without credentials."
+            echo "has_credentials=false" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+          echo "has_credentials=true" >> "$GITHUB_OUTPUT"
+
+  # ─── Job 2: compute fingerprint & check attestation cache ──────────────────
+  check-attestation:
+    name: Compute fingerprint and check cache (TAC-01/TAC-02/TAC-06)
+    needs: check-credentials
+    runs-on: ubuntu-latest
+    outputs:
+      fingerprint: ${{ steps.fingerprint.outputs.fingerprint }}
+      cache_key: ${{ steps.fingerprint.outputs.cache_key }}
+      cache_hit: ${{ steps.restore.outputs.cache-hit }}
+    steps:
+      - name: Compute fingerprint
+        id: fingerprint
+        shell: bash
+        env:
+          ACTION_REF: ${{ inputs.claude-code-action-version }}
+        run: |
+          # Canonical permissions: sorted, compact JSON
+          permissions_allow='["Bash(*)","Edit","Write"]'
+          contract_version="1"
+
+          # Build the exact same input string as src/capability/fingerprint.ts
+          canonical_permissions="$(echo -n "$permissions_allow" | jq -c 'sort')"
+          fingerprint_input="${ACTION_REF}
+${canonical_permissions}
+${contract_version}"
+
+          fingerprint="$(echo -n "$fingerprint_input" | sha256sum | cut -d' ' -f1)"
+          cache_key="harness-capability-attestation-${fingerprint}"
+
+          echo "fingerprint=${fingerprint}" >> "$GITHUB_OUTPUT"
+          echo "cache_key=${cache_key}" >> "$GITHUB_OUTPUT"
+          echo "Fingerprint: ${fingerprint}"
+          echo "Cache key:   ${cache_key}"
+
+      # TAC-02: exact key only – no restore-keys (prefix matching is forbidden)
+      - name: Restore attestation cache (exact key only)
+        id: restore
+        uses: actions/cache/restore@v4
+        with:
+          path: capability-attestation.json
+          key: ${{ steps.fingerprint.outputs.cache_key }}
+          # No restore-keys – TAC-02 forbids prefix matching
+
+      - name: Validate existing attestation manifest
+        if: steps.restore.outputs.cache-hit == 'true'
+        id: validate
+        shell: bash
+        run: |
+          if [[ ! -f capability-attestation.json ]]; then
+            echo "::error::Cache claimed a hit but attestation file is missing."
+            exit 1
+          fi
+          # TAC-02: validate manifest against the computed fingerprint
+          cached_fp="$(jq -r '.fingerprint' capability-attestation.json)"
+          expected_fp="${{ steps.fingerprint.outputs.fingerprint }}"
+          if [[ "$cached_fp" != "$expected_fp" ]]; then
+            echo "::error::Cached attestation fingerprint '$cached_fp' does not match computed '$expected_fp'."
+            exit 1
+          fi
+          schema_version="$(jq -r '.schemaVersion' capability-attestation.json)"
+          if [[ "$schema_version" != "1" ]]; then
+            echo "::error::Unsupported attestation schema version: $schema_version"
+            exit 1
+          fi
+          echo "Attestation cache valid – skipping smoke (TAC-06)."
+          jq . capability-attestation.json
+
+  # ─── Job 3: run the capability smoke (only on cache miss) ──────────────────
+  smoke:
+    name: Run capability smoke (TAC-04/TAC-05)
+    needs: check-attestation
+    if: needs.check-attestation.outputs.cache_hit != 'true'
+    runs-on: ubuntu-latest
+    outputs:
+      bash_ok: ${{ steps.verify.outputs.bash_ok }}
+      write_ok: ${{ steps.verify.outputs.write_ok }}
+      edit_ok: ${{ steps.verify.outputs.edit_ok }}
+      file_content_ok: ${{ steps.verify.outputs.file_content_ok }}
+      smoke_passed: ${{ steps.verify.outputs.smoke_passed }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Generate ephemeral random marker
+        id: marker
+        shell: bash
+        run: |
+          marker="$(openssl rand -hex 16)"
+          echo "marker=${marker}" >> "$GITHUB_OUTPUT"
+
+      - name: Run capability smoke via claude-code-action
+        id: agent
+        # NOTE: uses: cannot reference inputs context – pin is hardcoded.
+        # Must be bumped together with the input default above.
+        uses: anthropics/claude-code-action@v1.0.94
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          settings: '{"permissions":{"allow":["Bash(*)","Write","Edit"]}}'
+          show_full_output: true
+          prompt: |
+            You are running a capability smoke test. Follow these exact steps and no others.
+            Do not create commits, push code, or open pull requests.
+
+            MARKER=${{ steps.marker.outputs.marker }}
+
+            Step 1 – Bash: Run the following command and verify it succeeds:
+              echo "harness-smoke-bash-ok"
+
+            Step 2 – Write: Create a new file at path /tmp/harness-smoke-${{ steps.marker.outputs.marker }}.txt
+            with this exact content (one line, no trailing newline):
+              SMOKE_WRITE_${{ steps.marker.outputs.marker }}
+
+            Step 3 – Edit: Open /tmp/harness-smoke-${{ steps.marker.outputs.marker }}.txt and replace
+            SMOKE_WRITE_ with SMOKE_EDIT_ so the final content is:
+              SMOKE_EDIT_${{ steps.marker.outputs.marker }}
+
+            When done, output nothing else. Your output is not evidence; only the tool calls are.
+
+      - name: Deterministic verifier (TAC-04/TAC-05)
+        id: verify
+        shell: bash
+        run: |
+          marker="${{ steps.marker.outputs.marker }}"
+          smoke_file="/tmp/harness-smoke-${marker}.txt"
+          expected_content="SMOKE_EDIT_${marker}"
+
+          bash_ok=false
+          write_ok=false
+          edit_ok=false
+          file_content_ok=false
+
+          # Parse tool-call evidence from the action's structured output
+          # The claude-code-action sets GITHUB_OUTPUT / stdout with tool events.
+          # We inspect the output from the agent step directly.
+          agent_output='${{ steps.agent.outputs.execution_file || '' }}'
+
+          # Bash evidence: any successful Bash tool call
+          if echo "$agent_output" | grep -q '"tool":"Bash"' && \
+             echo "$agent_output" | grep -q '"success":true'; then
+            bash_ok=true
+          fi
+
+          # Write evidence: successful Write tool call
+          if echo "$agent_output" | grep -q '"tool":"Write"' && \
+             echo "$agent_output" | grep -q '"success":true'; then
+            write_ok=true
+          fi
+
+          # Edit evidence: successful Edit tool call
+          if echo "$agent_output" | grep -q '"tool":"Edit"' && \
+             echo "$agent_output" | grep -q '"success":true'; then
+            edit_ok=true
+          fi
+
+          # File content verification
+          if [[ -f "$smoke_file" ]]; then
+            actual_content="$(cat "$smoke_file")"
+            if [[ "$actual_content" == "$expected_content" ]]; then
+              file_content_ok=true
+            else
+              echo "::error::File content mismatch. Expected: '$expected_content', Got: '$actual_content'"
+            fi
+          else
+            echo "::error::Smoke file '$smoke_file' not found."
+          fi
+
+          echo "bash_ok=${bash_ok}"       >> "$GITHUB_OUTPUT"
+          echo "write_ok=${write_ok}"     >> "$GITHUB_OUTPUT"
+          echo "edit_ok=${edit_ok}"       >> "$GITHUB_OUTPUT"
+          echo "file_content_ok=${file_content_ok}" >> "$GITHUB_OUTPUT"
+
+          if [[ "$bash_ok" == true && "$write_ok" == true && "$edit_ok" == true && "$file_content_ok" == true ]]; then
+            echo "smoke_passed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "smoke_passed=false" >> "$GITHUB_OUTPUT"
+            echo "::error::Capability smoke failed. bash_ok=$bash_ok write_ok=$write_ok edit_ok=$edit_ok file_content_ok=$file_content_ok"
+          fi
+
+  # ─── Job 4: write attestation on verified success (TAC-03/TAC-06) ──────────
+  attest:
+    name: Write attestation cache (TAC-03)
+    needs: [check-attestation, smoke]
+    if: needs.smoke.outputs.smoke_passed == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Write attestation manifest
+        shell: bash
+        run: |
+          fingerprint="${{ needs.check-attestation.outputs.fingerprint }}"
+          run_id="${{ github.run_id }}"
+          timestamp="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          cat > capability-attestation.json <<JSON
+          {
+            "schemaVersion": "1",
+            "fingerprint": "${fingerprint}",
+            "contractVersion": "1",
+            "capabilityContract": {
+              "bash": true,
+              "write": true,
+              "edit": true,
+              "fileContentVerified": true
+            },
+            "workflowRun": "${run_id}",
+            "attestedAt": "${timestamp}"
+          }
+          JSON
+          jq . capability-attestation.json
+
+      # TAC-03: only a fully successful run reaches this step
+      - name: Save attestation to cache
+        uses: actions/cache/save@v4
+        with:
+          path: capability-attestation.json
+          key: ${{ needs.check-attestation.outputs.cache_key }}
+
+  # ─── Job 5: gate – fail the whole workflow on smoke failure (TAC-08) ───────
+  gate:
+    name: Capability gate (TAC-08)
+    needs: [check-attestation, smoke]
+    if: always() && needs.check-attestation.outputs.cache_hit != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fail on smoke failure
+        if: needs.smoke.outputs.smoke_passed != 'true'
+        shell: bash
+        run: |
+          echo "::error::Capability smoke failed. The productive agent step will not run."
+          echo "::error::Failed capabilities – bash_ok=${{ needs.smoke.outputs.bash_ok }} write_ok=${{ needs.smoke.outputs.write_ok }} edit_ok=${{ needs.smoke.outputs.edit_ok }} file_content_ok=${{ needs.smoke.outputs.file_content_ok }}"
+          exit 1
+
+      - name: Smoke passed
+        if: needs.smoke.outputs.smoke_passed == 'true'
+        shell: bash
+        run: echo "All capabilities verified. Attestation written."

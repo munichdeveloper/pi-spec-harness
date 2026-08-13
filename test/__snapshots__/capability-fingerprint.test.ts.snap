@@ -1,0 +1,5 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`computeCapabilityFingerprint (TAC-01) > test vector A: v1.0.94 / sorted [Bash(*),Edit,Write] / contract 1 1`] = `"82a106348ed1a22271f7291e466a7db5645556990b27caa313cd7bdf4e8d2dfb"`;
+
+exports[`computeCapabilityFingerprint (TAC-01) > test vector B: 40-char SHA / different permissionsAllow / contract 1 1`] = `"ebdd30ea2363a69ceab6b655740e4fa13d0fbb219b9ba7a06b23bfe6ef8bd51b"`;
