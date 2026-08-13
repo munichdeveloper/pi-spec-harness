@@ -8,6 +8,13 @@ on:
         required: false
         type: string
         default: v1.0.94
+    secrets:
+      ANTHROPIC_API_KEY:
+        description: Anthropic API key for the claude-code-action (mutually exclusive with CLAUDE_CODE_OAUTH_TOKEN).
+        required: false
+      CLAUDE_CODE_OAUTH_TOKEN:
+        description: Claude Code OAuth token (mutually exclusive with ANTHROPIC_API_KEY).
+        required: false
 
 # TAC-10: minimal permissions – no contents:write, no pull-requests, no id-token
 permissions:

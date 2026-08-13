@@ -233,6 +233,15 @@ describe("SPEC-010 capability-smoke reusable workflow contracts", () => {
     expect(workflow).toContain("exit 1");
   });
 
+  it("TAC-11: secrets are declared in the workflow_call contract so GitHub validates them at parse time", async () => {
+    const workflow = await readFile(".github/workflows/capability-smoke.yml", "utf8");
+    // Both secrets must appear under on.workflow_call.secrets, not only inside job env blocks
+    const callBlock = workflow.slice(workflow.indexOf("workflow_call:"), workflow.indexOf("\njobs:"));
+    expect(callBlock).toContain("secrets:");
+    expect(callBlock).toContain("ANTHROPIC_API_KEY:");
+    expect(callBlock).toContain("CLAUDE_CODE_OAUTH_TOKEN:");
+  });
+
   it("TAC-12/TAC-09: thin caller template declares workflow_call, workflow_dispatch, and push triggers", async () => {
     const { renderCapabilityCallerReference } = await import("../src/capability/capability-caller.js");
     const caller = renderCapabilityCallerReference();
