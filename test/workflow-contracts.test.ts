@@ -325,5 +325,45 @@ describe("SPEC-010 capability-smoke reusable workflow contracts", () => {
     expect(workflow).toContain("expected_fp");
     expect(workflow).toContain("schemaVersion");
   });
-});
 
+  it("AC-10: smoke file uses workspace-relative path – no /tmp absolute path in prompt or verifier", async () => {
+    const workflow = await readFile(".github/workflows/capability-smoke.yml", "utf8");
+    // Prompt and verifier must not reference /tmp/harness-smoke
+    expect(workflow).not.toContain("/tmp/harness-smoke");
+    // The workspace-relative path pattern must be present in both prompt and verifier
+    expect(workflow).toContain("harness-smoke-");
+    // Verifier must use GITHUB_WORKSPACE to form the full path
+    expect(workflow).toContain("GITHUB_WORKSPACE");
+  });
+
+  it("AC-10: pin-mismatch warning fires when claude-code-action-version input differs from the hardcoded pin", async () => {
+    const workflow = await readFile(".github/workflows/capability-smoke.yml", "utf8");
+    // Check-credentials job must contain the version-mismatch warning step
+    expect(workflow).toContain("Warn if claude-code-action-version input differs from hardcoded pin");
+    expect(workflow).toContain("::warning::");
+    // Must reference the pinned ref explicitly in the warning step
+    expect(workflow).toContain('PINNED_REF="anthropics/claude-code-action@v1.0.94"');
+  });
+
+  it("AC-08: reusable workflow concurrency is bound to actual contract, not caller input", async () => {
+    const workflow = await readFile(".github/workflows/capability-smoke.yml", "utf8");
+    // The concurrency group must include the full action pin
+    const concurrencySlice = workflow.slice(
+      workflow.indexOf("concurrency:"),
+      workflow.indexOf("\njobs:")
+    );
+    expect(concurrencySlice).toContain("anthropics/claude-code-action@v1.0.94");
+    // Must NOT use the caller input which might differ
+    expect(concurrencySlice).not.toContain("inputs.claude-code-action-version");
+  });
+
+  it("AC-08: thin caller concurrency matches the same effective contract identifier as the reusable workflow", async () => {
+    const { renderCapabilityCallerReference } = await import("../src/capability/capability-caller.js");
+    const caller = renderCapabilityCallerReference();
+    // Caller concurrency must use the same full action pin, not a variable input
+    expect(caller).toContain("anthropics/claude-code-action@v1.0.94");
+    // Must NOT use the input variable as the differentiator
+    expect(caller).not.toContain("inputs.claude-code-action-version");
+    expect(caller).not.toContain("vars.HARNESS_CLAUDE_CODE_ACTION_VERSION");
+  });
+});

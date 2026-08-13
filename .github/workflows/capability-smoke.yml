@@ -22,7 +22,9 @@ permissions:
   actions: write   # required only for cache save/restore
 
 concurrency:
-  group: harness-capability-smoke-${{ github.repository }}-${{ inputs.claude-code-action-version }}
+  # AC-08: bind to the actual capability contract, not the possibly-different caller input.
+  # Full action pin + canonical sorted allow list + contract version = deterministic group key.
+  group: harness-capability-smoke-${{ github.repository }}-anthropics/claude-code-action@v1.0.94-Bash_Edit_Write-cv1
   cancel-in-progress: false
 
 jobs:
@@ -46,6 +48,21 @@ jobs:
             exit 1
           fi
           echo "has_credentials=true" >> "$GITHUB_OUTPUT"
+
+      - name: Warn if claude-code-action-version input differs from hardcoded pin
+        shell: bash
+        env:
+          INPUT_VERSION: ${{ inputs.claude-code-action-version }}
+        run: |
+          PINNED_REF="anthropics/claude-code-action@v1.0.94"
+          # Normalise: accept either the full ref or the bare tag
+          normalised="${INPUT_VERSION}"
+          if [[ "$normalised" != *"/"* ]]; then
+            normalised="anthropics/claude-code-action@${INPUT_VERSION}"
+          fi
+          if [[ -n "$INPUT_VERSION" && "$normalised" != "$PINNED_REF" ]]; then
+            echo "::warning::claude-code-action-version input ('${INPUT_VERSION}') differs from the hardcoded uses: pin ('${PINNED_REF}'). The smoke will always execute the pinned version; the fingerprint is bound to that pin. Update the workflow to change the effective version."
+          fi
 
   # ─── Job 2: compute fingerprint & check attestation cache ──────────────────
   check-attestation:
@@ -159,11 +176,12 @@ jobs:
             Step 1 – Bash: Run the following command and verify it succeeds:
               echo "harness-smoke-bash-ok"
 
-            Step 2 – Write: Create a new file at path /tmp/harness-smoke-${{ steps.marker.outputs.marker }}.txt
+            Step 2 – Write: Create a new file at path harness-smoke-${{ steps.marker.outputs.marker }}.txt
+            (relative to the repository root; do not use /tmp or any absolute path outside the workspace)
             with this exact content (one line, no trailing newline):
               SMOKE_WRITE_${{ steps.marker.outputs.marker }}
 
-            Step 3 – Edit: Open /tmp/harness-smoke-${{ steps.marker.outputs.marker }}.txt and replace
+            Step 3 – Edit: Open harness-smoke-${{ steps.marker.outputs.marker }}.txt and replace
             SMOKE_WRITE_ with SMOKE_EDIT_ so the final content is:
               SMOKE_EDIT_${{ steps.marker.outputs.marker }}
 
@@ -174,7 +192,7 @@ jobs:
         shell: bash
         run: |
           marker="${{ steps.marker.outputs.marker }}"
-          smoke_file="/tmp/harness-smoke-${marker}.txt"
+          smoke_file="${GITHUB_WORKSPACE}/harness-smoke-${marker}.txt"
           expected_content="SMOKE_EDIT_${marker}"
 
           bash_ok=false

@@ -26,7 +26,7 @@ export function renderCapabilityCallerReference(options: CapabilityCallerOptions
   const harnessRef = options.harnessRef ?? DEFAULT_CAPABILITY_SMOKE_WORKFLOW_REF;
   const reusableRepository = options.reusableRepository ?? "munichdeveloper/pi-spec-harness";
   const claudeCodeActionVersion =
-    options.claudeCodeActionVersion ?? "${{ vars.HARNESS_CLAUDE_CODE_ACTION_VERSION || 'v1.0.94' }}";
+    options.claudeCodeActionVersion ?? "v1.0.94";
   const watchedPaths = options.watchedPaths ?? [
     ".github/workflows/harness-capability-smoke.yml",
     ".github/workflows/harness-bug-triage.yml",
@@ -54,7 +54,10 @@ permissions:
   actions: write   # required for cache save/restore in the reusable workflow
 
 concurrency:
-  group: harness-capability-smoke-\${{ github.repository }}-\${{ inputs.claude-code-action-version || vars.HARNESS_CLAUDE_CODE_ACTION_VERSION || 'v1.0.94' }}
+  # AC-08: align to the same effective contract identifier as the reusable workflow.
+  # Bind to the actual pinned action ref + canonical allow list + contract version,
+  # not to an input that may differ from the pin actually executed.
+  group: harness-capability-smoke-\${{ github.repository }}-anthropics/claude-code-action@v1.0.94-Bash_Edit_Write-cv1
   cancel-in-progress: false
 
 jobs:
