@@ -4,9 +4,6 @@ name: Harness Review Fix
 on:
   pull_request_review:
     types: [submitted]
-  pull_request_review_thread:
-    types: [resolved, unresolved]
-
 # SPEC-009 decision 1: one concurrent review-fix job per PR.
 concurrency:
   group: harness-review-fix-${{ github.repository }}-${{ github.event.pull_request.number }}

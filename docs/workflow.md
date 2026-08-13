@@ -116,7 +116,7 @@ npm run harness -- init \
   --requirement REQ-006 \
   --spec SPEC-006 \
   --install-workflows bug-triage,spec-to-issue,label-approval-bundling \
-  --workflow-ref v0.2.0
+  --workflow-ref v0.2.1
 ```
 
 `--install-bug-workflow` bleibt unverändert nutzbar und erzeugt

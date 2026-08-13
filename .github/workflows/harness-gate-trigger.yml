@@ -137,8 +137,8 @@ jobs:
     # SPEC-009 TAC-04/TAC-09: Start a review-fix iteration when a trusted reviewer
     # submits a review. Bot-own events and duplicate submissions are rejected inside
     # the harness CLI (idempotency key + loop guard).
-    # pull_request_review_thread.resolved/unresolved events are handled as no-ops
-    # at the CLI level; only pull_request_review.submitted triggers an iteration.
+    # Thread state is read live through GraphQL by review-fix and verification;
+    # GitHub Actions does not expose pull_request_review_thread as a trigger.
     if: >-
       github.event_name == 'pull_request_review' &&
       (github.event.review.state == 'changes_requested' ||

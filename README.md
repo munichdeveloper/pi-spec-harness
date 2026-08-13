@@ -145,7 +145,7 @@ npm run harness -- init \
   --requirement REQ-004 \
   --spec SPEC-004 \
   --install-bug-workflow \
-  --bug-workflow-ref v0.2.0
+  --bug-workflow-ref v0.2.1
 ```
 
 Die Referenzdatei enthält nur Trigger + `uses:` auf den zentralen reusable

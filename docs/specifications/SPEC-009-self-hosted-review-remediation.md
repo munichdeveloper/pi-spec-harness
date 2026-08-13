@@ -35,10 +35,11 @@ dem bestehenden 0-Euro-Kostenrahmen.
 
 - `pull_request_review.submitted` ist der einzige Event, der bei mindestens
   einem neuen actionable Thread eine Implementierungsiteration starten darf.
-- `pull_request_review_thread.resolved` und
-  `pull_request_review_thread.unresolved` synchronisieren nur Threadzustand.
-  `pull_request_review_thread.unresolved` darf erst bei einem noch nicht verarbeiteten
-  Thread/SHA-Schlüssel eine spätere Prüfung ermöglichen.
+- GitHub Actions unterstützt `pull_request_review_thread` nicht als
+  Workflow-Trigger. Der aktuelle Threadzustand wird deshalb bei jedem
+  `pull_request_review.submitted` und bei jeder Verification paginiert aus
+  der GitHub-GraphQL-Wahrheitsquelle synchronisiert. Ein bloßes Auflösen oder
+  Wiederöffnen eines Threads startet niemals eine Implementierungsiteration.
 - `pull_request.synchronize` bindet keinen Run implizit neu, sondern
   invalidiert alte Review-/CI-Evidence für den zuvor gebundenen SHA und stößt
   die erneute technische Prüfung des explizit gebundenen PRs an.
