@@ -5,6 +5,10 @@ on:
   issues:
     types: [labeled]
 
+permissions:
+  contents: read
+  issues: write
+
 jobs:
   bundle:
     if: github.event.label.name == 'harness:approved-for-agent'
