@@ -296,7 +296,11 @@ jobs:
   gate:
     name: Capability gate (TAC-08)
     needs: [check-attestation, smoke]
-    if: always() && needs.check-attestation.outputs.cache_hit != 'true'
+    # Run only when smoke actually executed (not skipped/failed due to a
+    # prerequisite failure).  A cache-hit skips smoke entirely; in that case
+    # the gate is not needed.  If check-attestation itself failed the gate
+    # must not emit the misleading "Capability smoke failed" message.
+    if: always() && needs.smoke.result == 'success'
     runs-on: ubuntu-latest
     steps:
       - name: Fail on smoke failure

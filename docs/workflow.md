@@ -188,8 +188,9 @@ Ein deterministischer SHA-256-Fingerprint wird aus drei kanonischen Inputs
 gebildet, die sowohl in der TypeScript-Funktion (`src/capability/fingerprint.ts`)
 als auch im Workflow-Skript identisch implementiert sind:
 
-- **Action-Ref** – der gepinnte `claude-code-action`-Ref (`vX.Y.Z` oder
-  40-Zeichen-SHA)
+- **Action-Ref** – der vollständige gepinnte `uses:`-Referenzstring, z. B.
+  `anthropics/claude-code-action@v1.0.94` (nicht nur der isolierte Tag oder
+  der 40-Zeichen-Commit-SHA)
 - **`permissions.allow`** – das kanonisch sortierte, kompakt JSON-serialisierte
   Allow-Array, das an `claude-code-action` übergeben wird
 - **Contract-Version** – eine konstante Zeichenkette (`CAPABILITY_CONTRACT_VERSION`

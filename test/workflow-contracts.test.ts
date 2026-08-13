@@ -225,6 +225,19 @@ describe("SPEC-010 capability-smoke reusable workflow contracts", () => {
     expect(workflow).toContain("needs.check-attestation.outputs.cache_hit != 'true'");
   });
 
+  it("TAC-08: gate job only runs when smoke actually completed – not on skipped/failed prerequisites", async () => {
+    const workflow = await readFile(".github/workflows/capability-smoke.yml", "utf8");
+    // Gate must guard on smoke result==success, not just cache_hit.
+    // Using cache_hit != 'true' would trigger the gate (with the misleading error)
+    // even when check-attestation itself failed and smoke was skipped.
+    expect(workflow).toContain("needs.smoke.result == 'success'");
+    // The old incorrect condition must NOT be present on the gate job
+    const gateJobSlice = workflow.slice(workflow.indexOf("gate:"));
+    expect(gateJobSlice).not.toContain(
+      "needs.check-attestation.outputs.cache_hit != 'true'"
+    );
+  });
+
   it("TAC-10: workflow has no contents:write, pull-requests:write, or id-token permission", async () => {
     const workflow = await readFile(".github/workflows/capability-smoke.yml", "utf8");
     expect(workflow).not.toContain("contents: write");
