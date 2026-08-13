@@ -13,6 +13,7 @@ import {
   WORKFLOW_TEMPLATE_CATALOG,
   findWorkflowTemplate,
   renderLabelApprovalBundlingReference,
+  renderReviewFixReference,
   renderSpecToIssueReference,
   resolveWorkflowInstallPlan,
 } from "../src/workflows/template-catalog.js";
@@ -85,6 +86,9 @@ describe("WORKFLOW_TEMPLATE_CATALOG", () => {
     expect(renderSpecToIssueReference()).toContain("harness-ref: 'v0.2.1'");
     expect(renderLabelApprovalBundlingReference()).toContain("label-approval-bundling.yml@v0.2.1");
     expect(renderLabelApprovalBundlingReference()).toContain("harness-ref: 'v0.2.1'");
+    expect(renderBugWorkflowReference()).toContain("bug-triage.yml@v0.2.1");
+    expect(renderReviewFixReference()).toContain("review-fix.yml@v0.2.1");
+    expect(renderReviewFixReference()).toContain("harness-ref: 'v0.2.1'");
   });
 });
 
