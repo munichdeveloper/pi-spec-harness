@@ -1,0 +1,15 @@
+# Managed by pi-spec-harness: label-approval-bundling-reference v1
+name: Harness Label Approval Bundling
+
+on:
+  issues:
+    types: [labeled]
+
+jobs:
+  bundle:
+    if: github.event.label.name == 'harness:approved-for-agent'
+    uses: munichdeveloper/pi-spec-harness/.github/workflows/label-approval-bundling.yml@v0.2.0
+    with:
+      trigger-label: 'harness:approved-for-agent'
+      target-labels: '["status:ready","ai:allowed","harness:implementation"]'
+      harness-ref: 'v0.2.0'
