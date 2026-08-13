@@ -691,9 +691,10 @@ describe("renderReviewFixReference (TAC-12)", () => {
     expect(content).not.toContain("pull_request_review_thread:");
   });
 
-  it("uses cancel-in-progress: false to prevent overholding races (SPEC-009 decision 1)", () => {
+  it("delegates concurrency to the reusable workflow to avoid a nested self-lock", () => {
     const content = renderReviewFixReference();
-    expect(content).toContain("cancel-in-progress: false");
+    expect(content).not.toContain("concurrency:");
+    expect(content).not.toContain("cancel-in-progress:");
   });
 
   it("references the harness reusable workflow at the given ref", () => {
