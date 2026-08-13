@@ -176,12 +176,12 @@ jobs:
             Step 1 – Bash: Run the following command and verify it succeeds:
               echo "harness-smoke-bash-ok"
 
-            Step 2 – Write: Create a new file at path harness-smoke-${{ steps.marker.outputs.marker }}.txt
-            (relative to the repository root; do not use /tmp or any absolute path outside the workspace)
+            Step 2 – Write: Create a new file at path ${{ github.workspace }}/harness-smoke-${{ steps.marker.outputs.marker }}.txt
+            (do not use /tmp or any absolute path outside the workspace)
             with this exact content (one line, no trailing newline):
               SMOKE_WRITE_${{ steps.marker.outputs.marker }}
 
-            Step 3 – Edit: Open harness-smoke-${{ steps.marker.outputs.marker }}.txt and replace
+            Step 3 – Edit: Open ${{ github.workspace }}/harness-smoke-${{ steps.marker.outputs.marker }}.txt and replace
             SMOKE_WRITE_ with SMOKE_EDIT_ so the final content is:
               SMOKE_EDIT_${{ steps.marker.outputs.marker }}
 
