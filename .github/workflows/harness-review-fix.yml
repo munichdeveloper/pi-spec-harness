@@ -4,11 +4,6 @@ name: Harness Review Fix
 on:
   pull_request_review:
     types: [submitted]
-# SPEC-009 decision 1: one concurrent review-fix job per PR.
-concurrency:
-  group: harness-review-fix-${{ github.repository }}-${{ github.event.pull_request.number }}
-  cancel-in-progress: false
-
 permissions:
   contents: read
   issues: write
@@ -16,9 +11,9 @@ permissions:
 
 jobs:
   review-fix:
-    uses: munichdeveloper/pi-spec-harness/.github/workflows/review-fix.yml@v0.2.1
+    uses: munichdeveloper/pi-spec-harness/.github/workflows/review-fix.yml@v0.2.2
     with:
-      harness-ref: 'v0.2.1'
+      harness-ref: 'v0.2.2'
       pull-request: ${{ github.event.pull_request.number }}
       review-id: ${{ github.event.review.id || 0 }}
       reviewed-head-sha: ${{ github.event.review.commit_id || github.event.pull_request.head.sha }}
