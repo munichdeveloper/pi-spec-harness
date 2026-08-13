@@ -1,0 +1,16 @@
+# Managed by pi-spec-harness: spec-to-issue-reference v1
+name: Harness Spec to Issue
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'docs/specifications/*.md'
+
+jobs:
+  spec-to-issue:
+    uses: munichdeveloper/pi-spec-harness/.github/workflows/spec-to-issue.yml@v0.2.0
+    with:
+      spec-path-glob: 'docs/specifications/*.md'
+      default-branch: 'main'
+      harness-ref: 'v0.2.0'
