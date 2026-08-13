@@ -37,6 +37,10 @@ on:
     paths:
       - '${specPathGlob}'
 
+permissions:
+  contents: read
+  issues: write
+
 jobs:
   spec-to-issue:
     uses: ${reusableRepository}/.github/workflows/spec-to-issue.yml@${harnessRef}
@@ -71,6 +75,10 @@ name: Harness Label Approval Bundling
 on:
   issues:
     types: [labeled]
+
+permissions:
+  contents: read
+  issues: write
 
 jobs:
   bundle:

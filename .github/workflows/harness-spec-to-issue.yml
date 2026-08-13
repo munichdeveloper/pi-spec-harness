@@ -7,6 +7,10 @@ on:
     paths:
       - 'docs/specifications/*.md'
 
+permissions:
+  contents: read
+  issues: write
+
 jobs:
   spec-to-issue:
     uses: munichdeveloper/pi-spec-harness/.github/workflows/spec-to-issue.yml@v0.2.0
