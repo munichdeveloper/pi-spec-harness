@@ -280,6 +280,26 @@ describe("SPEC-010 capability-smoke reusable workflow contracts", () => {
     expect(workflow).toContain("harness-capability-attestation-");
     expect(workflow).toContain("jq -c 'sort'");
     expect(workflow).toContain("contract_version");
+    // TAC-01/version-binding: ACTION_REF must be the hardcoded pin, not an input
+    // so the attested version always matches the actually executed action version.
+    expect(workflow).toContain('ACTION_REF: "anthropics/claude-code-action@v1.0.94"');
+    expect(workflow).not.toContain("ACTION_REF: ${{ inputs.claude-code-action-version }}");
+  });
+
+  it("verifier step uses double-quoted expression for agent_output – no single-quote shell syntax error", async () => {
+    const workflow = await readFile(".github/workflows/capability-smoke.yml", "utf8");
+    // The previous bug: single-quoted bash string containing || '' terminated the quote early.
+    expect(workflow).not.toContain("agent_output='${{ steps.agent.outputs.execution_file");
+    // Must use double quotes so the expression is safely interpolated.
+    expect(workflow).toContain('agent_output="${{ steps.agent.outputs.execution_file }}');
+  });
+
+  it("TAC-10: thin caller template uses actions:write so the reusable workflow can save cache", async () => {
+    const { renderCapabilityCallerReference } = await import("../src/capability/capability-caller.js");
+    const caller = renderCapabilityCallerReference();
+    // actions: write is required so the called reusable workflow can use cache/save
+    expect(caller).toContain("actions: write");
+    expect(caller).not.toContain("actions: read");
   });
 
   it("TAC-02: attestation manifest is validated before a cache hit is trusted", async () => {

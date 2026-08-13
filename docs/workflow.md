@@ -235,9 +235,10 @@ berechneten Fingerprint und die Schema-Version validiert.
    Fehlt eine Fähigkeit, schlägt der Workflow rot ab.
 5. **Attestation schreiben** (TAC-03): Nur nach vollständig grünem Verifier wird
    der Cache-Key geschrieben.
-6. **Gate** (TAC-08): Bei Smoke-Fehler wird `status:needs-human` gesetzt, ein
-   Kommentar mit der konkreten Fehlerursache hinzugefügt und der produktive
-   Agent-Step übersprungen.
+6. **Gate** (TAC-08): Bei Smoke-Fehler gibt der Workflow eine `::error::`-Meldung
+   mit den konkreten Fähigkeitsausgaben aus und bricht mit `exit 1` ab.
+   Der produktive Agent-Step wird übersprungen. Kein Label wird gesetzt;
+   das Gate besitzt keine `issues: write`-Berechtigung (TAC-10).
 
 ### Kostenverhalten und Attestation-Lebensdauer
 

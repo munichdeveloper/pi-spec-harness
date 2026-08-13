@@ -51,7 +51,7 @@ ${pathsYaml}
 
 permissions:
   contents: read
-  actions: read
+  actions: write   # required for cache save/restore in the reusable workflow
 
 concurrency:
   group: harness-capability-smoke-\${{ github.repository }}-\${{ inputs.claude-code-action-version || vars.HARNESS_CLAUDE_CODE_ACTION_VERSION || 'v1.0.94' }}

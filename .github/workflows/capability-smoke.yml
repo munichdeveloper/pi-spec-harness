@@ -61,7 +61,11 @@ jobs:
         id: fingerprint
         shell: bash
         env:
-          ACTION_REF: ${{ inputs.claude-code-action-version }}
+          # Must match the hardcoded pin in the smoke job's `uses:` step.
+          # `uses:` cannot reference the inputs context, so both must be kept
+          # in sync manually. Using the input here would attest a version that
+          # was never actually executed.
+          ACTION_REF: "anthropics/claude-code-action@v1.0.94"
         run: |
           # Canonical permissions: sorted, compact JSON
           permissions_allow='["Bash(*)","Edit","Write"]'
@@ -181,7 +185,7 @@ jobs:
           # Parse tool-call evidence from the action's structured output
           # The claude-code-action sets GITHUB_OUTPUT / stdout with tool events.
           # We inspect the output from the agent step directly.
-          agent_output='${{ steps.agent.outputs.execution_file || '' }}'
+          agent_output="${{ steps.agent.outputs.execution_file }}"
 
           # Each check uses jq to find a record where both the tool name and
           # success flag appear in the same JSON object (TAC-04/TAC-05).
