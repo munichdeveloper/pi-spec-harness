@@ -177,21 +177,43 @@ ${contract_version}"
           # We inspect the output from the agent step directly.
           agent_output='${{ steps.agent.outputs.execution_file || '' }}'
 
+          # Each check uses jq to find a record where both the tool name and
+          # success flag appear in the same JSON object (TAC-04/TAC-05).
+          # Falls back to grep for line-level NDJSON where each line is one event.
+          check_tool_success() {
+            local tool_name="$1"
+            # Try jq first (handles JSON arrays or NDJSON)
+            if command -v jq >/dev/null 2>&1; then
+              # Works for NDJSON: each line is a JSON object
+              if echo "$agent_output" | jq -e --arg t "$tool_name" \
+                'select(.tool == $t and .success == true)' >/dev/null 2>&1; then
+                return 0
+              fi
+              # Works for a JSON array of events
+              if echo "$agent_output" | jq -e --arg t "$tool_name" \
+                '.[] | select(.tool == $t and .success == true)' >/dev/null 2>&1; then
+                return 0
+              fi
+            fi
+            # Fallback: require both fields on the same line (single-line JSON records)
+            if echo "$agent_output" | grep -q "\"tool\":\"${tool_name}\".*\"success\":true"; then
+              return 0
+            fi
+            return 1
+          }
+
           # Bash evidence: any successful Bash tool call
-          if echo "$agent_output" | grep -q '"tool":"Bash"' && \
-             echo "$agent_output" | grep -q '"success":true'; then
+          if check_tool_success "Bash"; then
             bash_ok=true
           fi
 
           # Write evidence: successful Write tool call
-          if echo "$agent_output" | grep -q '"tool":"Write"' && \
-             echo "$agent_output" | grep -q '"success":true'; then
+          if check_tool_success "Write"; then
             write_ok=true
           fi
 
           # Edit evidence: successful Edit tool call
-          if echo "$agent_output" | grep -q '"tool":"Edit"' && \
-             echo "$agent_output" | grep -q '"success":true'; then
+          if check_tool_success "Edit"; then
             edit_ok=true
           fi
 

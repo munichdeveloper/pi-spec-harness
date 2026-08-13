@@ -198,6 +198,10 @@ describe("SPEC-010 capability-smoke reusable workflow contracts", () => {
     expect(workflow).toContain("expected_content");
     expect(workflow).toContain("SMOKE_EDIT_");
     expect(workflow).toContain("SMOKE_WRITE_");
+    // TAC-04/TAC-05: tool success is checked per-tool (scoped), not globally
+    expect(workflow).toContain("check_tool_success");
+    expect(workflow).toContain("jq -e");
+    expect(workflow).toContain('.tool == $t and .success == true');
   });
 
   it("TAC-05: gate job fails the workflow when smoke_passed is not true", async () => {
