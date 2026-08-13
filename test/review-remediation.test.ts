@@ -822,6 +822,20 @@ describe("named GitHub review functions (TAC-11/TAC-12)", () => {
     expect(gh).toContain("resolveReviewThread(input:");
     expect(gh).toContain("graphql");
   });
+
+  it("listPullRequestReviewThreads GraphQL query does not request the non-existent originalCommit field", async () => {
+    const gh = await readFile("src/github/gh.ts", "utf8");
+    // GitHub's PullRequestReviewThread type has no originalCommit field; querying
+    // it causes a schema-validation error before any data is returned.
+    expect(gh).not.toContain("originalCommit");
+  });
+
+  it("listPullRequestReviewThreads GraphQL query requests id, isResolved, isOutdated and comment metadata", async () => {
+    const gh = await readFile("src/github/gh.ts", "utf8");
+    expect(gh).toContain("isResolved");
+    expect(gh).toContain("isOutdated");
+    expect(gh).toContain("pageInfo { hasNextPage endCursor }");
+  });
 });
 
 // ---------------------------------------------------------------------------
