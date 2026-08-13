@@ -686,10 +686,9 @@ describe("renderReviewFixReference (TAC-12)", () => {
     expect(content).toContain("types: [submitted]");
   });
 
-  it("triggers on pull_request_review_thread resolved/unresolved", () => {
+  it("does not install the unsupported pull_request_review_thread webhook as an Actions trigger", () => {
     const content = renderReviewFixReference();
-    expect(content).toContain("pull_request_review_thread:");
-    expect(content).toContain("resolved, unresolved");
+    expect(content).not.toContain("pull_request_review_thread:");
   });
 
   it("uses cancel-in-progress: false to prevent overholding races (SPEC-009 decision 1)", () => {

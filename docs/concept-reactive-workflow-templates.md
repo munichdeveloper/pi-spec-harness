@@ -38,7 +38,7 @@ vollständig, siehe `src/bug/workflow-reference.ts` und
    lebt in `pi-spec-harness/.github/workflows/bug-triage.yml` und wird über
    `uses: munichdeveloper/pi-spec-harness/.github/workflows/bug-triage.yml@<ref>`
    eingebunden -- versioniert über einen Tag/SHA (`--bug-workflow-ref`,
-   Default `v0.2.0`).
+   Default `v0.2.1`).
 3. **Managed-Marker für Drift-Erkennung.** Jede installierte Datei beginnt
    mit `# Managed by pi-spec-harness: bug-workflow-reference v1`.
    `decideBugWorkflowInstall()` unterscheidet `create` / `noop` /
