@@ -69,9 +69,8 @@ jobs:
 
           # Build the exact same input string as src/capability/fingerprint.ts
           canonical_permissions="$(echo -n "$permissions_allow" | jq -c 'sort')"
-          fingerprint_input="${ACTION_REF}
-${canonical_permissions}
-${contract_version}"
+          # Use printf to build the newline-separated input (YAML-safe; no literal newlines in YAML block)
+          fingerprint_input="$(printf '%s\n%s\n%s' "${ACTION_REF}" "${canonical_permissions}" "${contract_version}")"
 
           fingerprint="$(echo -n "$fingerprint_input" | sha256sum | cut -d' ' -f1)"
           cache_key="harness-capability-attestation-${fingerprint}"

@@ -171,6 +171,15 @@ describe("GitHub workflow contracts", () => {
 // ─── SPEC-010 capability-smoke workflow contract tests ──────────────────────
 
 describe("SPEC-010 capability-smoke reusable workflow contracts", () => {
+  it("capability-smoke.yml is valid YAML (no literal newlines inside bash string assignments)", async () => {
+    const { load } = await import("js-yaml");
+    const raw = await readFile(".github/workflows/capability-smoke.yml", "utf8");
+    // load() throws on any YAML syntax error, including unquoted newlines in block scalars
+    expect(() => load(raw)).not.toThrow();
+    // Additionally verify the problematic fingerprint_input is built with printf, not a literal multi-line string
+    expect(raw).toContain("printf");
+    expect(raw).not.toMatch(/fingerprint_input="\$\{ACTION_REF\}\n/);
+  });
   it("TAC-02: cache restore uses exact key only – no restore-keys prefix matching", async () => {
     const workflow = await readFile(".github/workflows/capability-smoke.yml", "utf8");
     expect(workflow).toContain("actions/cache/restore@v4");
