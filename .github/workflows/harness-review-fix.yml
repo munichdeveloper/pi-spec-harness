@@ -1,0 +1,33 @@
+# Managed by pi-spec-harness: review-fix-reference v1
+name: Harness Review Fix
+
+on:
+  pull_request_review:
+    types: [submitted]
+  pull_request_review_thread:
+    types: [resolved, unresolved]
+
+# SPEC-009 decision 1: one concurrent review-fix job per PR.
+concurrency:
+  group: harness-review-fix-${{ github.repository }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+jobs:
+  review-fix:
+    uses: munichdeveloper/pi-spec-harness/.github/workflows/review-fix.yml@v0.2.0
+    with:
+      harness-ref: 'v0.2.0'
+      pull-request: ${{ github.event.pull_request.number }}
+      review-id: ${{ github.event.review.id || 0 }}
+      reviewed-head-sha: ${{ github.event.review.commit_id || github.event.pull_request.head.sha }}
+      reviewer: ${{ github.event.review.user.login || '' }}
+      reviewer-type: ${{ github.event.review.user.type || '' }}
+      review-state: ${{ github.event.review.state || '' }}
+      submitted-at: ${{ github.event.review.submitted_at || '' }}
+      trusted-actors: 'copilot-pull-request-reviewer'
+      fix-agent: 'github-copilot'
