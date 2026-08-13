@@ -2,7 +2,7 @@
 id: SPEC-010
 type: software-spec
 title: Fingerprint-gebundener Bash-/Write-/Edit-Capability-Smoke
-status: review
+status: approved
 owner: engineering
 risk: high
 requirements:
