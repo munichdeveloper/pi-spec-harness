@@ -6,9 +6,11 @@ on:
       claude-code-action-version:
         description: >
           Informational: the version tag or SHA the caller expects to be running
-          (e.g. v1.0.94). This value is recorded for auditing purposes only and
-          does NOT change the action version executed by this workflow, which is
-          hardcoded to anthropics/claude-code-action@v1.0.94.
+          (e.g. v1.0.94). This value is informational only: it is compared
+          against the hardcoded pin and emits a warning on mismatch. It does
+          NOT change the action version executed by this workflow (always
+          hardcoded to anthropics/claude-code-action@v1.0.94) and is not
+          persisted anywhere.
         required: false
         type: string
         default: v1.0.94
