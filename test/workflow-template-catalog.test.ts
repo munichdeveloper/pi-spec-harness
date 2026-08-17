@@ -148,4 +148,9 @@ describe("resolveWorkflowInstallPlan (TAC-04/TAC-07)", () => {
     const plan = resolveWorkflowInstallPlan({ installBugWorkflow: true, installWorkflows: "spec-to-issue" });
     expect(plan).toEqual(expect.arrayContaining(["bug-triage", "spec-to-issue"]));
   });
+
+  it("SPEC-010: capability-smoke is a valid installable template", () => {
+    expect(() => resolveWorkflowInstallPlan({ installWorkflows: "capability-smoke" })).not.toThrow();
+    expect(resolveWorkflowInstallPlan({ installWorkflows: "capability-smoke" })).toEqual(["capability-smoke"]);
+  });
 });
