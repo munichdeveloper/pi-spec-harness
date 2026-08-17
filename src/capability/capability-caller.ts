@@ -44,7 +44,10 @@ ${pathsYaml}
   workflow_call:
     inputs:
       claude-code-action-version:
-        description: Pinned claude-code-action version.
+        description: >-
+          Informational: the version tag or SHA the caller expects to be running.
+          This value does NOT change the action version executed by the reusable
+          workflow, which is hardcoded to its own pinned ref.
         required: false
         type: string
         default: v1.0.94

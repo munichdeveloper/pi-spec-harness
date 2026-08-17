@@ -4,16 +4,26 @@ on:
   workflow_call:
     inputs:
       claude-code-action-version:
-        description: Pinned claude-code-action version (tag vX.Y.Z or 40-char SHA).
+        description: >
+          Informational: the version tag or SHA the caller expects to be running
+          (e.g. v1.0.94). This value is recorded for auditing purposes only and
+          does NOT change the action version executed by this workflow, which is
+          hardcoded to anthropics/claude-code-action@v1.0.94.
         required: false
         type: string
         default: v1.0.94
     secrets:
       ANTHROPIC_API_KEY:
-        description: Anthropic API key for the claude-code-action (mutually exclusive with CLAUDE_CODE_OAUTH_TOKEN).
+        description: >
+          Anthropic API key for the claude-code-action. Provide exactly one of
+          ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN; supplying both will fail
+          the check-credentials pre-flight.
         required: false
       CLAUDE_CODE_OAUTH_TOKEN:
-        description: Claude Code OAuth token (mutually exclusive with ANTHROPIC_API_KEY).
+        description: >
+          Claude Code OAuth token for the claude-code-action. Provide exactly
+          one of ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN; supplying both
+          will fail the check-credentials pre-flight.
         required: false
 
 # TAC-10: minimal permissions – no contents:write, no pull-requests, no id-token
@@ -44,6 +54,11 @@ jobs:
         run: |
           if [[ -z "$ANTHROPIC_API_KEY" && -z "$CLAUDE_CODE_OAUTH_TOKEN" ]]; then
             echo "::error::Neither ANTHROPIC_API_KEY nor CLAUDE_CODE_OAUTH_TOKEN is set. Capability smoke cannot run without credentials."
+            echo "has_credentials=false" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+          if [[ -n "$ANTHROPIC_API_KEY" && -n "$CLAUDE_CODE_OAUTH_TOKEN" ]]; then
+            echo "::error::Both ANTHROPIC_API_KEY and CLAUDE_CODE_OAUTH_TOKEN are set. Provide exactly one credential."
             echo "has_credentials=false" >> "$GITHUB_OUTPUT"
             exit 1
           fi
