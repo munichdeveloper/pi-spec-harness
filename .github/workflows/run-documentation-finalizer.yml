@@ -8,6 +8,13 @@ on:
       generated-directory: { required: false, type: string, default: docs/runs/generated }
       index-path: { required: false, type: string, default: docs/runs/RUN-INDEX.md }
       obsidian-base-path: { required: false, type: string, default: docs/runs/Runs.base }
+      # Comma-separated list of legacy directories to scan for existing run documents.
+      # Defaults to "docs/runs" when empty. Each value is passed as a separate --legacy-directory argument.
+      legacy-directories: { required: false, type: string, default: "" }
+      # REQ-005 audit recorder repository (owner/repo). Defaults to the calling repository.
+      audit-recorder-repo: { required: false, type: string, default: "" }
+      # Path to the audit journal directory in the recorder repository.
+      audit-journal-path: { required: false, type: string, default: "docs/process-audit/journal" }
 
 # TAC-16: minimal permissions; no secrets: inherit.
 permissions:
@@ -45,15 +52,38 @@ jobs:
       - run: npm ci
         working-directory: .pi-spec-harness
 
+      - name: Build legacy-directory flags
+        id: legacy-dirs
+        shell: bash
+        run: |
+          # Convert comma-separated legacy-directories input to CLI flags.
+          flags=""
+          input="${{ inputs.legacy-directories }}"
+          if [ -n "$input" ]; then
+            IFS=',' read -ra dirs <<< "$input"
+            for dir in "${dirs[@]}"; do
+              trimmed="${dir#"${dir%%[![:space:]]*}"}"
+              trimmed="${trimmed%"${trimmed##*[![:space:]]}"}"
+              [ -n "$trimmed" ] && flags="$flags --legacy-directory \"$trimmed\""
+            done
+          fi
+          echo "flags=$flags" >> "$GITHUB_OUTPUT"
+
       - name: Persist run documentation snapshot
         env:
           GH_TOKEN: ${{ github.token }}
         working-directory: .pi-spec-harness
         run: |
-          npm run harness -- persist-run-documentation \
+          recorder_flag=""
+          [ -n "${{ inputs.audit-recorder-repo }}" ] && recorder_flag="--audit-recorder-repo \"${{ inputs.audit-recorder-repo }}\""
+
+          eval npm run harness -- persist-run-documentation \
             --repository "${{ github.repository }}" \
             --issue-number "${{ github.event.issue.number || github.event.pull_request.number }}" \
             --generated-directory "${{ inputs.generated-directory }}" \
             --index-path "${{ inputs.index-path }}" \
             --obsidian-base-path "${{ inputs.obsidian-base-path }}" \
-            --harness-version "${{ inputs.harness-ref }}"
+            --audit-journal-path "${{ inputs.audit-journal-path }}" \
+            --harness-version "${{ inputs.harness-ref }}" \
+            ${{ steps.legacy-dirs.outputs.flags }} \
+            $recorder_flag

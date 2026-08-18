@@ -171,6 +171,8 @@ export interface RunDocumentationFinalizerOptions {
   generatedDirectory?: string;
   indexPath?: string;
   obsidianBasePath?: string;
+  /** Legacy directories to scan for existing run documents. Each entry is passed as a separate --legacy-directory argument. */
+  legacyDirectories?: string[];
 }
 
 export function renderRunDocumentationFinalizer(options: RunDocumentationFinalizerOptions = {}): string {
@@ -180,6 +182,12 @@ export function renderRunDocumentationFinalizer(options: RunDocumentationFinaliz
   const generatedDirectory = options.generatedDirectory ?? "docs/runs/generated";
   const indexPath = options.indexPath ?? "docs/runs/RUN-INDEX.md";
   const obsidianBasePath = options.obsidianBasePath ?? "docs/runs/Runs.base";
+  // Build legacy-directory lines: one per configured entry, or omit the
+  // section entirely so the CLI default ("docs/runs") applies.
+  const legacyDirLines =
+    options.legacyDirectories && options.legacyDirectories.length > 0
+      ? options.legacyDirectories.map((d) => `            --legacy-directory "${d}" \\`).join("\n")
+      : "";
 
   return `${RUN_DOCUMENTATION_FINALIZER_MARKER}
 name: Harness Run Documentation Finalizer
@@ -211,7 +219,7 @@ jobs:
       default-branch: '${defaultBranch}'
       generated-directory: '${generatedDirectory}'
       index-path: '${indexPath}'
-      obsidian-base-path: '${obsidianBasePath}'
+      obsidian-base-path: '${obsidianBasePath}'${legacyDirLines.length > 0 ? `\n      legacy-directories: '${(options.legacyDirectories ?? []).join(",")}'` : ""}
 `;
 }
 

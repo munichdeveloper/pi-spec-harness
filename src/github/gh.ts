@@ -817,107 +817,116 @@ export const github = {
   },
 
   /**
-   * Post a structured audit record to the tracking issue as an idempotent
-   * REQ-005-correlated event. Before creating a new comment, all existing
-   * issue comments are scanned for a comment whose body contains the
-   * `idempotencyKey` marker; if one is found its `created_at` is returned
-   * immediately without creating a duplicate. When a new comment is created
-   * the `created_at` timestamp returned by GitHub is used, not a locally
-   * fabricated `new Date()`. This ensures `auditConfirmedAt` is a confirmed
-   * external timestamp and the record is non-duplicate on retry.
-   * SPEC-012, TAC-05 / §8.
+   * Dispatch a SPEC-005 envelope-v1 `process_audit` event to the configured
+   * recorder repository. The event is delivered via `repository_dispatch` with
+   * `event_type: "process_audit"` and the full payload nested under
+   * `client_payload.audit` (envelope-v1 contract: exactly one top-level field).
+   *
+   * This is the producer side of the REQ-005 audit contract. Delivery is
+   * confirmed only after `confirmAuditEventInJournal()` finds the idempotency
+   * key on the recorder's default branch; an HTTP 204 response is only accepted
+   * as enqueued, not as persisted (SPEC-005 §4 / SPEC-012 §8).
    */
-  async postDocumentationAuditComment(
-    repository: string,
-    issueNumber: number,
-    auditData: {
-      runId: string;
-      processKennung: "DOCUMENTATION_UPDATE";
-      actor: "GITHUB_ACTIONS";
-      role: "GITHUB_ACTIONS_TOKEN";
-      correlationRunId: string;
-      correlationIssue: string;
-      deliveryPr: number | undefined;
-      sourceCommitSha: string;
-      documentationCommitSha: string;
-      idempotencyKey: string;
-      generatedAt: string;
+  async dispatchProcessAuditEnvelopeV1(
+    recorderRepository: string,
+    payload: {
+      schema_version: 1;
+      event_type: "DOCUMENTATION_UPDATE";
+      actor: string;
+      role: string;
+      run_id: string;
+      correlation_run_id: string;
+      correlation_issue: string;
+      delivery_pr?: number;
+      source_commit_sha: string;
+      documentation_commit_sha: string;
+      idempotency_key: string;
+      generated_at: string;
     },
-  ): Promise<string> {
-    // --- Idempotency check: scan existing comments for the same key ---
-    // Filter in JavaScript rather than embedding the key in jq to avoid injection
-    // if the idempotency key ever contains characters special to jq (e.g. `"`).
-    const idempotencyMarker = `idempotencyKey: \`${auditData.idempotencyKey}\``;
-    try {
-      const listOut = await runGh([
-        "api",
-        `repos/${repository}/issues/${issueNumber}/comments`,
-        "--paginate",
-        "--jq",
-        "[.[] | {created_at, body}]",
-      ]);
-      const comments = JSON.parse(listOut.trim() || "[]") as Array<{ created_at: string; body: string }>;
-      const existingComment = comments.find((c) => c.body.includes(idempotencyMarker));
-      if (existingComment) {
-        // Audit record already confirmed; return the original confirmed timestamp.
-        return existingComment.created_at;
-      }
-    } catch {
-      // If listing fails (e.g. rate limit), fall through to creation attempt.
-    }
-
-    // --- Create a new audit comment and return GitHub's confirmed timestamp ---
-    const body = [
-      "<!-- harness:audit-record type=DOCUMENTATION_UPDATE -->",
-      `**Audit Record — DOCUMENTATION_UPDATE**`,
-      `- process: \`${auditData.processKennung}\``,
-      `- actor: \`${auditData.actor}\``,
-      `- role: \`${auditData.role}\``,
-      `- runId: \`${auditData.runId}\``,
-      `- correlation: \`${auditData.correlationRunId}\` / \`${auditData.correlationIssue}\``,
-      ...(auditData.deliveryPr !== undefined ? [`- deliveryPr: #${auditData.deliveryPr}`] : []),
-      `- sourceCommit: \`${auditData.sourceCommitSha}\``,
-      `- documentationCommit: \`${auditData.documentationCommitSha}\``,
-      `- ${idempotencyMarker}`,
-      `- generatedAt: \`${auditData.generatedAt}\``,
-    ].join("\n");
-
-    const createdAtRaw = await runGhWithJson(
-      [
-        "api",
-        `repos/${repository}/issues/${issueNumber}/comments`,
-        "--method", "POST",
-        "--input", "-",
-        "--jq", ".created_at",
-      ],
-      { body },
+  ): Promise<void> {
+    await runGhWithJson(
+      ["api", `repos/${recorderRepository}/dispatches`, "--method", "POST", "--input", "-"],
+      { event_type: "process_audit", client_payload: { audit: payload } },
     );
-    const confirmedAt = createdAtRaw.trim();
-    if (!confirmedAt || confirmedAt === "null") {
-      throw new Error(`audit comment created but GitHub did not return created_at for idempotency key ${auditData.idempotencyKey}`);
+  },
+
+  /**
+   * Poll the recorder repository's journal directory for a file that contains
+   * the given idempotency key on its default branch.  Returns the
+   * `confirmed_at` value extracted from the journal entry.
+   *
+   * This implements the producer-side confirmation step from SPEC-005 §4:
+   * an event is considered durably delivered only when its `idempotency_key`
+   * appears in a persisted file on the recorder's default branch — not merely
+   * when the `repository_dispatch` HTTP 204 is received.
+   *
+   * Fail-closed: if the polling loop exhausts all attempts, an Error is
+   * thrown (never silently falls through). Callers must treat an unconfirmed
+   * delivery as a failure and increment the delivery-failure counter.
+   *
+   * @param recorderRepository  owner/repo of the audit recorder
+   * @param journalDirectory    path to the journal directory (e.g. "docs/process-audit/journal")
+   * @param idempotencyKey      key to search for in journal files
+   * @param branch              default branch to read from (e.g. "main")
+   * @param maxAttempts         maximum number of polling attempts (default 6)
+   * @param retryDelayMs        milliseconds to wait between attempts (default 10000)
+   */
+  async confirmAuditEventInJournal(
+    recorderRepository: string,
+    journalDirectory: string,
+    idempotencyKey: string,
+    branch: string,
+    maxAttempts = 6,
+    retryDelayMs = 10_000,
+  ): Promise<string> {
+    const marker = `idempotency_key: "${idempotencyKey}"`;
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      if (attempt > 0) {
+        await new Promise<void>((resolve) => setTimeout(resolve, retryDelayMs));
+      }
+      // List all .md files in the journal directory.  An empty or missing
+      // directory is not an error here — the workflow may not have run yet.
+      const files = await this.listDirectoryMarkdownFiles(recorderRepository, journalDirectory, branch);
+      for (const file of files) {
+        let content: string;
+        try {
+          ({ content } = await this.getFileContent(recorderRepository, file.path, branch));
+        } catch {
+          // Skip unreadable files and continue scanning.
+          continue;
+        }
+        if (content.includes(marker)) {
+          // Extract confirmed_at from the journal entry, or fall back to the
+          // commit timestamp we recorded during delivery.
+          const match = content.match(/confirmed_at:\s*"([^"]+)"/);
+          return match ? match[1] : new Date().toISOString();
+        }
+      }
     }
-    return confirmedAt;
+    throw new Error(
+      `audit event with idempotency_key "${idempotencyKey}" not found in journal ` +
+      `"${journalDirectory}" of "${recorderRepository}" after ${maxAttempts} attempt(s). ` +
+      `Ensure the process-audit-receiver workflow is installed in the recorder repository.`,
+    );
   },
 
   /**
    * Preflight capability check for the run-documentation writer (SPEC-012 §11 / TAC-17).
    *
    * Verifies before any productive write that:
-   * 1. The branch exists and is readable.
+   * 1. The default branch exists and is readable.
    * 2. The authenticated token has `push` (= `contents: write`) permission on
-   *    the repository. If the token lacks this permission, the error message
-   *    names the concrete setting required ("Enable 'contents: write' for the
-   *    workflow in its permissions block").
-   *
-   * REQ-005 recorder attestation is intentionally deferred until SPEC-005 is
-   * implemented; if the recorder is unavailable, execution continues but a
-   * warning is recorded so the caller can gate on it if needed.
+   *    the documentation repository.
+   * 3. The configured audit recorder repository is reachable (SPEC-012 §8 /
+   *    TAC-17 "fehlenden Auditvertrag"). Missing or unreachable recorder blocks
+   *    execution; this check is NOT deferred.
    *
    * @throws {Error} with a human-readable message describing the missing capability.
    */
   async preflightRunDocumentationWriter(
     repository: string,
     branch: string,
+    recorderRepository?: string,
   ): Promise<void> {
     // Check 1: branch exists and is readable.
     try {
@@ -956,13 +965,33 @@ export const github = {
         );
       }
     } catch (err) {
-      // If the error was already thrown above, rethrow it.
       if (err instanceof Error && err.message.startsWith("run-documentation-writer preflight")) throw err;
-      // If the API doesn't return permissions (e.g. missing scope), treat as denied.
       const msg = err instanceof GhError ? err.message : String(err);
       throw new Error(
         `run-documentation-writer preflight failed: cannot determine permissions for '${repository}': ${msg}. ` +
         `Enable 'contents: write' in the workflow's 'permissions' block.`,
+      );
+    }
+
+    // Check 3: audit recorder is reachable (SPEC-012 §8 / TAC-17).
+    //
+    // The recorder defaults to the tracking-issue repository (same token, same
+    // permissions). A different recorder repository may require separate tokens
+    // and must be explicitly configured. This check is not deferred: a missing
+    // or unreachable recorder blocks the writer before any state is mutated.
+    const recorder = recorderRepository ?? repository;
+    try {
+      await runGh([
+        "api",
+        `repos/${recorder}`,
+        "--jq", ".full_name",
+      ]);
+    } catch (err) {
+      const msg = err instanceof GhError ? err.message : String(err);
+      throw new Error(
+        `run-documentation-writer preflight failed: audit recorder repository '${recorder}' is not reachable: ${msg}. ` +
+        `Ensure the process-audit-receiver workflow is installed and the token has access to '${recorder}'. ` +
+        `Configure --audit-recorder-repo if the recorder lives in a different repository.`,
       );
     }
   },

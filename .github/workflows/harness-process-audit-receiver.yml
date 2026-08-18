@@ -1,0 +1,108 @@
+name: Harness Process Audit Receiver
+
+# Receive SPEC-005 envelope-v1 process_audit events dispatched by the
+# run-documentation-finalizer (and other harness writers) and write a
+# durable journal entry to docs/process-audit/journal/.
+#
+# The producer (persist-run-documentation CLI) treats HTTP 204 only as
+# "enqueued"; delivery is confirmed only after confirmAuditEventInJournal()
+# finds the idempotency_key in a persisted file on the default branch
+# (SPEC-005 §4 / SPEC-012 §8).
+
+on:
+  repository_dispatch:
+    types: [process_audit]
+
+permissions:
+  contents: write
+
+jobs:
+  record-audit-event:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout default branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Write journal entry
+        shell: bash
+        env:
+          AUDIT_PAYLOAD: ${{ toJson(github.event.client_payload.audit) }}
+        run: |
+          set -euo pipefail
+
+          # Extract required fields from the envelope-v1 payload.
+          schema_version=$(echo "$AUDIT_PAYLOAD" | jq -r '.schema_version // empty')
+          idempotency_key=$(echo "$AUDIT_PAYLOAD" | jq -r '.idempotency_key // empty')
+          event_type=$(echo "$AUDIT_PAYLOAD" | jq -r '.event_type // empty')
+          generated_at=$(echo "$AUDIT_PAYLOAD" | jq -r '.generated_at // empty')
+
+          if [ -z "$idempotency_key" ] || [ -z "$schema_version" ]; then
+            echo "::error::Missing required envelope-v1 fields (schema_version, idempotency_key)"
+            exit 1
+          fi
+
+          journal_dir="docs/process-audit/journal"
+          mkdir -p "$journal_dir"
+
+          # Derive a collision-safe filename: date prefix + truncated SHA-256
+          # of the idempotency key (SPEC-005 decision 1).
+          date_prefix=$(date -u +%Y-%m-%d)
+          key_hash=$(printf '%s' "$idempotency_key" | sha256sum | head -c 16)
+          journal_file="${journal_dir}/${date_prefix}-${key_hash}.md"
+
+          # Idempotency: skip silently if an entry for this key already exists.
+          if grep -qr "idempotency_key: \"${idempotency_key}\"" "$journal_dir" 2>/dev/null; then
+            echo "Audit event already recorded for idempotency_key: $idempotency_key — skipping."
+            exit 0
+          fi
+
+          confirmed_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+          cat > "$journal_file" << EOF
+          ---
+          schema_version: ${schema_version}
+          event_type: "${event_type}"
+          idempotency_key: "${idempotency_key}"
+          generated_at: "${generated_at}"
+          confirmed_at: "${confirmed_at}"
+          ---
+          # Audit Journal Entry
+
+          <!-- harness:audit-record type=${event_type} -->
+
+          $(echo "$AUDIT_PAYLOAD" | jq -r '
+            "- schema_version: \(.schema_version)\n" +
+            "- event_type: \(.event_type)\n" +
+            "- actor: \(.actor // "unknown")\n" +
+            "- role: \(.role // "unknown")\n" +
+            "- run_id: \(.run_id // "unknown")\n" +
+            "- correlation_run_id: \(.correlation_run_id // "unknown")\n" +
+            "- correlation_issue: \(.correlation_issue // "unknown")\n" +
+            (if .delivery_pr then "- delivery_pr: #\(.delivery_pr)\n" else "" end) +
+            "- source_commit_sha: \(.source_commit_sha // "unknown")\n" +
+            "- documentation_commit_sha: \(.documentation_commit_sha // "unknown")\n" +
+            "- idempotency_key: \"\(.idempotency_key)\"\n" +
+            "- generated_at: \"\(.generated_at)\"\n" +
+            "- confirmed_at: \"'"${confirmed_at}"'\""
+          ')
+          EOF
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add "$journal_file"
+          git diff --cached --quiet || git commit -m "audit(harness): record ${event_type} for ${idempotency_key}"
+
+          # Push with bounded retry on non-fast-forward conflicts.
+          for attempt in 1 2 3; do
+            if git push; then
+              echo "Journal entry committed and pushed: $journal_file"
+              exit 0
+            fi
+            echo "Push attempt ${attempt} failed (conflict); rebasing..."
+            git fetch origin
+            git rebase origin/$(git rev-parse --abbrev-ref HEAD)
+          done
+          echo "::error::Failed to push journal entry after 3 attempts"
+          exit 1

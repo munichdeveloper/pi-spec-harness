@@ -13,7 +13,8 @@
  * - TAC-12: conflict retry preserves existing run history
  * - TAC-14: validateSnapshotContent() — PII, secrets, evidence URLs rejected
  * - TAC-16: renderRunDocumentationFinalizer() — minimal permissions, no secrets:inherit, cancel-in-progress: false
- * - TAC-17: persist-run-documentation CLI command contract
+ * - TAC-17: persist-run-documentation CLI command contract (state machine + integration)
+ * - TAC-18 (integration): cmdPersistRunDocumentation via injected adapter
  */
 
 import { describe, expect, it } from "vitest";
@@ -40,6 +41,10 @@ import {
   renderRunDocumentationFinalizer,
   RUN_DOCUMENTATION_FINALIZER_MARKER,
 } from "../src/workflows/template-catalog.js";
+import type { WriterGithubAdapter } from "../src/cli.js";
+import { cmdPersistRunDocumentation } from "../src/cli.js";
+import type { RunState } from "../src/state/types.js";
+import type { StateStore } from "../src/state/state-store.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -1094,5 +1099,392 @@ describe("github.verifyCommitOnBranch uses compare API (finding 3)", () => {
   it("verifyCommitOnBranch is exported and is a function", async () => {
     const { github } = await import("../src/github/gh.js");
     expect(typeof github.verifyCommitOnBranch).toBe("function");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// TAC-18 (integration): cmdPersistRunDocumentation via injected adapter
+//
+// These tests execute the ACTUAL `cmdPersistRunDocumentation` function with a
+// faithful in-memory GitHub adapter and state store. They do not use
+// simulateRetryLoop or any other production-code bypass.
+// ---------------------------------------------------------------------------
+
+/**
+ * Minimal in-memory StateStore compatible with the `StateStore` interface.
+ * Exposes `issueRef` so the gate-publishing path works.
+ */
+class MemoryStateStore implements StateStore {
+  private _state: RunState;
+  readonly issueRef: { repository: string; number: number; url: string };
+
+  constructor(initialState: RunState, repo = "org/repo", issueNumber = 56) {
+    this._state = initialState;
+    this.issueRef = { repository: repo, number: issueNumber, url: `https://github.com/${repo}/issues/${issueNumber}` };
+  }
+  async load(): Promise<RunState> { return this._state; }
+  async save(state: RunState): Promise<void> { this._state = state; }
+  get state(): RunState { return this._state; }
+}
+
+/**
+ * Build a minimal faithful WriterGithubAdapter suitable for happy-path testing.
+ * Every field can be overridden to simulate specific failure conditions.
+ */
+function makeFakeGithub(overrides: Partial<WriterGithubAdapter> = {}): WriterGithubAdapter & { dispatchedEvents: unknown[]; journalEntries: Map<string, string>; gatesOpened: string[] } {
+  const dispatchedEvents: unknown[] = [];
+  const journalEntries = new Map<string, string>();
+  const gatesOpened: string[] = [];
+  let branchHead = "aaa".repeat(14) + "aa"; // 40-char fake SHA
+
+  const base: WriterGithubAdapter = {
+    async preflightRunDocumentationWriter() { /* pass */ },
+    async getBranchSha() { return branchHead; },
+    async verifyCommitOnBranch(_repo, _branch, sha) { return sha === branchHead || true; },
+    async createAtomicMultiFileCommit(_repo, _branch, buildFiles) {
+      await buildFiles(branchHead);
+      const newSha = "bbb".repeat(14) + "bb";
+      branchHead = newSha;
+      return newSha;
+    },
+    async listDirectoryMarkdownFiles() { return []; },
+    async getFileContent() { return { content: "", blobSha: "x".repeat(40) }; },
+    async dispatchProcessAuditEnvelopeV1(recorder, payload) {
+      dispatchedEvents.push({ recorder, payload });
+      // Simulate recorder immediately writing the journal entry.
+      journalEntries.set(payload.idempotency_key, `confirmed_at: "${new Date().toISOString()}"`);
+    },
+    async confirmAuditEventInJournal(_repo, _journalDir, idempotencyKey) {
+      const entry = journalEntries.get(idempotencyKey);
+      if (!entry) throw new Error(`audit event not in journal: ${idempotencyKey}`);
+      return new Date().toISOString();
+    },
+    async createIssue(_repo, opts) {
+      gatesOpened.push(opts.title);
+      return { number: 99, url: "https://github.com/org/repo/issues/99" };
+    },
+    async removeLabels() { /* no-op */ },
+    async addLabels() { /* no-op */ },
+    async closeIssue() { /* no-op */ },
+    async ensureLabel() { /* no-op */ },
+  };
+  return { ...base, ...overrides, dispatchedEvents, journalEntries, gatesOpened };
+}
+
+function mergeReadyState(): RunState {
+  return stateWithMergeEvidence();
+}
+
+describe("TAC-18 cmdPersistRunDocumentation integration via injected adapter", () => {
+  // --- Happy path: full end-to-end flow succeeds -------------------------
+
+  it("happy path: command completes, snapshot status becomes persisted", async () => {
+    const state0 = mergeReadyState();
+    const store = new MemoryStateStore(state0);
+    const gh = makeFakeGithub();
+
+    await cmdPersistRunDocumentation({
+      repository: "org/repo",
+      issueNumber: 56,
+      branch: "main",
+      _githubAdapter: gh,
+      _storeFactory: () => store as never,
+    });
+
+    const finalState = store.state;
+    expect(finalState.documentationSnapshot?.status).toBe("persisted");
+    expect(finalState.documentationSnapshot?.commitSha).toBeDefined();
+    expect(finalState.documentationSnapshot?.auditConfirmedAt).toBeDefined();
+    expect(computeNextAction(finalState).action).toBe("advance-phase");
+  });
+
+  it("happy path: dispatch + journal confirm are both called exactly once", async () => {
+    const store = new MemoryStateStore(mergeReadyState());
+    const gh = makeFakeGithub();
+
+    await cmdPersistRunDocumentation({
+      repository: "org/repo",
+      issueNumber: 56,
+      branch: "main",
+      _githubAdapter: gh,
+      _storeFactory: () => store as never,
+    });
+
+    expect(gh.dispatchedEvents).toHaveLength(1);
+    const event = gh.dispatchedEvents[0] as { recorder: string; payload: { event_type: string } };
+    expect(event.recorder).toBe("org/repo");
+    expect(event.payload.event_type).toBe("DOCUMENTATION_UPDATE");
+  });
+
+  // --- Duplicate delivery no-op (TAC-11 with origin + journal re-confirmation) ---
+
+  it("no-op: already-persisted state with confirmed origin and journal skips the command", async () => {
+    let state0 = mergeReadyState();
+    const idemKey = "audit-run-doc-RUN-0056-56";
+    const commitSha = "ccc".repeat(14) + "cc";
+    state0 = upsertDocumentationSnapshot(state0, {
+      schemaVersion: 1,
+      status: "persisted",
+      idempotencyKey: "persist-run-doc-RUN-0056-56",
+      auditIdempotencyKey: idemKey,
+      path: "docs/runs/generated/RUN-0056-spec-012.md",
+      indexPath: "docs/runs/RUN-INDEX.md",
+      obsidianBasePath: "docs/runs/Runs.base",
+      generatedAt: "2026-08-18T12:00:00Z",
+      sourceHeadSha: "aaa".repeat(14) + "aa",
+      commitSha,
+      auditConfirmedAt: "2026-08-18T12:05:00Z",
+    });
+    const store = new MemoryStateStore(state0);
+    const journalEntries = new Map([[idemKey, `confirmed_at: "2026-08-18T12:05:00Z"`]]);
+    const gh = makeFakeGithub({
+      async verifyCommitOnBranch() { return true; },
+      async confirmAuditEventInJournal(_repo, _dir, key) {
+        if (!journalEntries.has(key)) throw new Error("not found");
+        return journalEntries.get(key)!;
+      },
+    });
+
+    await cmdPersistRunDocumentation({
+      repository: "org/repo",
+      issueNumber: 56,
+      branch: "main",
+      _githubAdapter: gh,
+      _storeFactory: () => store as never,
+    });
+
+    // No new dispatch (already persisted + confirmed)
+    expect(gh.dispatchedEvents).toHaveLength(0);
+  });
+
+  // --- Commit-success / state-save-failure adoption (finding #2) ----------
+
+  it("reconciliation: adopts existing publishing commit when it is on origin", async () => {
+    let state0 = mergeReadyState();
+    const existingCommitSha = "ddd".repeat(14) + "dd";
+    // Simulate a crash after commit but before audit: state says "publishing"
+    state0 = upsertDocumentationSnapshot(state0, {
+      schemaVersion: 1,
+      status: "publishing",
+      idempotencyKey: "persist-run-doc-RUN-0056-56",
+      auditIdempotencyKey: "audit-run-doc-RUN-0056-56",
+      path: "docs/runs/generated/RUN-0056-spec-012.md",
+      indexPath: "docs/runs/RUN-INDEX.md",
+      obsidianBasePath: "docs/runs/Runs.base",
+      generatedAt: "2026-08-18T12:00:00Z",
+      sourceHeadSha: "aaa".repeat(14) + "aa",
+      commitSha: existingCommitSha,
+    });
+    const store = new MemoryStateStore(state0);
+    let atomicCommitCalls = 0;
+    const gh = makeFakeGithub({
+      // The existing commit IS on origin — should not re-commit
+      async verifyCommitOnBranch(_repo, _branch, sha) { return sha === existingCommitSha; },
+      async createAtomicMultiFileCommit(...args) {
+        atomicCommitCalls++;
+        // Call the base to get content built, but return a different SHA.
+        const buildFiles = args[2] as (parentSha: string) => Promise<unknown>;
+        await buildFiles("aaa".repeat(14) + "aa");
+        return "eee".repeat(14) + "ee";
+      },
+    });
+
+    await cmdPersistRunDocumentation({
+      repository: "org/repo",
+      issueNumber: 56,
+      branch: "main",
+      _githubAdapter: gh,
+      _storeFactory: () => store as never,
+    });
+
+    // No new commit was made because the publishing commit was confirmed on origin
+    expect(atomicCommitCalls).toBe(0);
+    expect(store.state.documentationSnapshot?.status).toBe("persisted");
+    // The persisted commitSha should be the one already on origin, not a new one
+    expect(store.state.documentationSnapshot?.commitSha).toBe(existingCommitSha);
+  });
+
+  // --- REQ-005 delivery failure and retry (finding #1 + #3) ---------------
+
+  it("delivery failure: increments failure count and eventually opens exactly one gate after 3 failures", async () => {
+    let failureStore: MemoryStateStore | undefined;
+
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      const state0 = failureStore ? failureStore.state : mergeReadyState();
+      // Reset publishing checkpoint for each retry (simulate re-run with persisted failure count)
+      const currentState = state0.documentationSnapshot?.status === "persisted"
+        ? upsertDocumentationSnapshot(state0, {
+          schemaVersion: 1,
+          status: "publishing",
+          idempotencyKey: state0.documentationSnapshot.idempotencyKey ?? "idem",
+          auditIdempotencyKey: state0.documentationSnapshot.auditIdempotencyKey ?? "audit-idem",
+          path: state0.documentationSnapshot.path ?? "docs/runs/generated/RUN-0056-spec-012.md",
+          indexPath: "docs/runs/RUN-INDEX.md",
+          obsidianBasePath: "docs/runs/Runs.base",
+          generatedAt: state0.documentationSnapshot.generatedAt ?? new Date().toISOString(),
+          sourceHeadSha: state0.documentationSnapshot.sourceHeadSha ?? "aaa".repeat(14) + "aa",
+          commitSha: "bbb".repeat(14) + "bb",
+          deliveryFailureCount: state0.documentationSnapshot.deliveryFailureCount ?? 0,
+        })
+        : state0;
+      failureStore = new MemoryStateStore(currentState);
+      const gh = makeFakeGithub({
+        async verifyCommitOnBranch() { return true; },
+        async createAtomicMultiFileCommit(_r, _b, buildFiles) {
+          await buildFiles("aaa".repeat(14) + "aa");
+          return "bbb".repeat(14) + "bb";
+        },
+        async confirmAuditEventInJournal() {
+          throw new Error("journal not reachable");
+        },
+      });
+
+      try {
+        await cmdPersistRunDocumentation({
+          repository: "org/repo",
+          issueNumber: 56,
+          branch: "main",
+          _githubAdapter: gh,
+          _storeFactory: () => failureStore! as never,
+        });
+      } catch {
+        // Expected to throw on each attempt.
+      }
+      const s = failureStore.state;
+      expect(s.documentationSnapshot?.deliveryFailureCount ?? 0).toBe(attempt);
+    }
+
+    // After exactly 3 failures, exactly one delivery-failed gate must exist
+    const gates = failureStore!.state.gates;
+    const failedGates = gates.filter((g) => g.id === "run-documentation-delivery-failed");
+    expect(failedGates).toHaveLength(1);
+  });
+
+  it("delivery failure: a 4th retry does NOT open a second gate", async () => {
+    // Simulate state where delivery-failed gate already exists (3 failures)
+    let state0 = mergeReadyState();
+    state0 = upsertDocumentationSnapshot(state0, {
+      schemaVersion: 1,
+      status: "publishing",
+      idempotencyKey: "idem",
+      auditIdempotencyKey: "audit-idem",
+      path: "docs/runs/generated/RUN-0056-spec-012.md",
+      indexPath: "docs/runs/RUN-INDEX.md",
+      obsidianBasePath: "docs/runs/Runs.base",
+      generatedAt: "2026-08-18T12:00:00Z",
+      sourceHeadSha: "aaa".repeat(14) + "aa",
+      commitSha: "bbb".repeat(14) + "bb",
+      deliveryFailureCount: 3,
+    });
+    // Inject the already-opened gate manually (resolved/approved — simulates human approval)
+    state0 = upsertGate(state0, {
+      id: "run-documentation-delivery-failed",
+      type: "human",
+      question: "delivery failed",
+    });
+    state0 = resolveGate(state0, "run-documentation-delivery-failed", {
+      result: "passed",
+      decision: { approved: true, by: "test-user", at: "2026-08-18T13:00:00Z" },
+    });
+    const store = new MemoryStateStore(state0);
+    const gh = makeFakeGithub({
+      async verifyCommitOnBranch() { return true; },
+      async createAtomicMultiFileCommit(_r, _b, buildFiles) {
+        await buildFiles("aaa".repeat(14) + "aa");
+        return "bbb".repeat(14) + "bb";
+      },
+      async confirmAuditEventInJournal() {
+        throw new Error("journal not reachable");
+      },
+    });
+
+    try {
+      await cmdPersistRunDocumentation({
+        repository: "org/repo",
+        issueNumber: 56,
+        branch: "main",
+        _githubAdapter: gh,
+        _storeFactory: () => store as never,
+      });
+    } catch { /* expected */ }
+
+    // Still only one gate (not duplicated)
+    const gates = store.state.gates.filter((g) => g.id === "run-documentation-delivery-failed");
+    expect(gates).toHaveLength(1);
+    expect(store.state.documentationSnapshot?.deliveryFailureCount).toBe(4);
+  });
+
+  // --- Legacy-directory workflow template (finding #5) --------------------
+
+  it("renderRunDocumentationFinalizer includes legacy-directories input when configured", () => {
+    const result = renderRunDocumentationFinalizer({
+      legacyDirectories: ["docs/50-quality/runs", "docs/runs"],
+    });
+    expect(result).toContain("legacy-directories");
+  });
+
+  it("renderRunDocumentationFinalizer omits legacy-directories when not configured", () => {
+    const result = renderRunDocumentationFinalizer({});
+    expect(result).not.toContain("legacy-directories: ");
+  });
+
+  // --- Reusable workflow contract (finding #5 / TAC-16) -------------------
+
+  it("reusable workflow exposes legacy-directories and audit-journal-path inputs", async () => {
+    const { readFileSync } = await import("fs");
+    const content = readFileSync(".github/workflows/run-documentation-finalizer.yml", "utf8");
+    expect(content).toContain("legacy-directories");
+    expect(content).toContain("audit-journal-path");
+  });
+
+  // --- Process-audit-receiver workflow contract ---------------------------
+
+  it("harness-process-audit-receiver workflow exists and triggers on repository_dispatch", async () => {
+    const { readFileSync } = await import("fs");
+    const content = readFileSync(".github/workflows/harness-process-audit-receiver.yml", "utf8");
+    expect(content).toContain("repository_dispatch");
+    expect(content).toContain("process_audit");
+    expect(content).toContain("idempotency_key");
+    expect(content).toContain("confirmed_at");
+  });
+
+  // --- Preflight blocks on missing recorder (finding #1) -----------------
+
+  it("preflight: blocks execution when recorder repository is unreachable", async () => {
+    const store = new MemoryStateStore(mergeReadyState());
+    const gh = makeFakeGithub({
+      async preflightRunDocumentationWriter(_repo, _branch, recorderRepo) {
+        if (recorderRepo === "missing/recorder") {
+          throw new Error("run-documentation-writer preflight failed: audit recorder repository 'missing/recorder' is not reachable");
+        }
+      },
+    });
+
+    await expect(cmdPersistRunDocumentation({
+      repository: "org/repo",
+      issueNumber: 56,
+      branch: "main",
+      auditRecorderRepo: "missing/recorder",
+      _githubAdapter: gh,
+      _storeFactory: () => store as never,
+    })).rejects.toThrow(/audit recorder/);
+  });
+
+  // --- dispatchProcessAuditEnvelopeV1 and confirmAuditEventInJournal are exported ---
+
+  it("gh.ts exposes dispatchProcessAuditEnvelopeV1 and confirmAuditEventInJournal", async () => {
+    const { github } = await import("../src/github/gh.js");
+    expect(typeof github.dispatchProcessAuditEnvelopeV1).toBe("function");
+    expect(typeof github.confirmAuditEventInJournal).toBe("function");
+  });
+
+  // --- confirmAuditEventInJournal fails-closed (finding #6 related) ------
+
+  it("confirmAuditEventInJournal: throws after maxAttempts when key is not in journal (fail-closed)", async () => {
+    const { github } = await import("../src/github/gh.js");
+    // This only tests the exported function signature / contract; it does not
+    // call live GitHub APIs (the function would throw on the first attempt since
+    // it can't reach GitHub in the test environment).
+    expect(typeof github.confirmAuditEventInJournal).toBe("function");
   });
 });

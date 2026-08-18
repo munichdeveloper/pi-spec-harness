@@ -57,6 +57,53 @@ import { generateRunIndex, generateObsidianBase, parseFrontmatter, parseRunIndex
 import { validateDocumentationPath, validateSnapshotContent } from "./documentation/path-validator.js";
 import { DEFAULT_RUN_DOCUMENTATION_CONFIG } from "./documentation/run-documentation-config.js";
 
+/**
+ * Minimal subset of `github` functions required by `cmdPersistRunDocumentation`.
+ * Exported to allow integration tests to inject a stub adapter.
+ */
+export interface WriterGithubAdapter {
+  preflightRunDocumentationWriter(repository: string, branch: string, recorderRepository?: string): Promise<void>;
+  getBranchSha(repository: string, branch: string): Promise<string>;
+  verifyCommitOnBranch(repository: string, branch: string, expectedCommitSha: string): Promise<boolean>;
+  createAtomicMultiFileCommit(
+    repository: string,
+    branch: string,
+    buildFiles: (parentCommitSha: string) => Promise<Array<{ path: string; content: string }>>,
+    commitMessage: string,
+    maxRetries?: number,
+    expectedPaths?: [string, string, string],
+  ): Promise<string>;
+  listDirectoryMarkdownFiles(repository: string, dirPath: string, ref: string): Promise<Array<{ name: string; path: string }>>;
+  getFileContent(repository: string, path: string, ref: string): Promise<{ content: string; blobSha: string }>;
+  dispatchProcessAuditEnvelopeV1(recorderRepository: string, payload: {
+    schema_version: 1;
+    event_type: "DOCUMENTATION_UPDATE";
+    actor: string;
+    role: string;
+    run_id: string;
+    correlation_run_id: string;
+    correlation_issue: string;
+    delivery_pr?: number;
+    source_commit_sha: string;
+    documentation_commit_sha: string;
+    idempotency_key: string;
+    generated_at: string;
+  }): Promise<void>;
+  confirmAuditEventInJournal(
+    recorderRepository: string,
+    journalDirectory: string,
+    idempotencyKey: string,
+    branch: string,
+    maxAttempts?: number,
+    retryDelayMs?: number,
+  ): Promise<string>;
+  createIssue(repository: string, opts: { title: string; body: string; labels?: string[] }): Promise<{ number: number; url: string }>;
+  removeLabels(repository: string, issueNumber: number, labels: string[]): Promise<void>;
+  addLabels(repository: string, issueNumber: number, labels: string[]): Promise<void>;
+  closeIssue(repository: string, issueNumber: number): Promise<void>;
+  ensureLabel(repository: string, name: string, opts?: { color?: string; description?: string }): Promise<void>;
+}
+
 interface StoreArgs {
   state?: string;
   repository?: string;
@@ -452,7 +499,7 @@ async function cmdResume(argv: StoreArgs): Promise<void> {
  * then records the persisted checkpoint in the run state.
  * SPEC-012, decision 4–7.
  */
-async function cmdPersistRunDocumentation(argv: {
+export async function cmdPersistRunDocumentation(argv: {
   repository: string;
   issueNumber: number;
   generatedDirectory?: string;
@@ -461,29 +508,70 @@ async function cmdPersistRunDocumentation(argv: {
   obsidianBasePath?: string;
   branch?: string;
   harnessVersion?: string;
+  auditRecorderRepo?: string;
+  auditJournalPath?: string;
+  /** For testing only: inject a fake GitHub adapter to avoid live API calls. */
+  _githubAdapter?: WriterGithubAdapter;
+  /** For testing only: inject a store factory to use an in-memory state store. */
+  _storeFactory?: (repository: string, issueNumber: number) => import("./state/state-store.js").StateStore & { issueRef?: { repository: string; number: number; url: string } };
 }): Promise<void> {
   const { repository, issueNumber, branch = "main" } = argv;
+  const gh: WriterGithubAdapter = argv._githubAdapter ?? github;
   const generatedDirectory = argv.generatedDirectory ?? DEFAULT_RUN_DOCUMENTATION_CONFIG.generatedDirectory;
   const legacyDirectories = argv.legacyDirectories ?? DEFAULT_RUN_DOCUMENTATION_CONFIG.legacyDirectories;
   const indexPath = argv.indexPath ?? DEFAULT_RUN_DOCUMENTATION_CONFIG.indexPath;
   const obsidianBasePath = argv.obsidianBasePath ?? DEFAULT_RUN_DOCUMENTATION_CONFIG.obsidianBasePath;
+  // Audit recorder defaults to the same repository as the tracking issue.
+  const auditRecorderRepo = argv.auditRecorderRepo ?? repository;
+  const auditJournalPath = argv.auditJournalPath ?? "docs/process-audit/journal";
 
-  const store = new IssueStateStore(repository, issueNumber);
+  const store = argv._storeFactory ? argv._storeFactory(repository, issueNumber) as IssueStateStore : new IssueStateStore(repository, issueNumber);
   let state = await store.load();
 
-  // Idempotent: skip if documentation is already persisted and audited.
+  // ---- Idempotent no-op guard (SPEC-012 TAC-11) ----
+  //
+  // If the checkpoint says "persisted" with both a commitSha and an
+  // auditConfirmedAt, re-confirm against origin and the audit journal before
+  // accepting the no-op. This prevents a commit-success/state-save-failure
+  // from permanently hiding a missing origin effect or an audit gap
+  // (SPEC-012 §3 item 3 & 4 / finding #2).
   if (
     state.documentationSnapshot?.status === "persisted" &&
     state.documentationSnapshot.commitSha &&
     state.documentationSnapshot.auditConfirmedAt
   ) {
-    const next = computeNextAction(state);
-    printResult(
-      "persist-run-documentation",
-      { skipped: "already-persisted", documentationSnapshot: state.documentationSnapshot, nextAction: next },
-      next.detail,
-    );
-    return;
+    const snap = state.documentationSnapshot;
+    const commitOnOrigin = await gh.verifyCommitOnBranch(repository, branch, snap.commitSha!);
+    let auditInJournal = false;
+    if (commitOnOrigin) {
+      // Only bother checking the journal if the commit is confirmed; a failed
+      // origin check means we must re-run regardless.
+      try {
+        // Attempt a single quick confirmation (1 attempt, 0 delay).
+        await gh.confirmAuditEventInJournal(
+          auditRecorderRepo,
+          auditJournalPath,
+          snap.auditIdempotencyKey,
+          branch,
+          1,
+          0,
+        );
+        auditInJournal = true;
+      } catch {
+        // Audit not confirmed in journal — fall through to re-deliver.
+      }
+    }
+    if (commitOnOrigin && auditInJournal) {
+      const next = computeNextAction(state);
+      printResult(
+        "persist-run-documentation",
+        { skipped: "already-persisted", documentationSnapshot: snap, nextAction: next },
+        next.detail,
+      );
+      return;
+    }
+    // At least one of commit-on-origin or audit-in-journal failed; fall through
+    // to re-execute the publishing / audit phases from the persisted keys.
   }
 
   const next = computeNextAction(state);
@@ -493,11 +581,11 @@ async function cmdPersistRunDocumentation(argv: {
 
   // ---- Capability preflight (SPEC-012 §11 / TAC-17) ----
   //
-  // Verify that the branch is accessible and that the token has the write
-  // permission required for the documentation writer. Preflight runs before
-  // any state is mutated so that a missing capability produces a clear error
-  // naming the concrete missing repository setting.
-  await github.preflightRunDocumentationWriter(repository, branch);
+  // Verify branch accessibility, contents-write permission, and that the
+  // configured audit recorder is reachable. Preflight runs before any state
+  // is mutated; a missing capability produces a concrete error. The recorder
+  // check is NOT deferred (SPEC-012 §8 / TAC-17 "fehlenden Auditvertrag").
+  await gh.preflightRunDocumentationWriter(repository, branch, auditRecorderRepo);
 
   const harnessVersion = argv.harnessVersion ?? "unknown";
 
@@ -515,7 +603,9 @@ async function cmdPersistRunDocumentation(argv: {
   // its keys and timestamps rather than generating new ones.
 
   const existing = state.documentationSnapshot;
-  const isResuming = existing && (existing.status === "prepared" || existing.status === "publishing");
+  // Also treat a `persisted` checkpoint that failed re-confirmation as resumable.
+  const isResuming = existing &&
+    (existing.status === "prepared" || existing.status === "publishing" || existing.status === "persisted");
 
   const generatedAt = isResuming ? existing.generatedAt : new Date().toISOString();
   const idempotencyKey = isResuming
@@ -533,7 +623,7 @@ async function cmdPersistRunDocumentation(argv: {
   validateDocumentationPath(obsidianBasePath);
 
   // Resolve HEAD SHA of the default branch as the source reference.
-  const sourceHeadSha = isResuming ? existing.sourceHeadSha : await github.getBranchSha(repository, branch);
+  const sourceHeadSha = isResuming ? existing.sourceHeadSha : await gh.getBranchSha(repository, branch);
 
   if (!isResuming) {
     // Persist the `prepared` checkpoint BEFORE the first external write.
@@ -551,44 +641,204 @@ async function cmdPersistRunDocumentation(argv: {
     await store.save(state);
   }
 
-  // ---- Phase 2: Atomic three-file commit ----
+  // Constants used in the delivery failure handler below (TAC-13).
+  const MAX_DOC_DELIVERY_FAILURES = 3;
+  const DELIVERY_FAILED_GATE_ID = "run-documentation-delivery-failed";
+
+  // ---- Phases 2 & 3: Atomic commit + REQ-005 audit delivery ----
   //
-  // If we are resuming a `publishing` checkpoint (commit confirmed on origin),
-  // skip the write phase and go directly to audit confirmation.
+  // Both phases are wrapped in a single try-catch so that ANY failure —
+  // conflict exhaustion, origin-verification failure, dispatch error, or
+  // journal confirmation timeout — increments the delivery failure counter
+  // and opens exactly one Human Gate after three consecutive failures
+  // (SPEC-012 §9 / TAC-13, finding #3).
 
   let commitSha: string;
+  let auditConfirmedAt: string;
 
-  if (state.documentationSnapshot?.status === "publishing" && state.documentationSnapshot.commitSha) {
-    // Resume: verify the commit is already reachable from origin.
-    const onOrigin = await github.verifyCommitOnBranch(
-      repository,
-      branch,
-      state.documentationSnapshot.commitSha,
-    );
-    if (!onOrigin) {
-      // Commit was recorded but not confirmed on origin; fall through to re-commit.
-      commitSha = await performAtomicDocCommit();
+  try {
+    // ---- Phase 2: Atomic three-file commit ----
+    //
+    // If resuming a `publishing` checkpoint with a commit already confirmed
+    // on origin, skip the write phase and go straight to audit.
+    if (
+      (state.documentationSnapshot?.status === "publishing" ||
+        state.documentationSnapshot?.status === "persisted") &&
+      state.documentationSnapshot.commitSha
+    ) {
+      // Resume: verify the commit is still reachable from origin. If not,
+      // the branch may have been force-pushed; re-commit to recover.
+      const onOrigin = await gh.verifyCommitOnBranch(
+        repository,
+        branch,
+        state.documentationSnapshot.commitSha,
+      );
+      commitSha = onOrigin
+        ? state.documentationSnapshot.commitSha
+        : await performAtomicDocCommit();
     } else {
-      commitSha = state.documentationSnapshot.commitSha;
+      commitSha = await performAtomicDocCommit();
     }
-  } else {
-    commitSha = await performAtomicDocCommit();
+
+    // Save `publishing` checkpoint (commit confirmed on origin) before audit.
+    state = upsertDocumentationSnapshot(state, {
+      schemaVersion: 1,
+      status: "publishing",
+      idempotencyKey,
+      path: snapshotPath,
+      indexPath,
+      obsidianBasePath,
+      generatedAt,
+      sourceHeadSha,
+      commitSha,
+      auditIdempotencyKey,
+    });
+    await store.save(state);
+
+    // ---- Phase 3: Audit delivery via REQ-005 envelope-v1 (SPEC-012 §8) ----
+    //
+    // Deliver a DOCUMENTATION_UPDATE event to the configured recorder via
+    // `repository_dispatch` with the SPEC-005 envelope-v1 payload. Only after
+    // the idempotency key is confirmed in the recorder's default-branch journal
+    // is `auditConfirmedAt` recorded in run state. A mutable issue comment is
+    // NOT an acceptable substitute for the durable journal entry (finding #1).
+    await gh.dispatchProcessAuditEnvelopeV1(
+      auditRecorderRepo,
+      {
+        schema_version: 1,
+        event_type: "DOCUMENTATION_UPDATE",
+        actor: "GITHUB_ACTIONS",
+        role: "GITHUB_ACTIONS_TOKEN",
+        run_id: state.runId,
+        correlation_run_id: state.runId,
+        correlation_issue: `${repository}#${issueNumber}`,
+        ...(state.deliveryPullRequest !== undefined
+          ? { delivery_pr: state.deliveryPullRequest }
+          : {}),
+        source_commit_sha: sourceHeadSha,
+        documentation_commit_sha: commitSha,
+        idempotency_key: auditIdempotencyKey,
+        generated_at: generatedAt,
+      },
+    );
+
+    // Poll the recorder's journal until the idempotency key appears on the
+    // default branch. This is the "confirmed delivery" step from SPEC-005 §4.
+    auditConfirmedAt = await gh.confirmAuditEventInJournal(
+      auditRecorderRepo,
+      auditJournalPath,
+      auditIdempotencyKey,
+      branch,
+    );
+  } catch (deliveryErr) {
+    // Any write-or-audit failure: increment the delivery failure counter and
+    // open exactly one Human Gate after reaching the configured threshold.
+    const prevCount = state.documentationSnapshot?.deliveryFailureCount ?? 0;
+    const newCount = prevCount + 1;
+    // Preserve all existing checkpoint fields; only update status + counter.
+    state = upsertDocumentationSnapshot(state, {
+      schemaVersion: 1,
+      status: state.documentationSnapshot?.status ?? "prepared",
+      idempotencyKey,
+      path: snapshotPath,
+      indexPath,
+      obsidianBasePath,
+      generatedAt,
+      sourceHeadSha,
+      ...(state.documentationSnapshot?.commitSha
+        ? { commitSha: state.documentationSnapshot.commitSha }
+        : {}),
+      auditIdempotencyKey,
+      deliveryFailureCount: newCount,
+    });
+    await store.save(state);
+
+    if (newCount >= MAX_DOC_DELIVERY_FAILURES && !findGate(state, DELIVERY_FAILED_GATE_ID) && store.issueRef) {
+      const gateQuestion =
+        "The run documentation could not be persisted or audited after three attempts. Please review and retry or close manually.";
+      state = upsertGate(state, {
+        id: DELIVERY_FAILED_GATE_ID,
+        type: "human",
+        question: gateQuestion,
+      });
+      state = prepareHumanGateIssue({
+        runState: state,
+        gateId: DELIVERY_FAILED_GATE_ID,
+        title: `[Harness] Run documentation delivery failed after ${newCount} attempts`,
+        question: gateQuestion,
+        context: [
+          `runId: ${state.runId}`,
+          `repository: ${repository}`,
+          `snapshotPath: ${snapshotPath}`,
+          `auditRecorderRepo: ${auditRecorderRepo}`,
+          `auditJournalPath: ${auditJournalPath}`,
+          `failureError: ${deliveryErr instanceof Error ? deliveryErr.message : String(deliveryErr)}`,
+        ],
+        decisionContext: undefined,
+        runIssue: store.issueRef,
+      });
+      await store.save(state);
+      // Best-effort: attempt to publish the gate as a GitHub issue; if this fails the
+      // gate is still persisted in state and can be published on the next invocation.
+      try {
+        state = await publishHumanGateIssue(state, DELIVERY_FAILED_GATE_ID, (checkpoint) => store.save(checkpoint));
+        await store.save(state);
+      } catch {
+        // Gate state is already saved; delivery failure is the primary error.
+      }
+    }
+    throw deliveryErr;
   }
 
+  // Transition to `persisted` only after the audit event is confirmed in the
+  // recorder's default-branch journal.
+  state = upsertDocumentationSnapshot(state, {
+    schemaVersion: 1,
+    status: "persisted",
+    idempotencyKey,
+    path: snapshotPath,
+    indexPath,
+    obsidianBasePath,
+    generatedAt,
+    sourceHeadSha,
+    commitSha,
+    auditIdempotencyKey,
+    auditConfirmedAt,
+  });
+  await store.save(state);
+
+  const following = computeNextAction(state);
+  printResult(
+    "persist-run-documentation",
+    {
+      snapshotPath,
+      indexPath,
+      obsidianBasePath,
+      commitSha,
+      sourceHeadSha,
+      auditConfirmedAt,
+      documentationSnapshot: state.documentationSnapshot,
+      nextAction: following,
+    },
+    following.detail,
+  );
+
+  // --------------------------------------------------------------------------
+  // Inner helper: read all existing run index entries from generatedDirectory
+  // and all configured legacyDirectories, deduplicated by path. Files with an
+  // unknown schema_version cause a hard failure (fail-closed, SPEC-012 §10).
+  // --------------------------------------------------------------------------
   async function readAllRunEntries(
     parentCommitSha: string,
     skipPath: string,
   ): Promise<Array<import("./documentation/run-index.js").RunIndexEntry>> {
     const allEntries: Array<import("./documentation/run-index.js").RunIndexEntry> = [];
 
-    // Collect file lists from the generated directory and all legacy directories,
-    // deduplicated by path so that generatedDirectory overlapping with a legacy
-    // directory does not produce duplicate entries.
     const dirsToScan = [generatedDirectory, ...legacyDirectories];
     const seenPaths = new Set<string>();
 
     for (const dir of dirsToScan) {
-      const files = await github.listDirectoryMarkdownFiles(repository, dir, parentCommitSha);
+      const files = await gh.listDirectoryMarkdownFiles(repository, dir, parentCommitSha);
       for (const file of files) {
         if (file.path === skipPath) continue;           // will be replaced by new content
         if (file.path.endsWith("-notes.md")) continue; // human-managed notes, not run docs
@@ -597,7 +847,7 @@ async function cmdPersistRunDocumentation(argv: {
 
         // Network reads propagate; only swallow "not found" for entire directories
         // (handled by listDirectoryMarkdownFiles returning []).
-        const { content } = await github.getFileContent(repository, file.path, parentCommitSha);
+        const { content } = await gh.getFileContent(repository, file.path, parentCommitSha);
 
         // Fail closed on unknown schema version: SPEC-012 §10 / TAC-10.
         const fm = parseFrontmatter(content);
@@ -616,12 +866,17 @@ async function cmdPersistRunDocumentation(argv: {
     return allEntries;
   }
 
+  // --------------------------------------------------------------------------
+  // Inner helper: perform one transactional three-file documentation commit
+  // using the Git Data API (SPEC-012 §7 / TAC-10–12). Retries up to 3 times
+  // on non-fast-forward conflicts; verifies the commit is on origin after push.
+  // --------------------------------------------------------------------------
   async function performAtomicDocCommit(): Promise<string> {
     const commitMessage = `docs(harness): persist run documentation snapshot for ${state.runId}`;
 
     const expectedPaths: [string, string, string] = [snapshotPath, indexPath, obsidianBasePath];
 
-    const sha = await github.createAtomicMultiFileCommit(
+    const sha = await gh.createAtomicMultiFileCommit(
       repository,
       branch,
       async (parentCommitSha) => {
@@ -662,7 +917,7 @@ async function cmdPersistRunDocumentation(argv: {
     );
 
     // Verify the commit landed on origin/<branch> (exact or as ancestor).
-    const confirmed = await github.verifyCommitOnBranch(repository, branch, sha);
+    const confirmed = await gh.verifyCommitOnBranch(repository, branch, sha);
     if (!confirmed) {
       throw new Error(
         `documentation commit ${sha} was not confirmed on origin/${branch}; aborting`,
@@ -671,127 +926,6 @@ async function cmdPersistRunDocumentation(argv: {
 
     return sha;
   }
-
-  // Constant used in the audit failure handler below (TAC-13).
-  const MAX_DOC_DELIVERY_FAILURES = 3;
-  const DELIVERY_FAILED_GATE_ID = "run-documentation-delivery-failed";
-
-
-  // Save `publishing` checkpoint (commit confirmed on origin) before audit.
-  state = upsertDocumentationSnapshot(state, {
-    schemaVersion: 1,
-    status: "publishing",
-    idempotencyKey,
-    path: snapshotPath,
-    indexPath,
-    obsidianBasePath,
-    generatedAt,
-    sourceHeadSha,
-    commitSha,
-    auditIdempotencyKey,
-  });
-  await store.save(state);
-
-  // ---- Phase 3: Audit confirmation (SPEC-012 §8) ----
-  //
-  // Post a structured REQ-005-correlated DOCUMENTATION_UPDATE record to the
-  // tracking issue. The function is idempotent (scans existing comments) and
-  // returns GitHub's confirmed `created_at` timestamp, not a local fabrication.
-  // Only after this confirmed external GitHub effect is `auditConfirmedAt`
-  // recorded in run state.
-
-  let auditConfirmedAt: string;
-  try {
-    auditConfirmedAt = await github.postDocumentationAuditComment(
-      repository,
-      issueNumber,
-      {
-        runId: state.runId,
-        processKennung: "DOCUMENTATION_UPDATE",
-        actor: "GITHUB_ACTIONS",
-        role: "GITHUB_ACTIONS_TOKEN",
-        correlationRunId: state.runId,
-        correlationIssue: `${repository}#${issueNumber}`,
-        deliveryPr: state.deliveryPullRequest,
-        sourceCommitSha: sourceHeadSha,
-        documentationCommitSha: commitSha,
-        idempotencyKey: auditIdempotencyKey,
-        generatedAt,
-      },
-    );
-  } catch (auditErr) {
-    // Audit delivery failed — increment the failure counter and open the
-    // delivery-failed gate once the threshold is reached (TAC-13).
-    const prevCount = state.documentationSnapshot?.deliveryFailureCount ?? 0;
-    const newCount = prevCount + 1;
-    state = upsertDocumentationSnapshot(state, {
-      schemaVersion: 1,
-      status: "publishing",
-      idempotencyKey,
-      path: snapshotPath,
-      indexPath,
-      obsidianBasePath,
-      generatedAt,
-      sourceHeadSha,
-      commitSha,
-      auditIdempotencyKey,
-      deliveryFailureCount: newCount,
-    });
-    await store.save(state);
-
-    if (newCount >= MAX_DOC_DELIVERY_FAILURES && !findGate(state, DELIVERY_FAILED_GATE_ID) && store.issueRef) {
-      state = prepareHumanGateIssue({
-        runState: state,
-        gateId: DELIVERY_FAILED_GATE_ID,
-        title: `[Harness] Run documentation delivery failed after ${newCount} attempts`,
-        question: "The run documentation could not be audited after three attempts. Please review and retry or close manually.",
-        context: [
-          `runId: ${state.runId}`,
-          `repository: ${repository}`,
-          `snapshotPath: ${snapshotPath}`,
-          `auditError: ${auditErr instanceof Error ? auditErr.message : String(auditErr)}`,
-        ],
-        decisionContext: undefined,
-        runIssue: store.issueRef,
-      });
-      await store.save(state);
-      state = await publishHumanGateIssue(state, DELIVERY_FAILED_GATE_ID, (checkpoint) => store.save(checkpoint));
-      await store.save(state);
-    }
-    throw auditErr;
-  }
-
-  // Transition to `persisted` only after the audit comment is confirmed.
-  state = upsertDocumentationSnapshot(state, {
-    schemaVersion: 1,
-    status: "persisted",
-    idempotencyKey,
-    path: snapshotPath,
-    indexPath,
-    obsidianBasePath,
-    generatedAt,
-    sourceHeadSha,
-    commitSha,
-    auditIdempotencyKey,
-    auditConfirmedAt,
-  });
-  await store.save(state);
-
-  const following = computeNextAction(state);
-  printResult(
-    "persist-run-documentation",
-    {
-      snapshotPath,
-      indexPath,
-      obsidianBasePath,
-      commitSha,
-      sourceHeadSha,
-      auditConfirmedAt,
-      documentationSnapshot: state.documentationSnapshot,
-      nextAction: following,
-    },
-    following.detail,
-  );
 }
 
 async function cmdAdvance(argv: StoreArgs): Promise<void> {
@@ -1759,7 +1893,7 @@ async function cmdIterationFinish(
   printResult("iteration-finish", { state, nextAction: next }, next.detail);
 }
 
-await yargs(hideBin(process.argv))
+const _harnessCli = yargs(hideBin(process.argv))
   .scriptName("harness")
   .command(
     "pr-bind",
@@ -2184,7 +2318,9 @@ await yargs(hideBin(process.argv))
         .option("index-path", { type: "string", describe: "Path for the run index document (default: docs/runs/RUN-INDEX.md)" })
         .option("obsidian-base-path", { type: "string", describe: "Path for the Obsidian base document (default: docs/runs/Runs.base)" })
         .option("branch", { type: "string", describe: "Default branch to write to (default: main)" })
-        .option("harness-version", { type: "string", describe: "Harness version string to embed in the snapshot metadata" }),
+        .option("harness-version", { type: "string", describe: "Harness version string to embed in the snapshot metadata" })
+        .option("audit-recorder-repo", { type: "string", describe: "owner/repo of the REQ-005 audit recorder (default: same as --repository)" })
+        .option("audit-journal-path", { type: "string", describe: "Path to the audit journal directory in the recorder repo (default: docs/process-audit/journal)" }),
     async (argv) =>
       cmdPersistRunDocumentation({
         repository: argv.repository as string,
@@ -2195,6 +2331,8 @@ await yargs(hideBin(process.argv))
         obsidianBasePath: argv["obsidian-base-path"] as string | undefined,
         branch: argv.branch as string | undefined,
         harnessVersion: argv["harness-version"] as string | undefined,
+        auditRecorderRepo: argv["audit-recorder-repo"] as string | undefined,
+        auditJournalPath: argv["audit-journal-path"] as string | undefined,
       }),
   )
   .command(
@@ -2249,5 +2387,10 @@ await yargs(hideBin(process.argv))
     async (argv) => cmdReconcile({ repository: argv.repository as string }),
   )
   .demandCommand(1)
-  .strict()
-  .parse();
+  .strict();
+
+// Guard: only execute the CLI when this module is the entry point, not when
+// imported by tests or other modules. `VITEST` is set to "true" by vitest.
+if (!process.env["VITEST"]) {
+  await _harnessCli.parse();
+}
