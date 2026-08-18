@@ -53,7 +53,7 @@ import {
 import type { GateDecisionContext, GateType, HumanGateIssueRef, PhaseId, RunState } from "./state/types.js";
 import { SCHEMA_VERSION } from "./state/types.js";
 import { renderRunSnapshot, buildSnapshotFilename } from "./documentation/run-snapshot.js";
-import { generateRunIndex, generateObsidianBase, parseRunIndexEntry } from "./documentation/run-index.js";
+import { generateRunIndex, generateObsidianBase, parseFrontmatter, parseRunIndexEntry } from "./documentation/run-index.js";
 import { validateDocumentationPath, validateSnapshotContent } from "./documentation/path-validator.js";
 import { DEFAULT_RUN_DOCUMENTATION_CONFIG } from "./documentation/run-documentation-config.js";
 
@@ -456,6 +456,7 @@ async function cmdPersistRunDocumentation(argv: {
   repository: string;
   issueNumber: number;
   generatedDirectory?: string;
+  legacyDirectories?: string[];
   indexPath?: string;
   obsidianBasePath?: string;
   branch?: string;
@@ -463,6 +464,7 @@ async function cmdPersistRunDocumentation(argv: {
 }): Promise<void> {
   const { repository, issueNumber, branch = "main" } = argv;
   const generatedDirectory = argv.generatedDirectory ?? DEFAULT_RUN_DOCUMENTATION_CONFIG.generatedDirectory;
+  const legacyDirectories = argv.legacyDirectories ?? DEFAULT_RUN_DOCUMENTATION_CONFIG.legacyDirectories;
   const indexPath = argv.indexPath ?? DEFAULT_RUN_DOCUMENTATION_CONFIG.indexPath;
   const obsidianBasePath = argv.obsidianBasePath ?? DEFAULT_RUN_DOCUMENTATION_CONFIG.obsidianBasePath;
 
@@ -489,6 +491,14 @@ async function cmdPersistRunDocumentation(argv: {
     throw new Error(`run '${state.runId}' is not ready for documentation persistence: ${next.detail}`);
   }
 
+  // ---- Capability preflight (SPEC-012 §11 / TAC-17) ----
+  //
+  // Verify that the branch is accessible and that the token has the write
+  // permission required for the documentation writer. Preflight runs before
+  // any state is mutated so that a missing capability produces a clear error
+  // naming the concrete missing repository setting.
+  await github.preflightRunDocumentationWriter(repository, branch);
+
   const harnessVersion = argv.harnessVersion ?? "unknown";
 
   const trackingIssue: HumanGateIssueRef = {
@@ -497,7 +507,7 @@ async function cmdPersistRunDocumentation(argv: {
     url: `https://github.com/${repository}/issues/${issueNumber}`,
   };
 
-  // ---- Phase 1: Build or reuse the prepared checkpoint (Finding 4 fix) ----
+  // ---- Phase 1: Build or reuse the prepared checkpoint ----
   //
   // `generatedAt`, paths, and idempotency keys must be persisted in state
   // BEFORE the first external write so that every retry produces byte-identical
@@ -541,7 +551,7 @@ async function cmdPersistRunDocumentation(argv: {
     await store.save(state);
   }
 
-  // ---- Phase 2: Atomic three-file commit (Finding 3 fix) ----
+  // ---- Phase 2: Atomic three-file commit ----
   //
   // If we are resuming a `publishing` checkpoint (commit confirmed on origin),
   // skip the write phase and go directly to audit confirmation.
@@ -549,7 +559,7 @@ async function cmdPersistRunDocumentation(argv: {
   let commitSha: string;
 
   if (state.documentationSnapshot?.status === "publishing" && state.documentationSnapshot.commitSha) {
-    // Resume: verify the commit is already on origin.
+    // Resume: verify the commit is already reachable from origin.
     const onOrigin = await github.verifyCommitOnBranch(
       repository,
       branch,
@@ -565,11 +575,52 @@ async function cmdPersistRunDocumentation(argv: {
     commitSha = await performAtomicDocCommit();
   }
 
+  async function readAllRunEntries(
+    parentCommitSha: string,
+    skipPath: string,
+  ): Promise<Array<import("./documentation/run-index.js").RunIndexEntry>> {
+    const allEntries: Array<import("./documentation/run-index.js").RunIndexEntry> = [];
+
+    // Collect file lists from the generated directory and all legacy directories,
+    // deduplicated by path so that generatedDirectory overlapping with a legacy
+    // directory does not produce duplicate entries.
+    const dirsToScan = [generatedDirectory, ...legacyDirectories];
+    const seenPaths = new Set<string>();
+
+    for (const dir of dirsToScan) {
+      const files = await github.listDirectoryMarkdownFiles(repository, dir, parentCommitSha);
+      for (const file of files) {
+        if (file.path === skipPath) continue;           // will be replaced by new content
+        if (file.path.endsWith("-notes.md")) continue; // human-managed notes, not run docs
+        if (seenPaths.has(file.path)) continue;
+        seenPaths.add(file.path);
+
+        // Network reads propagate; only swallow "not found" for entire directories
+        // (handled by listDirectoryMarkdownFiles returning []).
+        const { content } = await github.getFileContent(repository, file.path, parentCommitSha);
+
+        // Fail closed on unknown schema version: SPEC-012 §10 / TAC-10.
+        const fm = parseFrontmatter(content);
+        if (fm && "schema_version" in fm && fm["schema_version"] !== 1) {
+          throw new Error(
+            `run documentation file '${file.path}' has unknown schema_version '${fm["schema_version"]}'; ` +
+            `aborting to avoid silently dropping it from regenerated views`,
+          );
+        }
+
+        const entry = parseRunIndexEntry(file.path, content);
+        if (entry) allEntries.push(entry);
+        // Files without a run_id (e.g. non-run markdown) are silently skipped.
+      }
+    }
+    return allEntries;
+  }
+
   async function performAtomicDocCommit(): Promise<string> {
     const commitMessage = `docs(harness): persist run documentation snapshot for ${state.runId}`;
 
-    // Finding 2 fix: read existing snapshots from generatedDirectory so the
-    // index includes all previously generated runs, not just the new one.
+    const expectedPaths: [string, string, string] = [snapshotPath, indexPath, obsidianBasePath];
+
     const sha = await github.createAtomicMultiFileCommit(
       repository,
       branch,
@@ -584,28 +635,14 @@ async function cmdPersistRunDocumentation(argv: {
           generatedAt,
         });
 
-        // Finding 5 fix: validate snapshot content for PII / secrets / evidence URLs.
+        // Validate snapshot content for PII / secrets / evidence URLs.
         validateSnapshotContent(snapshotContent);
 
-        // Read all existing .md snapshots in the generatedDirectory on the current
-        // branch HEAD so the index is always complete and cumulative.
-        const existingFiles = await github.listDirectoryMarkdownFiles(
-          repository,
-          generatedDirectory,
-          parentCommitSha,
-        );
+        // Read existing run entries from generatedDirectory AND all configured
+        // legacyDirectories so the index is always complete and cumulative.
+        // Files with unknown schema versions cause a hard failure (fail-closed).
+        const allEntries = await readAllRunEntries(parentCommitSha, snapshotPath);
 
-        const allEntries = [];
-        for (const file of existingFiles) {
-          if (file.path === snapshotPath) continue; // will be replaced by new content
-          try {
-            const { content } = await github.getFileContent(repository, file.path, parentCommitSha);
-            const entry = parseRunIndexEntry(file.path, content);
-            if (entry) allEntries.push(entry);
-          } catch {
-            // Skip unreadable files; don't fail the whole commit.
-          }
-        }
         // Add the new/updated snapshot entry.
         const newEntry = parseRunIndexEntry(snapshotPath, snapshotContent);
         if (newEntry) allEntries.push(newEntry);
@@ -621,9 +658,10 @@ async function cmdPersistRunDocumentation(argv: {
       },
       commitMessage,
       3,
+      expectedPaths,
     );
 
-    // Verify the commit landed on origin/<branch> immediately after push.
+    // Verify the commit landed on origin/<branch> (exact or as ancestor).
     const confirmed = await github.verifyCommitOnBranch(repository, branch, sha);
     if (!confirmed) {
       throw new Error(
@@ -633,6 +671,11 @@ async function cmdPersistRunDocumentation(argv: {
 
     return sha;
   }
+
+  // Constant used in the audit failure handler below (TAC-13).
+  const MAX_DOC_DELIVERY_FAILURES = 3;
+  const DELIVERY_FAILED_GATE_ID = "run-documentation-delivery-failed";
+
 
   // Save `publishing` checkpoint (commit confirmed on origin) before audit.
   state = upsertDocumentationSnapshot(state, {
@@ -649,29 +692,74 @@ async function cmdPersistRunDocumentation(argv: {
   });
   await store.save(state);
 
-  // ---- Phase 3: Audit confirmation (Finding 1 fix) ----
+  // ---- Phase 3: Audit confirmation (SPEC-012 §8) ----
   //
   // Post a structured REQ-005-correlated DOCUMENTATION_UPDATE record to the
-  // tracking issue. Only after this confirmed external GitHub effect is
-  // `auditConfirmedAt` recorded in run state.
+  // tracking issue. The function is idempotent (scans existing comments) and
+  // returns GitHub's confirmed `created_at` timestamp, not a local fabrication.
+  // Only after this confirmed external GitHub effect is `auditConfirmedAt`
+  // recorded in run state.
 
-  const auditConfirmedAt = await github.postDocumentationAuditComment(
-    repository,
-    issueNumber,
-    {
-      runId: state.runId,
-      processKennung: "DOCUMENTATION_UPDATE",
-      actor: "GITHUB_ACTIONS",
-      role: "GITHUB_ACTIONS_TOKEN",
-      correlationRunId: state.runId,
-      correlationIssue: `${repository}#${issueNumber}`,
-      deliveryPr: state.deliveryPullRequest,
-      sourceCommitSha: sourceHeadSha,
-      documentationCommitSha: commitSha,
-      idempotencyKey: auditIdempotencyKey,
+  let auditConfirmedAt: string;
+  try {
+    auditConfirmedAt = await github.postDocumentationAuditComment(
+      repository,
+      issueNumber,
+      {
+        runId: state.runId,
+        processKennung: "DOCUMENTATION_UPDATE",
+        actor: "GITHUB_ACTIONS",
+        role: "GITHUB_ACTIONS_TOKEN",
+        correlationRunId: state.runId,
+        correlationIssue: `${repository}#${issueNumber}`,
+        deliveryPr: state.deliveryPullRequest,
+        sourceCommitSha: sourceHeadSha,
+        documentationCommitSha: commitSha,
+        idempotencyKey: auditIdempotencyKey,
+        generatedAt,
+      },
+    );
+  } catch (auditErr) {
+    // Audit delivery failed — increment the failure counter and open the
+    // delivery-failed gate once the threshold is reached (TAC-13).
+    const prevCount = state.documentationSnapshot?.deliveryFailureCount ?? 0;
+    const newCount = prevCount + 1;
+    state = upsertDocumentationSnapshot(state, {
+      schemaVersion: 1,
+      status: "publishing",
+      idempotencyKey,
+      path: snapshotPath,
+      indexPath,
+      obsidianBasePath,
       generatedAt,
-    },
-  );
+      sourceHeadSha,
+      commitSha,
+      auditIdempotencyKey,
+      deliveryFailureCount: newCount,
+    });
+    await store.save(state);
+
+    if (newCount >= MAX_DOC_DELIVERY_FAILURES && !findGate(state, DELIVERY_FAILED_GATE_ID) && store.issueRef) {
+      state = prepareHumanGateIssue({
+        runState: state,
+        gateId: DELIVERY_FAILED_GATE_ID,
+        title: `[Harness] Run documentation delivery failed after ${newCount} attempts`,
+        question: "The run documentation could not be audited after three attempts. Please review and retry or close manually.",
+        context: [
+          `runId: ${state.runId}`,
+          `repository: ${repository}`,
+          `snapshotPath: ${snapshotPath}`,
+          `auditError: ${auditErr instanceof Error ? auditErr.message : String(auditErr)}`,
+        ],
+        decisionContext: undefined,
+        runIssue: store.issueRef,
+      });
+      await store.save(state);
+      state = await publishHumanGateIssue(state, DELIVERY_FAILED_GATE_ID, (checkpoint) => store.save(checkpoint));
+      await store.save(state);
+    }
+    throw auditErr;
+  }
 
   // Transition to `persisted` only after the audit comment is confirmed.
   state = upsertDocumentationSnapshot(state, {
@@ -2092,6 +2180,7 @@ await yargs(hideBin(process.argv))
         .option("repository", { type: "string", demandOption: true, describe: "owner/repo of the target repository" })
         .option("issue-number", { type: "number", demandOption: true, describe: "Tracking issue number (harness:run issue)" })
         .option("generated-directory", { type: "string", describe: "Directory for generated snapshots (default: docs/runs/generated)" })
+        .option("legacy-directory", { type: "array", string: true, describe: "Legacy directory/directories to scan for existing run documents (may be specified multiple times; default: docs/runs)" })
         .option("index-path", { type: "string", describe: "Path for the run index document (default: docs/runs/RUN-INDEX.md)" })
         .option("obsidian-base-path", { type: "string", describe: "Path for the Obsidian base document (default: docs/runs/Runs.base)" })
         .option("branch", { type: "string", describe: "Default branch to write to (default: main)" })
@@ -2101,6 +2190,7 @@ await yargs(hideBin(process.argv))
         repository: argv.repository as string,
         issueNumber: argv["issue-number"] as number,
         generatedDirectory: argv["generated-directory"] as string | undefined,
+        legacyDirectories: argv["legacy-directory"] as string[] | undefined,
         indexPath: argv["index-path"] as string | undefined,
         obsidianBasePath: argv["obsidian-base-path"] as string | undefined,
         branch: argv.branch as string | undefined,

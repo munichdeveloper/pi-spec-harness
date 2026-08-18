@@ -205,6 +205,12 @@ export interface DocumentationSnapshotCheckpoint {
   auditIdempotencyKey: string;
   /** ISO timestamp recorded once the audit event is confirmed. */
   auditConfirmedAt?: string;
+  /**
+   * Number of write-or-audit delivery attempts that have failed so far.
+   * Used by the reconciler to open exactly one `run-documentation-delivery-failed`
+   * Human Gate after three failures. SPEC-012, decision 9 / TAC-13.
+   */
+  deliveryFailureCount?: number;
 }
 
 export interface RunState {

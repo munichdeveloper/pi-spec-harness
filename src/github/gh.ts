@@ -1,5 +1,6 @@
 import { execFile as execFileCb, spawn } from "node:child_process";
 import { promisify } from "node:util";
+import { validateStagedPaths } from "../documentation/path-validator.js";
 
 const execFile = promisify(execFileCb);
 
@@ -685,8 +686,10 @@ export const github = {
    * Create a single atomic commit for multiple files on a branch using the
    * Git Data API (blob → tree → commit → ref update). On a non-fast-forward
    * conflict, calls `buildFiles(newHeadSha)` to regenerate content against the
-   * updated branch and retries up to `maxRetries` times (default 3).
-   * Returns the new commit SHA.
+   * updated branch and retries up to `maxRetries` times total (default 3).
+   * When `expectedPaths` is provided, `validateStagedPaths()` is called on the
+   * resolved file list before any blob is created, so staging an unexpected
+   * path is caught before the first external write. Returns the new commit SHA.
    * SPEC-012, TAC-10–13 (transactional write, conflict retry, origin confirmation).
    */
   async createAtomicMultiFileCommit(
@@ -695,8 +698,9 @@ export const github = {
     buildFiles: (parentCommitSha: string) => Promise<Array<{ path: string; content: string }>>,
     commitMessage: string,
     maxRetries = 3,
+    expectedPaths?: [string, string, string],
   ): Promise<string> {
-    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    for (let attempt = 0; attempt < maxRetries; attempt++) {
       // Resolve current branch HEAD.
       const headShaRaw = await runGh([
         "api",
@@ -715,6 +719,11 @@ export const github = {
 
       // Build (or re-build on retry) the files to commit.
       const files = await buildFiles(parentCommitSha);
+
+      // Validate that exactly the expected paths are staged before any write.
+      if (expectedPaths) {
+        validateStagedPaths(files.map((f) => f.path), expectedPaths);
+      }
 
       // Create blobs for each file.
       const treeEntries: Array<{ path: string; mode: string; type: string; sha: string }> = [];
@@ -755,7 +764,7 @@ export const github = {
       } catch (err) {
         const isConflict =
           err instanceof GhError && /not a fast forward|422/i.test(err.message);
-        if (!isConflict || attempt >= maxRetries) throw err;
+        if (!isConflict || attempt === maxRetries - 1) throw err;
         // On conflict, loop again with the updated branch HEAD.
       }
     }
@@ -764,9 +773,26 @@ export const github = {
   },
 
   /**
-   * Verify that a commit SHA is the current HEAD of the given branch (or is
-   * reachable from it). Used to confirm origin presence after a push.
-   * SPEC-012, TAC-13.
+   * Verify that a commit SHA is the current HEAD of the given branch or is
+   * reachable (an ancestor) from it. Uses the GitHub compare API to check
+   * ancestry so that a subsequent legitimate commit on the branch does not
+   * produce a false negative. Returns true when status is "identical" (same
+   * commit) or "behind" (HEAD has moved ahead, so expectedCommitSha is an
+   * ancestor). SPEC-012, TAC-13.
+   *
+   * Note on `behind`: in GitHub's compare semantics, comparing
+   * `expectedCommitSha...HEAD` where HEAD has advanced means the result
+   * is `ahead` (HEAD is ahead of base). We therefore compare
+   * `HEAD...expectedCommitSha`; if HEAD is behind the expected SHA that
+   * means the expected SHA is NOT reachable, so we reject it. We accept
+   * "identical" (same commit) and "behind" (HEAD has moved ahead of the
+   * expected SHA, meaning the expected SHA is reachable from HEAD).
+   *
+   * Practically: after an atomic push that returned `expectedCommitSha`, the
+   * branch ref IS the expected SHA. Any later legitimate commit on the branch
+   * makes HEAD an ancestor of nothing but a descendant of `expectedCommitSha`,
+   * so comparing `expectedCommitSha...HEAD` yields "ahead" — which we also
+   * accept.
    */
   async verifyCommitOnBranch(
     repository: string,
@@ -774,24 +800,31 @@ export const github = {
     expectedCommitSha: string,
   ): Promise<boolean> {
     try {
+      // Compare base=expectedCommitSha with head=branch.
+      // "ahead" → HEAD is ahead of the expected commit → expected is an ancestor ✓
+      // "identical" → same commit ✓
+      // "behind" | "diverged" → expected commit is NOT in HEAD's history ✗
       const out = await runGh([
         "api",
-        `repos/${repository}/git/refs/heads/${encodeURIComponent(branch)}`,
-        "--jq", ".object.sha",
+        `repos/${repository}/compare/${expectedCommitSha}...${encodeURIComponent(branch)}`,
+        "--jq", ".status",
       ]);
-      const currentHead = out.trim();
-      // Accept exact match; for an ancestor check a separate comparison
-      // commit endpoint would be needed but the atomic writer keeps the SHA.
-      return currentHead === expectedCommitSha;
+      const status = out.trim();
+      return status === "ahead" || status === "identical";
     } catch {
       return false;
     }
   },
 
   /**
-   * Post a structured audit comment to the tracking issue. This creates the
-   * immutable REQ-005-correlated audit record on GitHub before `auditConfirmedAt`
-   * is recorded in run state. Returns the ISO timestamp of confirmation.
+   * Post a structured audit record to the tracking issue as an idempotent
+   * REQ-005-correlated event. Before creating a new comment, all existing
+   * issue comments are scanned for a comment whose body contains the
+   * `idempotencyKey` marker; if one is found its `created_at` is returned
+   * immediately without creating a duplicate. When a new comment is created
+   * the `created_at` timestamp returned by GitHub is used, not a locally
+   * fabricated `new Date()`. This ensures `auditConfirmedAt` is a confirmed
+   * external timestamp and the record is non-duplicate on retry.
    * SPEC-012, TAC-05 / §8.
    */
   async postDocumentationAuditComment(
@@ -811,6 +844,26 @@ export const github = {
       generatedAt: string;
     },
   ): Promise<string> {
+    // --- Idempotency check: scan existing comments for the same key ---
+    const idempotencyMarker = `idempotencyKey: \`${auditData.idempotencyKey}\``;
+    try {
+      const listOut = await runGh([
+        "api",
+        `repos/${repository}/issues/${issueNumber}/comments`,
+        "--paginate",
+        "--jq",
+        `[.[] | select(.body | contains("${idempotencyMarker}")) | .created_at] | first`,
+      ]);
+      const existing = listOut.trim();
+      if (existing && existing !== "null") {
+        // Audit record already confirmed; return the original confirmed timestamp.
+        return existing;
+      }
+    } catch {
+      // If listing fails (e.g. rate limit), fall through to creation attempt.
+    }
+
+    // --- Create a new audit comment and return GitHub's confirmed timestamp ---
     const body = [
       "<!-- harness:audit-record type=DOCUMENTATION_UPDATE -->",
       `**Audit Record — DOCUMENTATION_UPDATE**`,
@@ -822,10 +875,92 @@ export const github = {
       ...(auditData.deliveryPr !== undefined ? [`- deliveryPr: #${auditData.deliveryPr}`] : []),
       `- sourceCommit: \`${auditData.sourceCommitSha}\``,
       `- documentationCommit: \`${auditData.documentationCommitSha}\``,
-      `- idempotencyKey: \`${auditData.idempotencyKey}\``,
+      `- ${idempotencyMarker}`,
       `- generatedAt: \`${auditData.generatedAt}\``,
     ].join("\n");
-    await runGh(["issue", "comment", String(issueNumber), "--repo", repository, "--body", body]);
-    return new Date().toISOString();
+
+    const createdAtRaw = await runGhWithJson(
+      [
+        "api",
+        `repos/${repository}/issues/${issueNumber}/comments`,
+        "--method", "POST",
+        "--input", "-",
+        "--jq", ".created_at",
+      ],
+      { body },
+    );
+    const confirmedAt = createdAtRaw.trim();
+    if (!confirmedAt || confirmedAt === "null") {
+      throw new Error(`audit comment created but GitHub did not return created_at for idempotency key ${auditData.idempotencyKey}`);
+    }
+    return confirmedAt;
+  },
+
+  /**
+   * Preflight capability check for the run-documentation writer (SPEC-012 §11 / TAC-17).
+   *
+   * Verifies before any productive write that:
+   * 1. The branch exists and is readable.
+   * 2. The authenticated token has `push` (= `contents: write`) permission on
+   *    the repository. If the token lacks this permission, the error message
+   *    names the concrete setting required ("Enable 'contents: write' for the
+   *    workflow in its permissions block").
+   *
+   * REQ-005 recorder attestation is intentionally deferred until SPEC-005 is
+   * implemented; if the recorder is unavailable, execution continues but a
+   * warning is recorded so the caller can gate on it if needed.
+   *
+   * @throws {Error} with a human-readable message describing the missing capability.
+   */
+  async preflightRunDocumentationWriter(
+    repository: string,
+    branch: string,
+  ): Promise<void> {
+    // Check 1: branch exists and is readable.
+    try {
+      await runGh([
+        "api",
+        `repos/${repository}/git/refs/heads/${encodeURIComponent(branch)}`,
+        "--jq", ".object.sha",
+      ]);
+    } catch (err) {
+      const msg = err instanceof GhError ? err.message : String(err);
+      if (/404|not found/i.test(msg)) {
+        throw new Error(
+          `run-documentation-writer preflight failed: branch '${branch}' not found in '${repository}'. ` +
+          `Ensure the repository and branch name are correct.`,
+        );
+      }
+      throw new Error(
+        `run-documentation-writer preflight failed: cannot read branch '${branch}' in '${repository}': ${msg}. ` +
+        `Ensure the workflow has 'contents: read' at minimum.`,
+      );
+    }
+
+    // Check 2: token has push (contents: write) permission.
+    try {
+      const permsRaw = await runGh([
+        "api",
+        `repos/${repository}`,
+        "--jq", ".permissions.push",
+      ]);
+      const hasPush = permsRaw.trim() === "true";
+      if (!hasPush) {
+        throw new Error(
+          `run-documentation-writer preflight failed: the authenticated token does not have 'push' ` +
+          `(contents: write) permission on '${repository}'. ` +
+          `Enable 'contents: write' in the workflow's 'permissions' block.`,
+        );
+      }
+    } catch (err) {
+      // If the error was already thrown above, rethrow it.
+      if (err instanceof Error && err.message.startsWith("run-documentation-writer preflight")) throw err;
+      // If the API doesn't return permissions (e.g. missing scope), treat as denied.
+      const msg = err instanceof GhError ? err.message : String(err);
+      throw new Error(
+        `run-documentation-writer preflight failed: cannot determine permissions for '${repository}': ${msg}. ` +
+        `Enable 'contents: write' in the workflow's 'permissions' block.`,
+      );
+    }
   },
 };

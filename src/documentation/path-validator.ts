@@ -140,8 +140,12 @@ const PII_PATTERNS: RegExp[] = [
   // Email addresses
   /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/,
   // Phone numbers in common formats (+1 555-555-5555, (555) 555-5555 etc.)
-  // Word-boundary anchors prevent false positives on numeric sequences.
-  /\b(?:\+\d{1,3}[\s.-])?\(?\d{3}\)?[\s.-]\d{3}[\s.-]\d{4}\b/,
+  // Use a non-word lookbehind instead of \b so that a leading "+" is also
+  // matched when the number starts at the beginning of a string or after
+  // whitespace (e.g. "+49 123 456 7890"). A plain \b before an optional "+"
+  // would not match at a position where the next character is "+" (a non-word
+  // character), allowing international numbers to evade detection.
+  /(?<!\w)(?:\+\d{1,3}[\s.-])?\(?\d{3}\)?[\s.-]\d{3}[\s.-]\d{4}\b/,
 ];
 
 /**
