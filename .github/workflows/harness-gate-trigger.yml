@@ -61,18 +61,27 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
-          result="$(
-            npm run harness -- resume \
-              --repository "${{ github.repository }}" \
-              --run-id "${{ steps.run.outputs.run_id }}"
-          )"
-          printf '%s\n' "$result"
-          action="$(printf '%s\n' "$result" | sed -n '/^{/,$p' | jq -r '.result.nextAction.action')"
-          if [[ "$action" == "advance-phase" ]]; then
-            npm run harness -- orchestrate \
-              --repository "${{ github.repository }}" \
-              --run-id "${{ steps.run.outputs.run_id }}"
-          fi
+          npm run harness -- resume \
+            --repository "${{ github.repository }}" \
+            --run-id "${{ steps.run.outputs.run_id }}"
+
+      - name: Reconcile delivery PR merge evidence (approval-first path)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          npm run harness -- delivery-pr-merge-effect \
+            --repository "${{ github.repository }}" \
+            --run-id "${{ steps.run.outputs.run_id }}"
+
+      - name: Orchestrate after gate decision
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          npm run harness -- orchestrate \
+            --repository "${{ github.repository }}" \
+            --run-id "${{ steps.run.outputs.run_id }}"
 
   orchestrate-on-pr-event:
     # Orchestrate after implementation PR is merged or CI/review events occur

@@ -18,6 +18,14 @@ describe("GitHub workflow contracts", () => {
     expect(workflow).not.toContain("git push");
   });
 
+  it("resume job runs delivery-pr-merge-effect reconciliation before orchestration (approval-first path)", async () => {
+    const workflow = await readFile(".github/workflows/harness-gate-trigger.yml", "utf8");
+    const resumeJob = workflow.slice(workflow.indexOf("  resume:"), workflow.indexOf("\n  orchestrate-on-pr-event:"));
+
+    expect(resumeJob).toContain("delivery-pr-merge-effect");
+    expect(resumeJob.indexOf("delivery-pr-merge-effect")).toBeLessThan(resumeJob.indexOf("npm run harness -- orchestrate"));
+  });
+
   it("triggers on pull_request closed events for implementation PR orchestration (TAC-12)", async () => {
     const workflow = await readFile(".github/workflows/harness-gate-trigger.yml", "utf8");
     const prJob = workflow.slice(workflow.indexOf("  orchestrate-on-pr-event:"), workflow.indexOf("\n  reconcile:"));

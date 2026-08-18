@@ -39,6 +39,7 @@ import {
   findPendingGateCleanup,
   findPendingGatePublication,
   finishIteration,
+  findPassedMergeApprovalGate,
   initRunState,
   needsGateReconciliation,
   recordDeliveryMergeEffect,
@@ -1187,7 +1188,16 @@ async function cmdDeliveryPrMergeEffect(
 
   const classification = classifyDeliveryPrMergeEffect(state, argv.pullRequest);
   if (classification.kind === "unbound") {
-    throw new Error(`no delivery PR bound on run '${state.runId}'`);
+    if (argv.pullRequest !== undefined) {
+      throw new Error(`no delivery PR bound on run '${state.runId}'`);
+    }
+    const next = computeNextAction(state);
+    printResult(
+      "delivery-pr-merge-effect",
+      { skipped: "no-delivery-pr-bound" },
+      next.detail,
+    );
+    return;
   }
   if (classification.kind === "skip") {
     const next = computeNextAction(state);
@@ -1217,7 +1227,17 @@ async function cmdDeliveryPrMergeEffect(
   };
 
   if (prData.state !== "MERGED") {
-    throw new Error(`delivery PR #${deliveryPr} is not merged (state: '${prData.state ?? "unknown"}')`);
+    const next = computeNextAction(state);
+    printResult(
+      "delivery-pr-merge-effect",
+      {
+        deliveryPullRequest: deliveryPr,
+        pending: "delivery-pr-not-yet-merged",
+        prState: prData.state ?? "unknown",
+      },
+      next.detail,
+    );
+    return;
   }
   if (!prData.headRefOid) {
     throw new Error(`delivery PR #${deliveryPr} did not expose a HEAD SHA`);
@@ -1227,6 +1247,19 @@ async function cmdDeliveryPrMergeEffect(
   }
   if (!prData.mergeCommit?.oid) {
     throw new Error(`delivery PR #${deliveryPr} did not expose a merge commit SHA`);
+  }
+
+  if (!findPassedMergeApprovalGate(state)) {
+    const next = computeNextAction(state);
+    printResult(
+      "delivery-pr-merge-effect",
+      {
+        deliveryPullRequest: deliveryPr,
+        pending: "no-passed-merge-approval-gate",
+      },
+      next.detail,
+    );
+    return;
   }
 
   state = recordDeliveryMergeEffect(state, {
