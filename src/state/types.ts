@@ -199,6 +199,13 @@ export interface DocumentationSnapshotCheckpoint {
   generatedAt: string;
   /** HEAD SHA of the source branch used to render the snapshot. */
   sourceHeadSha: string;
+  /**
+   * SHA-256 hex digest of each expected file's content, keyed by relative path.
+   * Persisted in the `prepared` checkpoint before any external write so that
+   * a retry can reconcile an already-landed commit by comparing origin content
+   * against the expected bytes (crash-after-push recovery). SPEC-012, decision 2a.
+   */
+  contentHashes?: Record<string, string>;
   /** SHA of the documentation commit once the push is confirmed. */
   commitSha?: string;
   /** Idempotency key for the follow-up audit event (REQ-005). */

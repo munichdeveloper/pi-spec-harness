@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { readFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import yargs, { type Argv } from "yargs";
 import { hideBin } from "yargs/helpers";
 import {
@@ -40,6 +41,7 @@ import {
   findPendingGatePublication,
   finishIteration,
   findPassedMergeApprovalGate,
+  formatCanonicalRunId,
   initRunState,
   needsGateReconciliation,
   recordDeliveryMergeEffect,
@@ -75,6 +77,9 @@ export interface WriterGithubAdapter {
   ): Promise<string>;
   listDirectoryMarkdownFiles(repository: string, dirPath: string, ref: string): Promise<Array<{ name: string; path: string }>>;
   getFileContent(repository: string, path: string, ref: string): Promise<{ content: string; blobSha: string }>;
+  getFileContentIfExists(repository: string, path: string, ref?: string): Promise<{ content: string; blobSha: string } | undefined>;
+  /** Returns the SHA of the most recent commit on `branch` that touched `filePath`, or undefined if not found. */
+  getLatestCommitForPath(repository: string, branch: string, filePath: string): Promise<string | undefined>;
   dispatchProcessAuditEnvelopeV1(recorderRepository: string, payload: {
     schema_version: 1;
     occurred_at: string;
@@ -629,6 +634,23 @@ export async function cmdPersistRunDocumentation(argv: {
   const sourceHeadSha = isResuming ? existing.sourceHeadSha : await gh.getBranchSha(repository, branch);
 
   if (!isResuming) {
+    // Pre-compute the snapshot content (deterministic: depends only on state,
+    // not on origin). Its SHA-256 hash is persisted in the `prepared`
+    // checkpoint to enable crash-after-push reconciliation: if the process dies
+    // after the atomic commit but before the `publishing` checkpoint is saved,
+    // the next attempt can detect the already-landed commit by comparing
+    // origin's snapshot content against this hash. SPEC-012, TAC-11.
+    const preparedSnapshotContent = renderRunSnapshot({
+      state,
+      trackingIssue,
+      repositoryDefaultBranch: branch,
+      harnessVersion: argv.harnessVersion ?? "unknown",
+      generatedAt,
+    });
+    const preparedContentHashes: Record<string, string> = {
+      [snapshotPath]: createHash("sha256").update(preparedSnapshotContent, "utf8").digest("hex"),
+    };
+
     // Persist the `prepared` checkpoint BEFORE the first external write.
     state = upsertDocumentationSnapshot(state, {
       schemaVersion: 1,
@@ -639,6 +661,7 @@ export async function cmdPersistRunDocumentation(argv: {
       obsidianBasePath,
       generatedAt,
       sourceHeadSha,
+      contentHashes: preparedContentHashes,
       auditIdempotencyKey,
     });
     await store.save(state);
@@ -679,6 +702,31 @@ export async function cmdPersistRunDocumentation(argv: {
       commitSha = onOrigin
         ? state.documentationSnapshot.commitSha
         : await performAtomicDocCommit();
+    } else if (
+      state.documentationSnapshot?.status === "prepared" &&
+      state.documentationSnapshot.contentHashes?.[snapshotPath]
+    ) {
+      // Crash-after-push reconciliation (SPEC-012, TAC-11): the `prepared`
+      // checkpoint has no commitSha, but a prior attempt may have already
+      // landed the three-file commit. Check origin's snapshot content against
+      // the stored hash; if it matches, adopt the existing commit SHA.
+      const expectedHash = state.documentationSnapshot.contentHashes[snapshotPath];
+      const originFile = await gh.getFileContentIfExists(repository, snapshotPath);
+      if (originFile) {
+        const originHash = createHash("sha256").update(originFile.content, "utf8").digest("hex");
+        if (originHash === expectedHash) {
+          const adoptedSha = await gh.getLatestCommitForPath(repository, branch, snapshotPath);
+          if (adoptedSha) {
+            commitSha = adoptedSha;
+          } else {
+            commitSha = await performAtomicDocCommit();
+          }
+        } else {
+          commitSha = await performAtomicDocCommit();
+        }
+      } else {
+        commitSha = await performAtomicDocCommit();
+      }
     } else {
       commitSha = await performAtomicDocCommit();
     }
@@ -693,6 +741,7 @@ export async function cmdPersistRunDocumentation(argv: {
       obsidianBasePath,
       generatedAt,
       sourceHeadSha,
+      contentHashes: state.documentationSnapshot?.contentHashes,
       commitSha,
       auditIdempotencyKey,
     });
@@ -710,7 +759,7 @@ export async function cmdPersistRunDocumentation(argv: {
       {
         schema_version: 1,
         occurred_at: generatedAt,
-        process_instance: state.runId,
+        process_instance: formatCanonicalRunId(repository, issueNumber).processInstance,
         idempotency_key: auditIdempotencyKey,
         process_code: "DOCUMENTATION_UPDATE",
         actor: "GITHUB_ACTIONS",

@@ -774,6 +774,30 @@ export const github = {
   },
 
   /**
+   * Returns the SHA of the most recent commit on `branch` that touched the
+   * given `filePath`, or `undefined` if the file has never been committed on
+   * that branch. Used by the crash-after-push reconciler to adopt an already-
+   * landed documentation commit without creating a duplicate. SPEC-012, TAC-11.
+   */
+  async getLatestCommitForPath(
+    repository: string,
+    branch: string,
+    filePath: string,
+  ): Promise<string | undefined> {
+    try {
+      const out = await runGh([
+        "api",
+        `repos/${repository}/commits?sha=${encodeURIComponent(branch)}&path=${encodeURIComponent(filePath)}&per_page=1`,
+        "--jq", ".[0].sha // empty",
+      ]);
+      const sha = out.trim();
+      return sha.length > 0 ? sha : undefined;
+    } catch {
+      return undefined;
+    }
+  },
+
+  /**
    * Verify that a commit SHA is the current HEAD of the given branch or is
    * reachable (an ancestor) from it. Uses the GitHub compare API to check
    * ancestry so that a subsequent legitimate commit on the branch does not

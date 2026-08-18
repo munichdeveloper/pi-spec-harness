@@ -18,6 +18,7 @@
  */
 
 import { describe, expect, it } from "vitest";
+import { createHash } from "node:crypto";
 import {
   computeNextAction,
   formatCanonicalRunId,
@@ -1149,6 +1150,8 @@ function makeFakeGithub(overrides: Partial<WriterGithubAdapter> = {}): WriterGit
     },
     async listDirectoryMarkdownFiles() { return []; },
     async getFileContent() { return { content: "", blobSha: "x".repeat(40) }; },
+    async getFileContentIfExists() { return undefined; },
+    async getLatestCommitForPath() { return undefined; },
     async dispatchProcessAuditEnvelopeV1(recorder, payload) {
       dispatchedEvents.push({ recorder, payload });
       // Simulate recorder immediately writing the journal entry.
@@ -1214,6 +1217,126 @@ describe("TAC-18 cmdPersistRunDocumentation integration via injected adapter", (
     const event = gh.dispatchedEvents[0] as { recorder: string; payload: { process_code: string } };
     expect(event.recorder).toBe("org/repo");
     expect(event.payload.process_code).toBe("DOCUMENTATION_UPDATE");
+  });
+
+  it("process_instance uses qualified canonical PI-<REPO>-RUN-xxxx format", async () => {
+    const store = new MemoryStateStore(mergeReadyState());
+    const gh = makeFakeGithub();
+
+    await cmdPersistRunDocumentation({
+      repository: "org/my-repo",
+      issueNumber: 56,
+      branch: "main",
+      _githubAdapter: gh,
+      _storeFactory: () => store as never,
+    });
+
+    const event = gh.dispatchedEvents[0] as { payload: { process_instance: string } };
+    // formatCanonicalRunId("org/my-repo", 56) → processInstance = "PI-ORG-MY-REPO-RUN-0056"
+    expect(event.payload.process_instance).toBe("PI-ORG-MY-REPO-RUN-0056");
+  });
+
+  it("prepared checkpoint contains contentHashes with snapshot path key", async () => {
+    const state0 = mergeReadyState();
+    let savedStates: RunState[] = [];
+    const store = new MemoryStateStore(state0);
+    const origSave = store.save.bind(store);
+    store.save = async (s) => { savedStates.push(s); return origSave(s); };
+    const gh = makeFakeGithub();
+
+    await cmdPersistRunDocumentation({
+      repository: "org/repo",
+      issueNumber: 56,
+      branch: "main",
+      _githubAdapter: gh,
+      _storeFactory: () => store as never,
+    });
+
+    // The first save should be the `prepared` checkpoint with contentHashes.
+    const preparedState = savedStates.find(s => s.documentationSnapshot?.status === "prepared");
+    expect(preparedState).toBeDefined();
+    const hashes = preparedState!.documentationSnapshot?.contentHashes;
+    expect(hashes).toBeDefined();
+    const keys = Object.keys(hashes!);
+    expect(keys).toHaveLength(1);
+    // The snapshot path key must be present and be a 64-char hex SHA-256 digest.
+    expect(keys[0]).toMatch(/\.md$/);
+    expect(hashes![keys[0]]).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it("crash-after-push reconciliation: adopts already-landed commit when hash matches", async () => {
+    // Simulate: prepared checkpoint saved, then crash before publishing save.
+    // On retry, origin already has the snapshot with matching content.
+    const state0 = mergeReadyState();
+    const generatedAt = "2026-01-01T00:00:00.000Z";
+    const snapshotPath = "docs/runs/generated/RUN-0056-spec-012.md";
+    const idemKey = "persist-run-doc-RUN-0056-56";
+    const auditIdemKey = "audit-run-doc-RUN-0056-56";
+    const sourceHeadSha = "aaa".repeat(14) + "aa";
+
+    // Build the expected snapshot content (same way the command does).
+    const { renderRunSnapshot } = await import("../src/documentation/run-snapshot.js");
+    const snapshotContent = renderRunSnapshot({
+      state: state0,
+      trackingIssue: { repository: "org/repo", number: 56, url: "https://github.com/org/repo/issues/56" },
+      repositoryDefaultBranch: "main",
+      harnessVersion: "unknown",
+      generatedAt,
+    });
+    const expectedHash = createHash("sha256").update(snapshotContent, "utf8").digest("hex");
+    const existingCommitSha = "adopted".padEnd(40, "0").slice(0, 40);
+
+    const preparedState = upsertDocumentationSnapshot(state0, {
+      schemaVersion: 1,
+      status: "prepared",
+      idempotencyKey: idemKey,
+      auditIdempotencyKey: auditIdemKey,
+      path: snapshotPath,
+      indexPath: "docs/runs/RUN-INDEX.md",
+      obsidianBasePath: "docs/runs/Runs.base",
+      generatedAt,
+      sourceHeadSha,
+      contentHashes: { [snapshotPath]: expectedHash },
+    });
+
+    const store = new MemoryStateStore(preparedState);
+    let atomicCommitCallCount = 0;
+    const journalEntries = new Map<string, string>();
+    const gh = makeFakeGithub({
+      async getBranchSha() { return sourceHeadSha; },
+      async verifyCommitOnBranch() { return true; },
+      async getFileContentIfExists(_repo, path) {
+        if (path === snapshotPath) return { content: snapshotContent, blobSha: "x".repeat(40) };
+        return undefined;
+      },
+      async getLatestCommitForPath() { return existingCommitSha; },
+      async createAtomicMultiFileCommit() {
+        atomicCommitCallCount++;
+        return "new-commit-sha".padEnd(40, "x").slice(0, 40);
+      },
+      async dispatchProcessAuditEnvelopeV1(_repo, payload) {
+        journalEntries.set(payload.idempotency_key, `confirmed_at: "2026-01-01T00:01:00Z"`);
+      },
+      async confirmAuditEventInJournal(_repo, _dir, key) {
+        const e = journalEntries.get(key);
+        if (!e) throw new Error("not found");
+        return "2026-01-01T00:01:00Z";
+      },
+    });
+
+    await cmdPersistRunDocumentation({
+      repository: "org/repo",
+      issueNumber: 56,
+      branch: "main",
+      _githubAdapter: gh,
+      _storeFactory: () => store as never,
+    });
+
+    // Must NOT create a new commit when origin already has matching content.
+    expect(atomicCommitCallCount).toBe(0);
+    // The adopted commit SHA must appear in the final persisted checkpoint.
+    expect(store.state.documentationSnapshot?.commitSha).toBe(existingCommitSha);
+    expect(store.state.documentationSnapshot?.status).toBe("persisted");
   });
 
   // --- Duplicate delivery no-op (TAC-11 with origin + journal re-confirmation) ---

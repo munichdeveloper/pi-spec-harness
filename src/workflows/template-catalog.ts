@@ -240,11 +240,11 @@ export function renderRunDocumentationFinalizer(options: RunDocumentationFinaliz
   const generatedDirectory = options.generatedDirectory ?? "docs/runs/generated";
   const indexPath = options.indexPath ?? "docs/runs/RUN-INDEX.md";
   const obsidianBasePath = options.obsidianBasePath ?? "docs/runs/Runs.base";
-  // Build legacy-directory lines: one per configured entry, or omit the
-  // section entirely so the CLI default ("docs/runs") applies.
-  const legacyDirLines =
+  // Build legacy-directories as a JSON array string so the reusable workflow
+  // can parse, validate, and pass each entry safely via a Bash array.
+  const legacyDirsJson =
     options.legacyDirectories && options.legacyDirectories.length > 0
-      ? options.legacyDirectories.map((d) => `            --legacy-directory "${d}" \\`).join("\n")
+      ? JSON.stringify(options.legacyDirectories)
       : "";
 
   return `${RUN_DOCUMENTATION_FINALIZER_MARKER}
@@ -277,7 +277,7 @@ jobs:
       default-branch: '${defaultBranch}'
       generated-directory: '${generatedDirectory}'
       index-path: '${indexPath}'
-      obsidian-base-path: '${obsidianBasePath}'${legacyDirLines.length > 0 ? `\n      legacy-directories: '${(options.legacyDirectories ?? []).join(",")}'` : ""}
+      obsidian-base-path: '${obsidianBasePath}'${legacyDirsJson.length > 0 ? `\n      legacy-directories: '${legacyDirsJson}'` : ""}
 `;
 }
 

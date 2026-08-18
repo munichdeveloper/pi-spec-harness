@@ -8,9 +8,11 @@ on:
       generated-directory: { required: false, type: string, default: docs/runs/generated }
       index-path: { required: false, type: string, default: docs/runs/RUN-INDEX.md }
       obsidian-base-path: { required: false, type: string, default: docs/runs/Runs.base }
-      # Comma-separated list of legacy directories to scan for existing run documents.
-      # Defaults to "docs/runs" when empty. Each value is passed as a separate --legacy-directory argument.
-      legacy-directories: { required: false, type: string, default: "" }
+      # JSON array of legacy directories to scan for existing run documents.
+      # Example: '["docs/runs/legacy","docs/archive"]'
+      # Each element must be a relative path (no absolute, no .., no option-like values).
+      # Defaults to empty array (no extra legacy directories).
+      legacy-directories: { required: false, type: string, default: "[]" }
       # REQ-005 audit recorder repository (owner/repo). Defaults to the calling repository.
       audit-recorder-repo: { required: false, type: string, default: "" }
       # Path to the audit journal directory in the recorder repository.
@@ -52,28 +54,61 @@ jobs:
       - run: npm ci
         working-directory: .pi-spec-harness
 
-      - name: Build legacy-directory flags
+      - name: Build legacy-directory args
         id: legacy-dirs
         shell: bash
+        env:
+          LEGACY_DIRS_JSON: ${{ inputs.legacy-directories }}
         run: |
-          # Convert comma-separated legacy-directories input to CLI flags.
-          flags=""
-          input="${{ inputs.legacy-directories }}"
-          if [ -n "$input" ]; then
-            IFS=',' read -ra dirs <<< "$input"
-            for dir in "${dirs[@]}"; do
-              trimmed="${dir#"${dir%%[![:space:]]*}"}"
-              trimmed="${trimmed%"${trimmed##*[![:space:]]}"}"
-              [ -n "$trimmed" ] && flags="$flags --legacy-directory \"$trimmed\""
-            done
-          fi
-          echo "flags=$flags" >> "$GITHUB_OUTPUT"
+          # Parse JSON array and build validated Bash array of --legacy-directory args.
+          # Rejects: absolute paths, traversal (contains ..), empty strings,
+          # control characters, and option-like values (start with -).
+          legacy_args=()
+          while IFS= read -r -d $'\0' dir; do
+            # Reject empty
+            if [ -z "$dir" ]; then
+              echo "::error::legacy-directories: empty path element rejected" >&2
+              exit 1
+            fi
+            # Reject absolute paths
+            if [[ "$dir" == /* ]]; then
+              echo "::error::legacy-directories: absolute path rejected: $dir" >&2
+              exit 1
+            fi
+            # Reject traversal
+            if [[ "$dir" == *..* ]]; then
+              echo "::error::legacy-directories: path traversal rejected: $dir" >&2
+              exit 1
+            fi
+            # Reject option-like values (start with -)
+            if [[ "$dir" == -* ]]; then
+              echo "::error::legacy-directories: option-like path rejected: $dir" >&2
+              exit 1
+            fi
+            # Reject control characters (non-printable ASCII)
+            if [[ "$dir" =~ [[:cntrl:]] ]]; then
+              echo "::error::legacy-directories: control characters in path rejected" >&2
+              exit 1
+            fi
+            legacy_args+=(--legacy-directory "$dir")
+          done < <(node -e "
+            const raw = process.env.LEGACY_DIRS_JSON.trim();
+            if (!raw || raw === '[]') process.exit(0);
+            let arr;
+            try { arr = JSON.parse(raw); } catch(e) { process.stderr.write('legacy-directories: invalid JSON\n'); process.exit(1); }
+            if (!Array.isArray(arr)) { process.stderr.write('legacy-directories: must be a JSON array\n'); process.exit(1); }
+            arr.forEach(e => {
+              if (typeof e !== 'string') { process.stderr.write('legacy-directories: array elements must be strings\n'); process.exit(1); }
+              process.stdout.write(e + '\0');
+            });
+          ")
+          # Encode the validated args as NUL-delimited in a temp file to pass to the next step.
+          printf '%s\0' "${legacy_args[@]}" > /tmp/legacy_args.bin
 
       - name: Persist run documentation snapshot
         env:
           GH_TOKEN: ${{ github.token }}
           AUDIT_RECORDER_REPO: ${{ inputs.audit-recorder-repo }}
-          LEGACY_DIR_FLAGS: ${{ steps.legacy-dirs.outputs.flags }}
         working-directory: .pi-spec-harness
         run: |
           recorder_args=()
@@ -81,7 +116,14 @@ jobs:
             recorder_args=(--audit-recorder-repo "$AUDIT_RECORDER_REPO")
           fi
 
-          # shellcheck disable=SC2086 -- LEGACY_DIR_FLAGS contains intentional word-splitting
+          # Reconstruct the legacy_args Bash array from the NUL-delimited temp file.
+          legacy_args=()
+          if [ -s /tmp/legacy_args.bin ]; then
+            while IFS= read -r -d $'\0' arg; do
+              legacy_args+=("$arg")
+            done < /tmp/legacy_args.bin
+          fi
+
           npm run harness -- persist-run-documentation \
             --repository "${{ github.repository }}" \
             --issue-number "${{ github.event.issue.number || github.event.pull_request.number }}" \
@@ -90,5 +132,5 @@ jobs:
             --obsidian-base-path "${{ inputs.obsidian-base-path }}" \
             --audit-journal-path "${{ inputs.audit-journal-path }}" \
             --harness-version "${{ inputs.harness-ref }}" \
-            $LEGACY_DIR_FLAGS \
+            "${legacy_args[@]}" \
             "${recorder_args[@]}"

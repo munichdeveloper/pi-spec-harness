@@ -43,8 +43,12 @@ const ALLOWED_ACTORS = new Set([
   "HUMAN",
   "GITHUB_COPILOT",
   "HUMAN_PRODUCT_OWNER",
+  "HUMAN_DEVELOPER",
   "CODEX",
-  "CODEX_CHAT_SESSION",
+  "VERCEL",
+  "NEON",
+  "MAKE",
+  "N8N",
 ]);
 
 // Canonical access-role enum (SPEC-005 §external-contract).
@@ -54,6 +58,11 @@ const ALLOWED_ACCESS_ROLES = new Set([
   "APP_INSTALLATION_TOKEN",
   "HUMAN_BROWSER_SESSION",
   "GITHUB_PERSONAL_ACCESS_TOKEN",
+  "LOCAL_WORKSPACE",
+  "GITHUB_APP_USER_AUTHORIZATION",
+  "GITHUB_COPILOT_AGENT_IDENTITY",
+  "CODEX_CHAT_SESSION",
+  "PERSONAL_BROWSER_SESSION",
 ]);
 
 // ---------------------------------------------------------------------------

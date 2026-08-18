@@ -415,7 +415,7 @@ describe("SPEC-005 normalize_process_audit_input.mjs (Finding 2)", () => {
 
   it("accepts canonical actor values including GITHUB_COPILOT, CODEX, HUMAN_PRODUCT_OWNER", async () => {
     const { normalizeProcessAuditInput } = await import("../scripts/normalize_process_audit_input.mjs");
-    for (const actor of ["GITHUB_ACTIONS", "COPILOT", "HUMAN", "GITHUB_COPILOT", "HUMAN_PRODUCT_OWNER", "CODEX", "CODEX_CHAT_SESSION"]) {
+    for (const actor of ["GITHUB_ACTIONS", "COPILOT", "HUMAN", "GITHUB_COPILOT", "HUMAN_PRODUCT_OWNER", "HUMAN_DEVELOPER", "CODEX", "VERCEL", "NEON", "MAKE", "N8N"]) {
       expect(() => normalizeProcessAuditInput(validEnvelope({ actor }))).not.toThrow();
     }
   });
@@ -429,7 +429,7 @@ describe("SPEC-005 normalize_process_audit_input.mjs (Finding 2)", () => {
 
   it("accepts canonical access_role values including GITHUB_PERSONAL_ACCESS_TOKEN", async () => {
     const { normalizeProcessAuditInput } = await import("../scripts/normalize_process_audit_input.mjs");
-    for (const access_role of ["GITHUB_ACTIONS_TOKEN", "PERSONAL_ACCESS_TOKEN", "APP_INSTALLATION_TOKEN", "HUMAN_BROWSER_SESSION", "GITHUB_PERSONAL_ACCESS_TOKEN"]) {
+    for (const access_role of ["GITHUB_ACTIONS_TOKEN", "PERSONAL_ACCESS_TOKEN", "APP_INSTALLATION_TOKEN", "HUMAN_BROWSER_SESSION", "GITHUB_PERSONAL_ACCESS_TOKEN", "LOCAL_WORKSPACE", "GITHUB_APP_USER_AUTHORIZATION", "GITHUB_COPILOT_AGENT_IDENTITY", "CODEX_CHAT_SESSION", "PERSONAL_BROWSER_SESSION"]) {
       expect(() => normalizeProcessAuditInput(validEnvelope({ access_role }))).not.toThrow();
     }
   });
