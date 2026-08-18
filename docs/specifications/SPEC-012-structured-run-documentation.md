@@ -91,7 +91,9 @@ interface RunState {
 
 Das Feld bleibt für bestehende States optional; `schemaVersion` des
 Run-States bleibt wegen der rein additiven, rückwärtskompatiblen Änderung bei
-seinem bestehenden Wert. Der Snapshot besitzt unabhängig davon
+seinem bestehenden Wert. `DocumentationSnapshotCheckpoint.schemaVersion`
+versioniert ausschließlich das Checkpoint-Objekt im Run-State. Das davon
+getrennte YAML-Frontmatter des gerenderten Markdown-Snapshots verwendet
 `schema_version: 1`.
 
 `generatedAt`, Pfade, Source-SHA und beide Idempotency Keys werden im Zustand
@@ -315,7 +317,7 @@ bezieht keine Secrets per `secrets: inherit`.
   erfolgreicher Finalisierung. Ein Retry über denselben Marker verwendet
   dasselbe Issue.
 - TAC-03: Bestehende Run-States ohne `documentationSnapshot` werden weiterhin
-  gelesen und unverändert round-getripped.
+  gelesen und unverändert round-tripped.
 - TAC-04: Ein Zustand in Phase `merge` mit bestätigter Merge-Evidenz, aber
   ohne Snapshot liefert `persist-run-documentation`, nicht `complete`.
 - TAC-05: Nur ein auf Origin bestätigter Snapshot mit Audit-Bestätigung erlaubt
@@ -394,7 +396,7 @@ bezieht keine Secrets per `secrets: inherit`.
 
 1. Die freigegebene Harness-Version in Immogent pinnen und die Writer-
    Capability attestieren.
-2. `docs/50-quality/runs/generated/`, `RUN-INDEX.md` und `Runs.base`
+2. `docs/50-quality/runs/generated`, `RUN-INDEX.md` und `Runs.base`
    konfigurieren.
 3. Bestehende RUN-001 bis RUN-004 und RUN-008 ausschließlich im Frontmatter
    um belegte Felder, `generated: false` und `legacy: true` ergänzen.
