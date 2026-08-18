@@ -66,15 +66,22 @@ jobs:
             --run-id "${{ steps.run.outputs.run_id }}"
 
       - name: Reconcile delivery PR merge evidence (approval-first path)
+        id: merge_effect
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
-          npm run harness -- delivery-pr-merge-effect \
-            --repository "${{ github.repository }}" \
-            --run-id "${{ steps.run.outputs.run_id }}"
+          result="$(
+            npm run harness -- delivery-pr-merge-effect \
+              --repository "${{ github.repository }}" \
+              --run-id "${{ steps.run.outputs.run_id }}"
+          )"
+          printf '%s\n' "$result"
+          action="$(printf '%s\n' "$result" | sed -n '/^{/,$p' | jq -r '.result.nextAction.action')"
+          echo "action=$action" >> "$GITHUB_OUTPUT"
 
       - name: Orchestrate after gate decision
+        if: steps.merge_effect.outputs.action == 'advance-phase'
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash

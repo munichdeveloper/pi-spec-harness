@@ -1194,7 +1194,7 @@ async function cmdDeliveryPrMergeEffect(
     const next = computeNextAction(state);
     printResult(
       "delivery-pr-merge-effect",
-      { skipped: "no-delivery-pr-bound" },
+      { skipped: "no-delivery-pr-bound", nextAction: next },
       next.detail,
     );
     return;
@@ -1207,6 +1207,7 @@ async function cmdDeliveryPrMergeEffect(
         deliveryPullRequest: classification.deliveryPullRequest,
         observedPullRequest: classification.observedPullRequest,
         skipped: "non-delivery-pull-request",
+        nextAction: next,
       },
       next.detail,
     );
@@ -1234,6 +1235,7 @@ async function cmdDeliveryPrMergeEffect(
         deliveryPullRequest: deliveryPr,
         pending: "delivery-pr-not-yet-merged",
         prState: prData.state ?? "unknown",
+        nextAction: next,
       },
       next.detail,
     );
@@ -1256,6 +1258,7 @@ async function cmdDeliveryPrMergeEffect(
       {
         deliveryPullRequest: deliveryPr,
         pending: "no-passed-merge-approval-gate",
+        nextAction: next,
       },
       next.detail,
     );
@@ -1278,6 +1281,7 @@ async function cmdDeliveryPrMergeEffect(
       approvedHeadSha: prData.headRefOid,
       deliveryMergeCommitSha: state.deliveryMergeCommitSha,
       deliveryMergedAt: state.deliveryMergedAt,
+      nextAction: next,
     },
     next.detail,
   );

@@ -24,6 +24,9 @@ describe("GitHub workflow contracts", () => {
 
     expect(resumeJob).toContain("delivery-pr-merge-effect");
     expect(resumeJob.indexOf("delivery-pr-merge-effect")).toBeLessThan(resumeJob.indexOf("npm run harness -- orchestrate"));
+    // Orchestrate is conditional on the next action from delivery-pr-merge-effect
+    expect(resumeJob).toContain("advance-phase");
+    expect(resumeJob).toContain(".result.nextAction.action");
   });
 
   it("triggers on pull_request closed events for implementation PR orchestration (TAC-12)", async () => {
