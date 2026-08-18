@@ -170,3 +170,122 @@ ausschließlich mit diesem Block angelegt; existiert bereits eigener,
 produktspezifischer Inhalt ohne Marker, wird der Block ergänzt, ohne
 etwas zu verändern oder zu löschen. Die Option ist unabhängig von
 `--install-workflows`/`--install-bug-workflow` und mit ihnen kombinierbar.
+
+## Fingerprint-gebundener Capability-Smoke (SPEC-010)
+
+### Überblick
+
+Nach dem Post-Release-Rollout des Harness in die Bug-Pipeline des Ziel-Repos
+prüft der Bug-Lauf, ob unter der aktuell wirksamen Credential- und
+Berechtigungskonfiguration tatsächlich Bash-, Write- und Edit-Toolaufrufe
+gelingen. Das Ergebnis ist eine kryptographisch gebundene Cache-Attestation.
+Ein Cache-Treffer (korrekter Fingerprint, valides Manifest) überspringt den
+kostenpflichtigen Smoke-Lauf vollständig; erst ein Cache-Miss löst genau
+einen Smoke aus.
+
+### Fingerprint (TAC-01)
+
+Ein deterministischer SHA-256-Fingerprint wird aus drei kanonischen Inputs
+gebildet, die sowohl in der TypeScript-Funktion (`src/capability/fingerprint.ts`)
+als auch im Workflow-Skript identisch implementiert sind:
+
+- **Action-Ref** – der vollständige gepinnte `uses:`-Referenzstring, z. B.
+  `anthropics/claude-code-action@v1.0.94` (nicht nur der isolierte Tag oder
+  der 40-Zeichen-Commit-SHA)
+- **`permissions.allow`** – das kanonisch sortierte, kompakt JSON-serialisierte
+  Allow-Array, das an `claude-code-action` übergeben wird
+- **Contract-Version** – eine konstante Zeichenkette (`CAPABILITY_CONTRACT_VERSION`
+  in `src/capability/fingerprint.ts`); ein Bump invalidiert alle vorhandenen
+  Attestationen
+
+Freie Zusatzwerte (Issue-Inhalt, Branch-Name, Secrets, Run-IDs) sind
+ausdrücklich **kein** Bestandteil des Fingerprints.
+
+### Cache-Attestation (TAC-02/TAC-03)
+
+Der Cache-Key lautet `harness-capability-attestation-<fingerprint>`. Der
+Workflow verwendet **nur** einen exakten Key-Lookup; `restore-keys`-Präfixe
+sind unzulässig (TAC-02). Das Cache-Manifest enthält:
+
+```json
+{
+  "schemaVersion": "1",
+  "fingerprint": "<sha256>",
+  "contractVersion": "1",
+  "capabilityContract": { "bash": true, "write": true, "edit": true, "fileContentVerified": true },
+  "workflowRun": "<run-id>",
+  "attestedAt": "<iso8601>"
+}
+```
+
+Nur ein vollständig grüner deterministischer Verifier schreibt die finale
+Attestation (TAC-03). Das Manifest wird vor jedem Cache-Treffer gegen den
+berechneten Fingerprint und die Schema-Version validiert.
+
+### Capability-Smoke-Ablauf
+
+1. **Credential-Check** (TAC-11): Ist weder `ANTHROPIC_API_KEY` noch
+   `CLAUDE_CODE_OAUTH_TOKEN` gesetzt, schlägt der Workflow mit einer klaren
+   Meldung fehl, bevor `claude-code-action` aufgerufen wird.
+2. **Fingerprint + Cache-Restore** (TAC-02/TAC-06): Cache-Treffer überspringt
+   den Smoke.
+3. **Smoke-Agent** (TAC-04): Der Agent erhält einen eng begrenzten Prompt mit
+   einem zufälligen Einmal-Marker. Er muss einen Bash-Befehl ausführen, eine
+   Datei schreiben und den Inhalt per Edit ersetzen.
+4. **Deterministischer Verifier** (TAC-04/TAC-05): Tatsächliche erfolgreiche
+   Toolaufrufe werden ausgewertet; Textausgaben des Agenten sind keine Evidence.
+   Fehlt eine Fähigkeit, schlägt der Workflow rot ab.
+5. **Attestation schreiben** (TAC-03): Nur nach vollständig grünem Verifier wird
+   der Cache-Key geschrieben.
+6. **Gate** (TAC-08): Bei Smoke-Fehler gibt der Workflow eine `::error::`-Meldung
+   mit den konkreten Fähigkeitsausgaben aus und bricht mit `exit 1` ab.
+   Der produktive Agent-Step wird übersprungen. Kein Label wird gesetzt;
+   das Gate besitzt keine `issues: write`-Berechtigung (TAC-10).
+
+### Kostenverhalten und Attestation-Lebensdauer
+
+- Ein Smoke verursacht einen echten `claude-code-action`-Lauf. Er findet nur
+  bei Cache-Miss statt.
+- GitHub-Actions-Caches laufen standardmäßig nach 7 Tagen ohne Zugriff ab.
+  Abgelaufene oder gelöschte Attestationen führen bei der nächsten Ausführung
+  zu einem automatischen neuen Smoke.
+- Jede Änderung an Action-Ref oder `permissions.allow` erzeugt einen neuen
+  Fingerprint und damit einen obligatorischen neuen Smoke.
+
+### Manuelle Ausführung
+
+```bash
+gh workflow run harness-capability-smoke.yml --repo <owner>/<repo>
+```
+
+oder über das GitHub-UI: **Actions → Harness Capability Smoke → Run workflow**.
+
+### Fehlerdiagnose
+
+| Symptom | Ursache | Lösung |
+|---|---|---|
+| `Neither ANTHROPIC_API_KEY nor CLAUDE_CODE_OAUTH_TOKEN is set` | Fehlende Credentials | Secret im Repository-Settings setzen |
+| `Capability smoke failed. bash_ok=false` | Bash-Befehl wurde blockiert | `settings.permissions.allow` prüfen |
+| `File content mismatch` | Edit-Tool hat Datei nicht korrekt geändert | Smoke wiederholen; ggf. Action-Pin prüfen |
+| `Cached attestation fingerprint … does not match` | Cache-Poisoning oder falscher Key | Cache manuell löschen und Smoke neu auslösen |
+
+### Installation (TAC-12)
+
+```bash
+harness init --install-workflows capability-smoke --workflow-ref main
+```
+
+Erstellt/aktualisiert `.github/workflows/harness-capability-smoke.yml`
+idempotent; ein nicht verwalteter Konflikt wird als Fehler gemeldet.
+
+### Sicherer Rollout
+
+1. Harness-Release mit `capability-smoke.yml` veröffentlichen.
+2. `harness init --install-workflows capability-smoke` im Zielrepository
+   ausführen.
+3. Manuellen Smoke per `workflow_dispatch` auslösen und auf grünen Run
+   warten.
+4. Anschließend Bug-Pipeline aktivieren.
+5. Rollback: Caller auf vorherigen Harness-Ref zurücksetzen. Die
+   Attestation mit dem neuen Fingerprint ist für die alte Konfiguration
+   nicht gültig – ein erneuter Smoke ist automatisch notwendig.

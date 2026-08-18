@@ -5,6 +5,13 @@ import {
   renderBugWorkflowReference,
   type BugWorkflowReferenceOptions,
 } from "../bug/workflow-reference.js";
+import {
+  CAPABILITY_CALLER_MARKER,
+  CAPABILITY_CALLER_PATH,
+  DEFAULT_CAPABILITY_SMOKE_WORKFLOW_REF,
+  renderCapabilityCallerReference,
+  type CapabilityCallerOptions,
+} from "../capability/capability-caller.js";
 
 export type { WorkflowInstallDecision } from "./install-decision.js";
 export { decideWorkflowInstall } from "./install-decision.js";
@@ -181,6 +188,15 @@ export const WORKFLOW_TEMPLATE_CATALOG: WorkflowTemplateDefinition[] = [
     reusableWorkflowRepoPath: ".github/workflows/review-fix.yml",
     defaultRef: DEFAULT_REVIEW_FIX_WORKFLOW_REF,
     renderReference: (options) => renderReviewFixReference(options as ReviewFixReferenceOptions | undefined),
+  },
+  // SPEC-010: capability-smoke caller
+  {
+    name: "capability-smoke",
+    targetPath: CAPABILITY_CALLER_PATH,
+    marker: CAPABILITY_CALLER_MARKER,
+    reusableWorkflowRepoPath: ".github/workflows/capability-smoke.yml",
+    defaultRef: DEFAULT_CAPABILITY_SMOKE_WORKFLOW_REF,
+    renderReference: (options) => renderCapabilityCallerReference(options as CapabilityCallerOptions | undefined),
   },
 ];
 

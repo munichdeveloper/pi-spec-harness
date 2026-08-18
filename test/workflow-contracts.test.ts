@@ -167,3 +167,204 @@ describe("GitHub workflow contracts", () => {
     expect(contract).toContain("install-agents-context");
   });
 });
+
+// ─── SPEC-010 capability-smoke workflow contract tests ──────────────────────
+
+describe("SPEC-010 capability-smoke reusable workflow contracts", () => {
+  it("capability-smoke.yml is valid YAML (no literal newlines inside bash string assignments)", async () => {
+    const { load } = await import("js-yaml");
+    const raw = await readFile(".github/workflows/capability-smoke.yml", "utf8");
+    // load() throws on any YAML syntax error, including unquoted newlines in block scalars
+    expect(() => load(raw)).not.toThrow();
+    // Additionally verify the problematic fingerprint_input is built with printf, not a literal multi-line string
+    expect(raw).toContain("printf");
+    expect(raw).not.toMatch(/fingerprint_input="\$\{ACTION_REF\}\n/);
+  });
+  it("TAC-02: cache restore uses exact key only – no restore-keys prefix matching", async () => {
+    const workflow = await readFile(".github/workflows/capability-smoke.yml", "utf8");
+    expect(workflow).toContain("actions/cache/restore@v4");
+    expect(workflow).toContain("key: ${{ steps.fingerprint.outputs.cache_key }}");
+    // No restore-keys line (prefix matching is forbidden by TAC-02)
+    expect(workflow).not.toMatch(/restore-keys:/);
+  });
+
+  it("TAC-03: only the gate job after a successful verify writes the final attestation cache", async () => {
+    const workflow = await readFile(".github/workflows/capability-smoke.yml", "utf8");
+    expect(workflow).toContain("actions/cache/save@v4");
+    // The save step must be in the attest job which needs the smoke job
+    expect(workflow).toContain("needs: [check-attestation, smoke]");
+    // The attest job is only triggered when smoke_passed is true
+    expect(workflow).toContain("needs.smoke.outputs.smoke_passed == 'true'");
+  });
+
+  it("TAC-04: verifier checks bash_ok, write_ok, edit_ok, and exact file content", async () => {
+    const workflow = await readFile(".github/workflows/capability-smoke.yml", "utf8");
+    expect(workflow).toContain("bash_ok");
+    expect(workflow).toContain("write_ok");
+    expect(workflow).toContain("edit_ok");
+    expect(workflow).toContain("file_content_ok");
+    expect(workflow).toContain("smoke_passed");
+    expect(workflow).toContain("expected_content");
+    expect(workflow).toContain("SMOKE_EDIT_");
+    expect(workflow).toContain("SMOKE_WRITE_");
+    // TAC-04/TAC-05: tool success is checked per-tool (scoped), not globally
+    expect(workflow).toContain("check_tool_success");
+    expect(workflow).toContain("jq -e");
+    expect(workflow).toContain('.tool == $t and .success == true');
+  });
+
+  it("TAC-05: gate job fails the workflow when smoke_passed is not true", async () => {
+    const workflow = await readFile(".github/workflows/capability-smoke.yml", "utf8");
+    expect(workflow).toContain("needs.smoke.outputs.smoke_passed != 'true'");
+    expect(workflow).toContain("exit 1");
+  });
+
+  it("TAC-06: cache hit skips the smoke job entirely", async () => {
+    const workflow = await readFile(".github/workflows/capability-smoke.yml", "utf8");
+    // smoke job has an 'if' condition that only runs on cache miss
+    expect(workflow).toContain("needs.check-attestation.outputs.cache_hit != 'true'");
+  });
+
+  it("TAC-08: gate job only runs when smoke actually completed – not on skipped/failed prerequisites", async () => {
+    const workflow = await readFile(".github/workflows/capability-smoke.yml", "utf8");
+    // Gate must guard on smoke result==success, not just cache_hit.
+    // Using cache_hit != 'true' would trigger the gate (with the misleading error)
+    // even when check-attestation itself failed and smoke was skipped.
+    expect(workflow).toContain("needs.smoke.result == 'success'");
+    // The old incorrect condition must NOT be present on the gate job
+    expect(workflow).toContain("gate:");
+    const gateJobSlice = workflow.slice(workflow.indexOf("gate:"));
+    expect(gateJobSlice).not.toContain(
+      "needs.check-attestation.outputs.cache_hit != 'true'"
+    );
+  });
+
+  it("TAC-10: workflow has no contents:write, pull-requests:write, or id-token permission", async () => {
+    const workflow = await readFile(".github/workflows/capability-smoke.yml", "utf8");
+    expect(workflow).not.toContain("contents: write");
+    expect(workflow).not.toContain("pull-requests: write");
+    expect(workflow).not.toContain("id-token: write");
+    expect(workflow).not.toContain("git push");
+    expect(workflow).not.toContain("gh pr create");
+  });
+
+  it("TAC-11: credential check job runs before the smoke and fails with a clear message when both are absent", async () => {
+    const workflow = await readFile(".github/workflows/capability-smoke.yml", "utf8");
+    expect(workflow).toContain("ANTHROPIC_API_KEY");
+    expect(workflow).toContain("CLAUDE_CODE_OAUTH_TOKEN");
+    expect(workflow).toContain("has_credentials=false");
+    expect(workflow).toContain("exit 1");
+  });
+
+  it("TAC-11: secrets are declared in the workflow_call contract so GitHub validates them at parse time", async () => {
+    const workflow = await readFile(".github/workflows/capability-smoke.yml", "utf8");
+    // Both secrets must appear under on.workflow_call.secrets, not only inside job env blocks
+    const callBlock = workflow.slice(workflow.indexOf("workflow_call:"), workflow.indexOf("\njobs:"));
+    expect(callBlock).toContain("secrets:");
+    expect(callBlock).toContain("ANTHROPIC_API_KEY:");
+    expect(callBlock).toContain("CLAUDE_CODE_OAUTH_TOKEN:");
+  });
+
+  it("TAC-12/TAC-09: thin caller template declares workflow_call, workflow_dispatch, and push triggers", async () => {
+    const { renderCapabilityCallerReference } = await import("../src/capability/capability-caller.js");
+    const caller = renderCapabilityCallerReference();
+    expect(caller).toContain("workflow_call:");
+    expect(caller).toContain("workflow_dispatch:");
+    expect(caller).toContain("push:");
+    expect(caller).toContain("harness-capability-smoke.yml");
+    expect(caller).toContain("harness-bug-triage.yml");
+    expect(caller).toContain("cancel-in-progress: false");
+    expect(caller).toContain("secrets: inherit");
+  });
+
+  it("TAC-12: capability-smoke is registered in WORKFLOW_TEMPLATE_CATALOG", async () => {
+    const { findWorkflowTemplate, WORKFLOW_TEMPLATE_CATALOG } = await import("../src/workflows/template-catalog.js");
+    const entry = findWorkflowTemplate("capability-smoke");
+    expect(entry).toBeDefined();
+    expect(entry!.targetPath).toBe(".github/workflows/harness-capability-smoke.yml");
+    expect(entry!.reusableWorkflowRepoPath).toBe(".github/workflows/capability-smoke.yml");
+    expect(WORKFLOW_TEMPLATE_CATALOG.map((t) => t.name)).toContain("capability-smoke");
+  });
+
+  it("TAC-01: fingerprint computed inside the workflow uses the same canonical algorithm as the TypeScript module", async () => {
+    // The workflow uses: sorted compact JSON of allow list + newline-separated
+    // input string. Verify the key structure of the YAML agrees.
+    const workflow = await readFile(".github/workflows/capability-smoke.yml", "utf8");
+    expect(workflow).toContain("sha256sum");
+    expect(workflow).toContain("harness-capability-attestation-");
+    expect(workflow).toContain("jq -c 'sort'");
+    expect(workflow).toContain("contract_version");
+    // TAC-01/version-binding: ACTION_REF must be the hardcoded pin, not an input
+    // so the attested version always matches the actually executed action version.
+    expect(workflow).toContain('ACTION_REF: "anthropics/claude-code-action@v1.0.94"');
+    expect(workflow).not.toContain("ACTION_REF: ${{ inputs.claude-code-action-version }}");
+  });
+
+  it("verifier reads execution_file path and cats its contents – not pipes a path string to jq", async () => {
+    const workflow = await readFile(".github/workflows/capability-smoke.yml", "utf8");
+    // The previous bug: single-quoted bash string containing || '' terminated the quote early.
+    expect(workflow).not.toContain("agent_output='${{ steps.agent.outputs.execution_file");
+    // execution_file is a path; must read the file before passing to jq/grep.
+    expect(workflow).toContain('execution_file_path="${{ steps.agent.outputs.execution_file }}');
+    expect(workflow).toContain('agent_output="$(cat "$execution_file_path")"');
+    // Must NOT assign the raw path directly to agent_output (would pipe a path string to jq).
+    expect(workflow).not.toMatch(/agent_output="\$\{\{ steps\.agent\.outputs\.execution_file \}\}"/);
+  });
+
+  it("TAC-10: thin caller template uses actions:write so the reusable workflow can save cache", async () => {
+    const { renderCapabilityCallerReference } = await import("../src/capability/capability-caller.js");
+    const caller = renderCapabilityCallerReference();
+    // actions: write is required so the called reusable workflow can use cache/save
+    expect(caller).toContain("actions: write");
+    expect(caller).not.toContain("actions: read");
+  });
+
+  it("TAC-02: attestation manifest is validated before a cache hit is trusted", async () => {
+    const workflow = await readFile(".github/workflows/capability-smoke.yml", "utf8");
+    expect(workflow).toContain("Validate existing attestation manifest");
+    expect(workflow).toContain("cached_fp");
+    expect(workflow).toContain("expected_fp");
+    expect(workflow).toContain("schemaVersion");
+  });
+
+  it("AC-10: smoke file uses workspace-relative path – no /tmp absolute path in prompt or verifier", async () => {
+    const workflow = await readFile(".github/workflows/capability-smoke.yml", "utf8");
+    // Prompt and verifier must not reference /tmp/harness-smoke
+    expect(workflow).not.toContain("/tmp/harness-smoke");
+    // The workspace-relative path pattern must be present in both prompt and verifier
+    expect(workflow).toContain("harness-smoke-");
+    // Verifier must use GITHUB_WORKSPACE to form the full path
+    expect(workflow).toContain("GITHUB_WORKSPACE");
+  });
+
+  it("AC-10: pin-mismatch warning fires when claude-code-action-version input differs from the hardcoded pin", async () => {
+    const workflow = await readFile(".github/workflows/capability-smoke.yml", "utf8");
+    // Check-credentials job must contain the version-mismatch warning step
+    expect(workflow).toContain("Warn if claude-code-action-version input differs from hardcoded pin");
+    expect(workflow).toContain("::warning::");
+    // Must reference the pinned ref explicitly in the warning step
+    expect(workflow).toContain('PINNED_REF="anthropics/claude-code-action@v1.0.94"');
+  });
+
+  it("AC-08: reusable workflow concurrency is bound to actual contract, not caller input", async () => {
+    const workflow = await readFile(".github/workflows/capability-smoke.yml", "utf8");
+    // The concurrency group must include the full action pin
+    const concurrencySlice = workflow.slice(
+      workflow.indexOf("concurrency:"),
+      workflow.indexOf("\njobs:")
+    );
+    expect(concurrencySlice).toContain("anthropics/claude-code-action@v1.0.94");
+    // Must NOT use the caller input which might differ
+    expect(concurrencySlice).not.toContain("inputs.claude-code-action-version");
+  });
+
+  it("AC-08: thin caller concurrency matches the same effective contract identifier as the reusable workflow", async () => {
+    const { renderCapabilityCallerReference } = await import("../src/capability/capability-caller.js");
+    const caller = renderCapabilityCallerReference();
+    // Caller concurrency must use the same full action pin, not a variable input
+    expect(caller).toContain("anthropics/claude-code-action@v1.0.94");
+    // Must NOT use the input variable as the differentiator
+    expect(caller).not.toContain("inputs.claude-code-action-version");
+    expect(caller).not.toContain("vars.HARNESS_CLAUDE_CODE_ACTION_VERSION");
+  });
+});
