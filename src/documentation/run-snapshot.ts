@@ -10,8 +10,7 @@
  * - No LLM or external SaaS calls. TAC-19.
  */
 
-import type { RunState } from "../state/types.js";
-import type { HumanGateIssueRef } from "../state/types.js";
+import type { HumanGateIssueRef, RunState } from "../state/types.js";
 
 export interface RunSnapshotInput {
   state: RunState;
