@@ -20,11 +20,14 @@ describe("GitHub workflow contracts", () => {
 
   it("triggers on pull_request closed events for implementation PR orchestration (TAC-12)", async () => {
     const workflow = await readFile(".github/workflows/harness-gate-trigger.yml", "utf8");
+    const prJob = workflow.slice(workflow.indexOf("  orchestrate-on-pr-event:"), workflow.indexOf("\n  reconcile:"));
 
     expect(workflow).toContain("pull_request:");
     expect(workflow).toContain("types: [closed]");
     // Serialises across concurrent runs
     expect(workflow).toContain("cancel-in-progress: false");
+    expect(prJob).toContain("delivery-pr-merge-effect");
+    expect(prJob.indexOf("delivery-pr-merge-effect")).toBeLessThan(prJob.indexOf("npm run harness -- orchestrate"));
   });
 
   // TAC-09: workflow supports workflow_dispatch and push (own file on default branch)

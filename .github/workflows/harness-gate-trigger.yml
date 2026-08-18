@@ -101,6 +101,17 @@ jobs:
             echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Persist delivery PR merge effect
+        if: steps.run.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          npm run harness -- delivery-pr-merge-effect \
+            --repository "${{ github.repository }}" \
+            --run-id "${{ steps.run.outputs.run_id }}" \
+            --pull-request "${{ github.event.pull_request.number }}"
+
       - name: Orchestrate after PR merge
         if: steps.run.outputs.skip != 'true'
         env:

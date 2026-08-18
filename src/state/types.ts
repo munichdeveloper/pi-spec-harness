@@ -185,6 +185,10 @@ export interface RunState {
   deliveryPullRequest?: number;
   /** Full HEAD SHA of the delivery branch at the last verified checkpoint. */
   deliveryHeadSha?: string;
+  /** Merge commit persisted after GitHub confirms the delivery PR was merged. */
+  deliveryMergeCommitSha?: string;
+  /** Timestamp persisted with the verified delivery PR merge effect. */
+  deliveryMergedAt?: string;
   /**
    * Implementation PR created by the Coding Agent against the delivery branch.
    * TAC-01: tracked separately from the delivery PR.

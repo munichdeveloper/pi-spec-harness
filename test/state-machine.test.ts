@@ -5,6 +5,7 @@ import {
   computeNextAction,
   finishIteration,
   hasOpenHumanGate,
+  recordDeliveryMergeEffect,
   initRunState,
   reconcileInit,
   resolveGate,
@@ -157,14 +158,39 @@ describe("state-machine", () => {
     expect(() => transitionPhase(spec, "requirement")).toThrow(/invalid phase transition/);
   });
 
-  it("requires passed merge evidence before complete", () => {
-    let state = { ...baseRun(), phase: "merge" as const };
-    expect(() => transitionPhase(state, "complete")).toThrow(/merge evidence/);
-    state = upsertGate(state, { id: `merge-approval-${"a".repeat(40)}`, type: "human" });
-    state = resolveGate(state, `merge-approval-${"a".repeat(40)}`, {
+  it("requires persisted delivery merge evidence before complete", () => {
+    const approvedHeadSha = "a".repeat(40);
+    const mergeCommitSha = "b".repeat(40);
+    let state = {
+      ...baseRun(),
+      phase: "merge" as const,
+      deliveryPullRequest: 47,
+      deliveryHeadSha: approvedHeadSha,
+    };
+    expect(() => transitionPhase(state, "complete")).toThrow(/persisted delivery merge evidence/);
+    state = upsertGate(state, { id: `merge-approval-${approvedHeadSha}`, type: "merge" });
+    state = resolveGate(state, `merge-approval-${approvedHeadSha}`, {
       result: "passed",
       decision: { approved: true, by: "test", at: new Date().toISOString() },
     });
+    expect(computeNextAction(state).action).toBe("await-technical-gate");
+    expect(() => transitionPhase(state, "complete")).toThrow(/persisted delivery merge evidence/);
+
+    state = recordDeliveryMergeEffect(state, {
+      pullRequest: 47,
+      approvedHeadSha,
+      mergeCommitSha,
+      mergedAt: "2026-08-18T13:19:11Z",
+    });
+
+    expect(recordDeliveryMergeEffect(state, {
+      pullRequest: 47,
+      approvedHeadSha,
+      mergeCommitSha,
+      mergedAt: "2026-08-18T13:19:11Z",
+    })).toBe(state);
+    expect(state.deliveryMergeCommitSha).toBe(mergeCommitSha);
+    expect(state.deliveryMergedAt).toBe("2026-08-18T13:19:11Z");
     expect(transitionPhase(state, "complete").phase).toBe("complete");
   });
 

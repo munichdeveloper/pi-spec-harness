@@ -169,6 +169,93 @@ export function isMergeApprovalGate(gate: GateRecord): boolean {
   return gate.type === "merge" || gate.id === "merge-approval" || gate.id.startsWith("merge-approval-");
 }
 
+export function findPassedMergeApprovalGate(state: RunState): GateRecord | undefined {
+  return state.gates.find((gate) => gate.result === "passed" && isMergeApprovalGate(gate));
+}
+
+function expectedDeliveryHeadSha(state: RunState): string | undefined {
+  return (state.deliveryHeadSha ?? state.pullRequestHeadSha)?.toLowerCase();
+}
+
+export function hasPersistedDeliveryMergeEvidence(state: RunState): boolean {
+  const deliveryPullRequest = state.deliveryPullRequest ?? state.pullRequest;
+  return Boolean(
+    deliveryPullRequest &&
+      expectedDeliveryHeadSha(state) &&
+      state.deliveryMergeCommitSha &&
+      state.deliveryMergedAt &&
+      findPassedMergeApprovalGate(state),
+  );
+}
+
+export function recordDeliveryMergeEffect(
+  state: RunState,
+  effect: { pullRequest: number; approvedHeadSha: string; mergeCommitSha: string; mergedAt: string },
+): RunState {
+  if (!Number.isInteger(effect.pullRequest) || effect.pullRequest <= 0) {
+    throw new Error("delivery pull request number must be a positive integer");
+  }
+  if (!/^[0-9a-f]{40}$/i.test(effect.approvedHeadSha)) {
+    throw new Error("approved delivery head SHA must be a full 40-character Git SHA");
+  }
+  if (!/^[0-9a-f]{40}$/i.test(effect.mergeCommitSha)) {
+    throw new Error("delivery merge commit SHA must be a full 40-character Git SHA");
+  }
+
+  const deliveryPullRequest = state.deliveryPullRequest ?? state.pullRequest;
+  if (!deliveryPullRequest) {
+    throw new Error(`no delivery PR is bound on run '${state.runId}'`);
+  }
+  if (deliveryPullRequest !== effect.pullRequest) {
+    throw new Error(
+      `run '${state.runId}' is bound to delivery PR #${deliveryPullRequest}; refusing merge effect for PR #${effect.pullRequest}`,
+    );
+  }
+
+  const approvedHeadSha = effect.approvedHeadSha.toLowerCase();
+  const expectedHead = expectedDeliveryHeadSha(state);
+  if (!expectedHead) {
+    throw new Error(`run '${state.runId}' has no bound delivery head SHA`);
+  }
+  if (expectedHead !== approvedHeadSha) {
+    throw new Error(
+      `delivery PR #${effect.pullRequest} merged from head ${approvedHeadSha}, expected approved head ${expectedHead}`,
+    );
+  }
+
+  if (state.deliveryMergeCommitSha && state.deliveryMergeCommitSha.toLowerCase() !== effect.mergeCommitSha.toLowerCase()) {
+    throw new Error(
+      `run '${state.runId}' already records delivery merge commit ${state.deliveryMergeCommitSha}`,
+    );
+  }
+  if (
+    state.deliveryMergeCommitSha?.toLowerCase() === effect.mergeCommitSha.toLowerCase() &&
+    state.deliveryMergedAt === effect.mergedAt
+  ) {
+    return state;
+  }
+
+  const mergeGate = findPassedMergeApprovalGate(state);
+  if (!mergeGate) {
+    throw new Error("cannot record delivery merge effect without a passed merge approval gate");
+  }
+
+  const mergeEvidence = [
+    ...(mergeGate.evidence ?? []),
+    `delivery-pr:${effect.pullRequest}`,
+    `approved-head:${approvedHeadSha}`,
+    `merge-commit:${effect.mergeCommitSha.toLowerCase()}`,
+    `merged-at:${effect.mergedAt}`,
+  ].filter((item, index, items) => items.indexOf(item) === index);
+  const withEvidence = resolveGate(state, mergeGate.id, { evidence: mergeEvidence });
+  return {
+    ...withEvidence,
+    deliveryMergeCommitSha: effect.mergeCommitSha.toLowerCase(),
+    deliveryMergedAt: effect.mergedAt,
+    updatedAt: nowIso(),
+  };
+}
+
 export function acknowledgeRejectedGate(state: RunState, gateId: string, note: string): RunState {
   const gate = findGate(state, gateId);
   if (!gate || gate.result !== "failed") {
@@ -209,12 +296,9 @@ export function transitionPhase(state: RunState, phase: PhaseId): RunState {
   }
   if (
     phase === "complete" &&
-    !state.gates.some(
-      (gate) =>
-        gate.result === "passed" && isMergeApprovalGate(gate),
-    )
+    !hasPersistedDeliveryMergeEvidence(state)
   ) {
-    throw new Error("cannot complete a run without passed merge evidence");
+    throw new Error("cannot complete a run without persisted delivery merge evidence");
   }
 
   return { ...state, phase, updatedAt: nowIso() };
@@ -489,6 +573,17 @@ export function computeNextAction(state: RunState): NextAction {
     return {
       action: "escalate-iteration-cap",
       detail: `${state.maxAutomaticIterations} automatic iterations failed; escalate to a human gate before continuing.`,
+    };
+  }
+
+  if (state.phase === "merge" && !hasPersistedDeliveryMergeEvidence(state)) {
+    const mergeGate = findPassedMergeApprovalGate(state);
+    return {
+      action: "await-technical-gate",
+      detail: mergeGate
+        ? `Delivery PR merge effect for gate '${mergeGate.id}' is not yet persisted; wait for the bound PR merge to be verified before completing the run.`
+        : "Delivery PR merge approval and persisted merge effect are both required before completing the run.",
+      gate: mergeGate,
     };
   }
 
