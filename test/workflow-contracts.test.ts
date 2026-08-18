@@ -232,6 +232,7 @@ describe("SPEC-010 capability-smoke reusable workflow contracts", () => {
     // even when check-attestation itself failed and smoke was skipped.
     expect(workflow).toContain("needs.smoke.result == 'success'");
     // The old incorrect condition must NOT be present on the gate job
+    expect(workflow).toContain("gate:");
     const gateJobSlice = workflow.slice(workflow.indexOf("gate:"));
     expect(gateJobSlice).not.toContain(
       "needs.check-attestation.outputs.cache_hit != 'true'"

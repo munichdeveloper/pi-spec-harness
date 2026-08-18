@@ -271,7 +271,7 @@ oder über das GitHub-UI: **Actions → Harness Capability Smoke → Run workflo
 ### Installation (TAC-12)
 
 ```bash
-harness init --install-workflows capability-smoke --harness-ref main
+harness init --install-workflows capability-smoke --workflow-ref main
 ```
 
 Erstellt/aktualisiert `.github/workflows/harness-capability-smoke.yml`
