@@ -506,6 +506,27 @@ describe("TAC-10 path validation", () => {
       ),
     ).toThrow(/expected staged path/);
   });
+
+  // Regression: bare directory names must be rejected (not treated as inside the prefix)
+  it("rejects bare allowlist directory names (docs, .github)", () => {
+    expect(() => validateDocumentationPath("docs")).toThrow(/allowlisted/);
+    expect(() => validateDocumentationPath(".github")).toThrow(/allowlisted/);
+  });
+
+  // Regression: duplicate staged paths must be rejected
+  it("validateStagedPaths rejects duplicate staged paths", () => {
+    expect(() =>
+      validateStagedPaths(
+        [
+          "docs/runs/generated/RUN-0056.md",
+          "docs/runs/generated/RUN-0056.md",
+          "docs/runs/RUN-INDEX.md",
+          "docs/runs/Runs.base",
+        ],
+        ["docs/runs/generated/RUN-0056.md", "docs/runs/RUN-INDEX.md", "docs/runs/Runs.base"],
+      ),
+    ).toThrow(/duplicate staged path/);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -543,5 +564,15 @@ describe("TAC-16 run-documentation-finalizer workflow template", () => {
     const entry = WORKFLOW_TEMPLATE_CATALOG.find((t) => t.name === "run-documentation-finalizer");
     expect(entry).toBeDefined();
     expect(entry!.marker).toBe(RUN_DOCUMENTATION_FINALIZER_MARKER);
+  });
+
+  // Regression: the reusable workflow file referenced by the template must exist
+  it("reusable workflow file exists in the harness repository", async () => {
+    const { readFileSync } = await import("fs");
+    const { join } = await import("path");
+    const workflowPath = join(".github", "workflows", "run-documentation-finalizer.yml");
+    expect(() => readFileSync(workflowPath)).not.toThrow();
+    const content = readFileSync(workflowPath, "utf8");
+    expect(content).toContain("workflow_call");
   });
 });

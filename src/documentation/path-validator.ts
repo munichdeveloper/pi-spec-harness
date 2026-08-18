@@ -51,10 +51,13 @@ export function validateDocumentationPath(
     throw new Error(`documentation path escapes repository root: ${relativePath}`);
   }
 
-  // Enforce allowlist.
-  const allowed = allowlistedPrefixes.some(
-    (prefix) => normalized === prefix.replace(/\/$/, "") || normalized.startsWith(prefix),
-  );
+  // Enforce allowlist: path must be *inside* an allowlisted directory, i.e.
+  // it must start with the prefix (which always ends in "/"). Bare directory
+  // names like "docs" or ".github" are intentionally rejected.
+  const allowed = allowlistedPrefixes.some((prefix) => {
+    const normalizedPrefix = prefix.endsWith("/") ? prefix : `${prefix}/`;
+    return normalized.startsWith(normalizedPrefix);
+  });
   if (!allowed) {
     throw new Error(
       `documentation path '${relativePath}' is outside the allowlisted directories: ${allowlistedPrefixes.join(", ")}`,
@@ -86,6 +89,35 @@ export function validateStagedPaths(
 ): void {
   const expected = new Set(expectedPaths.map(normalizePath));
   const staged = stagedPaths.map(normalizePath);
+
+  // Enforce uniqueness: reject duplicate staged paths.
+  if (staged.length !== new Set(staged).size) {
+    const seen = new Set<string>();
+    const duplicates = staged.filter((p) => {
+      if (seen.has(p)) return true;
+      seen.add(p);
+      return false;
+    });
+    throw new Error(
+      `writer aborted: duplicate staged path(s): ${[...new Set(duplicates)].join(", ")}`,
+    );
+  }
+
+  // Enforce exact cardinality: staged count must equal expected count.
+  if (staged.length !== expected.size) {
+    const unexpected = staged.filter((p) => !expected.has(p));
+    const missing = [...expected].filter((p) => !staged.includes(p));
+    if (unexpected.length > 0) {
+      throw new Error(
+        `writer aborted: unexpected staged path(s): ${unexpected.join(", ")}`,
+      );
+    }
+    if (missing.length > 0) {
+      throw new Error(
+        `writer aborted: expected staged path(s) missing: ${missing.join(", ")}`,
+      );
+    }
+  }
 
   const unexpected = staged.filter((p) => !expected.has(p));
   if (unexpected.length > 0) {
