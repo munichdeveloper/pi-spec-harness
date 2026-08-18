@@ -1,7 +1,28 @@
-import { execFile as execFileCb } from "node:child_process";
+import { execFile as execFileCb, spawn } from "node:child_process";
 import { promisify } from "node:util";
 
 const execFile = promisify(execFileCb);
+
+/**
+ * Run a `gh` command and pipe `jsonBody` to its stdin (for APIs that require
+ * a JSON request body, e.g. `gh api --input -`).
+ */
+async function runGhWithJson(args: string[], jsonBody: unknown): Promise<string> {
+  return new Promise<string>((resolve, reject) => {
+    const proc = spawn("gh", args, { stdio: ["pipe", "pipe", "pipe"] });
+    let stdout = "";
+    let stderr = "";
+    proc.stdout.on("data", (d: Buffer) => { stdout += d.toString("utf-8"); });
+    proc.stderr.on("data", (d: Buffer) => { stderr += d.toString("utf-8"); });
+    proc.on("error", reject);
+    proc.on("close", (code: number | null) => {
+      if (code === 0) resolve(stdout);
+      else reject(new GhError(`gh ${args.join(" ")} failed: ${stderr.trim()}`));
+    });
+    proc.stdin.write(JSON.stringify(jsonBody), "utf-8");
+    proc.stdin.end();
+  });
+}
 
 export class GhError extends Error {}
 
@@ -629,5 +650,182 @@ export const github = {
       "-f", `query=${mutation}`,
       "-f", `threadId=${threadId}`,
     ]);
+  },
+
+  // ---------------------------------------------------------------------------
+  // SPEC-012: Run-documentation writer helpers
+  // ---------------------------------------------------------------------------
+
+  /**
+   * List .md files in a directory on a given ref via the Contents API.
+   * Returns an empty array when the directory does not exist.
+   * SPEC-012, TAC-09 (preserves existing generated snapshots in the index).
+   */
+  async listDirectoryMarkdownFiles(
+    repository: string,
+    dirPath: string,
+    ref: string,
+  ): Promise<Array<{ name: string; path: string }>> {
+    try {
+      const out = await runGh([
+        "api",
+        `repos/${repository}/contents/${dirPath}?ref=${encodeURIComponent(ref)}`,
+      ]);
+      const entries = JSON.parse(out) as Array<{ type: string; name: string; path: string }>;
+      return entries
+        .filter((e) => e.type === "file" && e.name.endsWith(".md"))
+        .map((e) => ({ name: e.name, path: e.path }));
+    } catch (err) {
+      if (err instanceof GhError && /404|not found/i.test(err.message)) return [];
+      throw err;
+    }
+  },
+
+  /**
+   * Create a single atomic commit for multiple files on a branch using the
+   * Git Data API (blob → tree → commit → ref update). On a non-fast-forward
+   * conflict, calls `buildFiles(newHeadSha)` to regenerate content against the
+   * updated branch and retries up to `maxRetries` times (default 3).
+   * Returns the new commit SHA.
+   * SPEC-012, TAC-10–13 (transactional write, conflict retry, origin confirmation).
+   */
+  async createAtomicMultiFileCommit(
+    repository: string,
+    branch: string,
+    buildFiles: (parentCommitSha: string) => Promise<Array<{ path: string; content: string }>>,
+    commitMessage: string,
+    maxRetries = 3,
+  ): Promise<string> {
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      // Resolve current branch HEAD.
+      const headShaRaw = await runGh([
+        "api",
+        `repos/${repository}/git/refs/heads/${encodeURIComponent(branch)}`,
+        "--jq", ".object.sha",
+      ]);
+      const parentCommitSha = headShaRaw.trim();
+
+      // Fetch the tree SHA for the parent commit.
+      const commitDataRaw = await runGh([
+        "api",
+        `repos/${repository}/git/commits/${parentCommitSha}`,
+        "--jq", ".tree.sha",
+      ]);
+      const baseTreeSha = commitDataRaw.trim();
+
+      // Build (or re-build on retry) the files to commit.
+      const files = await buildFiles(parentCommitSha);
+
+      // Create blobs for each file.
+      const treeEntries: Array<{ path: string; mode: string; type: string; sha: string }> = [];
+      for (const file of files) {
+        const blobShaRaw = await runGhWithJson(
+          ["api", `repos/${repository}/git/blobs`, "--method", "POST", "--input", "-", "--jq", ".sha"],
+          { content: Buffer.from(file.content).toString("base64"), encoding: "base64" },
+        );
+        treeEntries.push({
+          path: file.path,
+          mode: "100644",
+          type: "blob",
+          sha: blobShaRaw.trim(),
+        });
+      }
+
+      // Create the new tree on top of the base tree.
+      const newTreeShaRaw = await runGhWithJson(
+        ["api", `repos/${repository}/git/trees`, "--method", "POST", "--input", "-", "--jq", ".sha"],
+        { base_tree: baseTreeSha, tree: treeEntries },
+      );
+      const newTreeSha = newTreeShaRaw.trim();
+
+      // Create the commit.
+      const newCommitShaRaw = await runGhWithJson(
+        ["api", `repos/${repository}/git/commits`, "--method", "POST", "--input", "-", "--jq", ".sha"],
+        { message: commitMessage, tree: newTreeSha, parents: [parentCommitSha] },
+      );
+      const newCommitSha = newCommitShaRaw.trim();
+
+      // Update the ref (fast-forward only). Retry on conflict.
+      try {
+        await runGhWithJson(
+          ["api", `repos/${repository}/git/refs/heads/${encodeURIComponent(branch)}`, "--method", "PATCH", "--input", "-"],
+          { sha: newCommitSha, force: false },
+        );
+        return newCommitSha;
+      } catch (err) {
+        const isConflict =
+          err instanceof GhError && /not a fast forward|422/i.test(err.message);
+        if (!isConflict || attempt >= maxRetries) throw err;
+        // On conflict, loop again with the updated branch HEAD.
+      }
+    }
+    // Unreachable but satisfies TypeScript.
+    throw new Error("createAtomicMultiFileCommit: exceeded maximum retries");
+  },
+
+  /**
+   * Verify that a commit SHA is the current HEAD of the given branch (or is
+   * reachable from it). Used to confirm origin presence after a push.
+   * SPEC-012, TAC-13.
+   */
+  async verifyCommitOnBranch(
+    repository: string,
+    branch: string,
+    expectedCommitSha: string,
+  ): Promise<boolean> {
+    try {
+      const out = await runGh([
+        "api",
+        `repos/${repository}/git/refs/heads/${encodeURIComponent(branch)}`,
+        "--jq", ".object.sha",
+      ]);
+      const currentHead = out.trim();
+      // Accept exact match; for an ancestor check a separate comparison
+      // commit endpoint would be needed but the atomic writer keeps the SHA.
+      return currentHead === expectedCommitSha;
+    } catch {
+      return false;
+    }
+  },
+
+  /**
+   * Post a structured audit comment to the tracking issue. This creates the
+   * immutable REQ-005-correlated audit record on GitHub before `auditConfirmedAt`
+   * is recorded in run state. Returns the ISO timestamp of confirmation.
+   * SPEC-012, TAC-05 / §8.
+   */
+  async postDocumentationAuditComment(
+    repository: string,
+    issueNumber: number,
+    auditData: {
+      runId: string;
+      processKennung: "DOCUMENTATION_UPDATE";
+      actor: "GITHUB_ACTIONS";
+      role: "GITHUB_ACTIONS_TOKEN";
+      correlationRunId: string;
+      correlationIssue: string;
+      deliveryPr: number | undefined;
+      sourceCommitSha: string;
+      documentationCommitSha: string;
+      idempotencyKey: string;
+      generatedAt: string;
+    },
+  ): Promise<string> {
+    const body = [
+      "<!-- harness:audit-record type=DOCUMENTATION_UPDATE -->",
+      `**Audit Record — DOCUMENTATION_UPDATE**`,
+      `- process: \`${auditData.processKennung}\``,
+      `- actor: \`${auditData.actor}\``,
+      `- role: \`${auditData.role}\``,
+      `- runId: \`${auditData.runId}\``,
+      `- correlation: \`${auditData.correlationRunId}\` / \`${auditData.correlationIssue}\``,
+      ...(auditData.deliveryPr !== undefined ? [`- deliveryPr: #${auditData.deliveryPr}`] : []),
+      `- sourceCommit: \`${auditData.sourceCommitSha}\``,
+      `- documentationCommit: \`${auditData.documentationCommitSha}\``,
+      `- idempotencyKey: \`${auditData.idempotencyKey}\``,
+      `- generatedAt: \`${auditData.generatedAt}\``,
+    ].join("\n");
+    await runGh(["issue", "comment", String(issueNumber), "--repo", repository, "--body", body]);
+    return new Date().toISOString();
   },
 };

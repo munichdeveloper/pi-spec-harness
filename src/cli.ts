@@ -54,7 +54,7 @@ import type { GateDecisionContext, GateType, HumanGateIssueRef, PhaseId, RunStat
 import { SCHEMA_VERSION } from "./state/types.js";
 import { renderRunSnapshot, buildSnapshotFilename } from "./documentation/run-snapshot.js";
 import { generateRunIndex, generateObsidianBase, parseRunIndexEntry } from "./documentation/run-index.js";
-import { validateDocumentationPath } from "./documentation/path-validator.js";
+import { validateDocumentationPath, validateSnapshotContent } from "./documentation/path-validator.js";
 import { DEFAULT_RUN_DOCUMENTATION_CONFIG } from "./documentation/run-documentation-config.js";
 
 interface StoreArgs {
@@ -468,10 +468,14 @@ async function cmdPersistRunDocumentation(argv: {
 
   const store = new IssueStateStore(repository, issueNumber);
   let state = await store.load();
-  const next = computeNextAction(state);
 
-  // Idempotent: skip if documentation is already persisted.
-  if (state.documentationSnapshot?.status === "persisted") {
+  // Idempotent: skip if documentation is already persisted and audited.
+  if (
+    state.documentationSnapshot?.status === "persisted" &&
+    state.documentationSnapshot.commitSha &&
+    state.documentationSnapshot.auditConfirmedAt
+  ) {
+    const next = computeNextAction(state);
     printResult(
       "persist-run-documentation",
       { skipped: "already-persisted", documentationSnapshot: state.documentationSnapshot, nextAction: next },
@@ -480,12 +484,10 @@ async function cmdPersistRunDocumentation(argv: {
     return;
   }
 
+  const next = computeNextAction(state);
   if (next.action !== "persist-run-documentation") {
     throw new Error(`run '${state.runId}' is not ready for documentation persistence: ${next.detail}`);
   }
-
-  // Resolve HEAD SHA of the default branch as the source reference.
-  const sourceHeadSha = await github.getBranchSha(repository, branch);
 
   const harnessVersion = argv.harnessVersion ?? "unknown";
 
@@ -495,51 +497,183 @@ async function cmdPersistRunDocumentation(argv: {
     url: `https://github.com/${repository}/issues/${issueNumber}`,
   };
 
-  // Build stable idempotency keys.
-  const idempotencyKey = `persist-run-doc-${state.runId}-${issueNumber}`;
-  const auditIdempotencyKey = `audit-run-doc-${state.runId}-${issueNumber}`;
+  // ---- Phase 1: Build or reuse the prepared checkpoint (Finding 4 fix) ----
+  //
+  // `generatedAt`, paths, and idempotency keys must be persisted in state
+  // BEFORE the first external write so that every retry produces byte-identical
+  // content. If a `prepared` or `publishing` checkpoint already exists, reuse
+  // its keys and timestamps rather than generating new ones.
 
-  // Render the snapshot document.
-  const snapshotContent = renderRunSnapshot({
-    state,
-    trackingIssue,
-    repositoryDefaultBranch: branch,
-    harnessVersion,
-  });
+  const existing = state.documentationSnapshot;
+  const isResuming = existing && (existing.status === "prepared" || existing.status === "publishing");
 
-  // Derive the snapshot path from the run ID and spec.
+  const generatedAt = isResuming ? existing.generatedAt : new Date().toISOString();
+  const idempotencyKey = isResuming
+    ? existing.idempotencyKey
+    : `persist-run-doc-${state.runId}-${issueNumber}`;
+  const auditIdempotencyKey = isResuming
+    ? existing.auditIdempotencyKey
+    : `audit-run-doc-${state.runId}-${issueNumber}`;
   const snapshotFilename = buildSnapshotFilename(state.runId, state.spec);
-  const snapshotPath = `${generatedDirectory}/${snapshotFilename}`;
+  const snapshotPath = isResuming ? existing.path : `${generatedDirectory}/${snapshotFilename}`;
 
-  // Validate all three destination paths before touching any files.
+  // Validate all three destination paths before touching any state.
   validateDocumentationPath(snapshotPath);
   validateDocumentationPath(indexPath);
   validateDocumentationPath(obsidianBasePath);
 
-  const generatedAt = new Date().toISOString();
+  // Resolve HEAD SHA of the default branch as the source reference.
+  const sourceHeadSha = isResuming ? existing.sourceHeadSha : await github.getBranchSha(repository, branch);
 
-  // Build the run index from the new snapshot entry only.
-  const indexEntry = parseRunIndexEntry(snapshotPath, snapshotContent);
-  const indexContent = generateRunIndex(indexEntry ? [indexEntry] : [], generatedAt);
-  const obsidianContent = generateObsidianBase(indexEntry ? [indexEntry] : [], generatedAt);
+  if (!isResuming) {
+    // Persist the `prepared` checkpoint BEFORE the first external write.
+    state = upsertDocumentationSnapshot(state, {
+      schemaVersion: 1,
+      status: "prepared",
+      idempotencyKey,
+      path: snapshotPath,
+      indexPath,
+      obsidianBasePath,
+      generatedAt,
+      sourceHeadSha,
+      auditIdempotencyKey,
+    });
+    await store.save(state);
+  }
 
-  // Write each file to GitHub (create or update idempotently).
-  // Each call produces its own commit; we record the snapshot file commit SHA
-  // as the canonical documentation commit SHA for the checkpoint.
-  const upsertFile = async (path: string, content: string): Promise<string> => {
-    const existing = await github.getFileContentIfExists(repository, path, branch);
-    const msg = `docs(harness): persist run documentation snapshot for ${state.runId}`;
-    if (existing) {
-      return github.updateFileOnDefaultBranch(repository, path, content, existing.blobSha, msg);
+  // ---- Phase 2: Atomic three-file commit (Finding 3 fix) ----
+  //
+  // If we are resuming a `publishing` checkpoint (commit confirmed on origin),
+  // skip the write phase and go directly to audit confirmation.
+
+  let commitSha: string;
+
+  if (state.documentationSnapshot?.status === "publishing" && state.documentationSnapshot.commitSha) {
+    // Resume: verify the commit is already on origin.
+    const onOrigin = await github.verifyCommitOnBranch(
+      repository,
+      branch,
+      state.documentationSnapshot.commitSha,
+    );
+    if (!onOrigin) {
+      // Commit was recorded but not confirmed on origin; fall through to re-commit.
+      commitSha = await performAtomicDocCommit();
+    } else {
+      commitSha = state.documentationSnapshot.commitSha;
     }
-    return github.createFileOnDefaultBranch(repository, path, content, msg);
-  };
+  } else {
+    commitSha = await performAtomicDocCommit();
+  }
 
-  const commitSha = await upsertFile(snapshotPath, snapshotContent);
-  await upsertFile(indexPath, indexContent);
-  await upsertFile(obsidianBasePath, obsidianContent);
+  async function performAtomicDocCommit(): Promise<string> {
+    const commitMessage = `docs(harness): persist run documentation snapshot for ${state.runId}`;
 
-  // Record the persisted checkpoint and audit confirmation in run state.
+    // Finding 2 fix: read existing snapshots from generatedDirectory so the
+    // index includes all previously generated runs, not just the new one.
+    const sha = await github.createAtomicMultiFileCommit(
+      repository,
+      branch,
+      async (parentCommitSha) => {
+        // Re-render snapshot content (deterministic; same state + generatedAt
+        // always produces byte-identical output per SPEC-012 TAC-06).
+        const snapshotContent = renderRunSnapshot({
+          state,
+          trackingIssue,
+          repositoryDefaultBranch: branch,
+          harnessVersion,
+          generatedAt,
+        });
+
+        // Finding 5 fix: validate snapshot content for PII / secrets / evidence URLs.
+        validateSnapshotContent(snapshotContent);
+
+        // Read all existing .md snapshots in the generatedDirectory on the current
+        // branch HEAD so the index is always complete and cumulative.
+        const existingFiles = await github.listDirectoryMarkdownFiles(
+          repository,
+          generatedDirectory,
+          parentCommitSha,
+        );
+
+        const allEntries = [];
+        for (const file of existingFiles) {
+          if (file.path === snapshotPath) continue; // will be replaced by new content
+          try {
+            const { content } = await github.getFileContent(repository, file.path, parentCommitSha);
+            const entry = parseRunIndexEntry(file.path, content);
+            if (entry) allEntries.push(entry);
+          } catch {
+            // Skip unreadable files; don't fail the whole commit.
+          }
+        }
+        // Add the new/updated snapshot entry.
+        const newEntry = parseRunIndexEntry(snapshotPath, snapshotContent);
+        if (newEntry) allEntries.push(newEntry);
+
+        const indexContent = generateRunIndex(allEntries, generatedAt);
+        const obsidianContent = generateObsidianBase(allEntries, generatedAt);
+
+        return [
+          { path: snapshotPath, content: snapshotContent },
+          { path: indexPath, content: indexContent },
+          { path: obsidianBasePath, content: obsidianContent },
+        ];
+      },
+      commitMessage,
+      3,
+    );
+
+    // Verify the commit landed on origin/<branch> immediately after push.
+    const confirmed = await github.verifyCommitOnBranch(repository, branch, sha);
+    if (!confirmed) {
+      throw new Error(
+        `documentation commit ${sha} was not confirmed on origin/${branch}; aborting`,
+      );
+    }
+
+    return sha;
+  }
+
+  // Save `publishing` checkpoint (commit confirmed on origin) before audit.
+  state = upsertDocumentationSnapshot(state, {
+    schemaVersion: 1,
+    status: "publishing",
+    idempotencyKey,
+    path: snapshotPath,
+    indexPath,
+    obsidianBasePath,
+    generatedAt,
+    sourceHeadSha,
+    commitSha,
+    auditIdempotencyKey,
+  });
+  await store.save(state);
+
+  // ---- Phase 3: Audit confirmation (Finding 1 fix) ----
+  //
+  // Post a structured REQ-005-correlated DOCUMENTATION_UPDATE record to the
+  // tracking issue. Only after this confirmed external GitHub effect is
+  // `auditConfirmedAt` recorded in run state.
+
+  const auditConfirmedAt = await github.postDocumentationAuditComment(
+    repository,
+    issueNumber,
+    {
+      runId: state.runId,
+      processKennung: "DOCUMENTATION_UPDATE",
+      actor: "GITHUB_ACTIONS",
+      role: "GITHUB_ACTIONS_TOKEN",
+      correlationRunId: state.runId,
+      correlationIssue: `${repository}#${issueNumber}`,
+      deliveryPr: state.deliveryPullRequest,
+      sourceCommitSha: sourceHeadSha,
+      documentationCommitSha: commitSha,
+      idempotencyKey: auditIdempotencyKey,
+      generatedAt,
+    },
+  );
+
+  // Transition to `persisted` only after the audit comment is confirmed.
   state = upsertDocumentationSnapshot(state, {
     schemaVersion: 1,
     status: "persisted",
@@ -551,10 +685,10 @@ async function cmdPersistRunDocumentation(argv: {
     sourceHeadSha,
     commitSha,
     auditIdempotencyKey,
-    auditConfirmedAt: new Date().toISOString(),
+    auditConfirmedAt,
   });
-
   await store.save(state);
+
   const following = computeNextAction(state);
   printResult(
     "persist-run-documentation",
@@ -564,6 +698,7 @@ async function cmdPersistRunDocumentation(argv: {
       obsidianBasePath,
       commitSha,
       sourceHeadSha,
+      auditConfirmedAt,
       documentationSnapshot: state.documentationSnapshot,
       nextAction: following,
     },

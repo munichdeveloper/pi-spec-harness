@@ -17,6 +17,10 @@ export interface RunSnapshotInput {
   trackingIssue: HumanGateIssueRef;
   repositoryDefaultBranch: string;
   harnessVersion: string;
+  /** Override the snapshot generation timestamp. When absent the snapshot's
+   *  `documentationSnapshot.generatedAt` is used. SPEC-012 TAC-06 (idempotency
+   *  on retry: same generatedAt → byte-identical output). */
+  generatedAt?: string;
 }
 
 /**
@@ -57,6 +61,10 @@ function ts(v: string | undefined): string {
 export function renderRunSnapshot(input: RunSnapshotInput): string {
   const { state, trackingIssue, repositoryDefaultBranch, harnessVersion } = input;
   const snap = state.documentationSnapshot;
+  // Use the explicit generatedAt override when provided (ensures byte-identical
+  // output on retry by using the same persisted timestamp). Fall back to the
+  // checkpoint's own generatedAt, then to null.
+  const effectiveGeneratedAt = input.generatedAt ?? snap?.generatedAt ?? null;
 
   // Sort gates stably by id for deterministic output.
   const sortedGates = [...state.gates].sort((a, b) => a.id.localeCompare(b.id));
@@ -88,7 +96,7 @@ export function renderRunSnapshot(input: RunSnapshotInput): string {
     `delivery_merged_at: "${ts(state.deliveryMergedAt)}"`,
     `delivery_merge_commit_sha: "${nullable(state.deliveryMergeCommitSha)}"`,
     `snapshot_commit_sha: "${nullable(snap?.commitSha)}"`,
-    `snapshot_generated_at: "${nullable(snap?.generatedAt)}"`,
+    `snapshot_generated_at: "${nullable(effectiveGeneratedAt)}"`,
     `source_head_sha: "${nullable(snap?.sourceHeadSha)}"`,
     `default_branch: "${repositoryDefaultBranch}"`,
     `harness_version: "${harnessVersion}"`,

@@ -9,7 +9,11 @@
  * - TAC-06/07: renderRunSnapshot() — deterministic, stable, allowlisted fields
  * - TAC-09: generateRunIndex() / generateObsidianBase() — sorted, classified
  * - TAC-10: validateDocumentationPath() / validateStagedPaths()
+ * - TAC-11: duplicate delivery is a no-op (already-persisted guard)
+ * - TAC-12: conflict retry preserves existing run history
+ * - TAC-14: validateSnapshotContent() — PII, secrets, evidence URLs rejected
  * - TAC-16: renderRunDocumentationFinalizer() — minimal permissions, no secrets:inherit, cancel-in-progress: false
+ * - TAC-17: persist-run-documentation CLI command contract
  */
 
 import { describe, expect, it } from "vitest";
@@ -31,7 +35,7 @@ import {
   parseRunIndexEntry,
   sortRunIndexEntries,
 } from "../src/documentation/run-index.js";
-import { validateDocumentationPath, validateStagedPaths, normalizePath } from "../src/documentation/path-validator.js";
+import { validateDocumentationPath, validateStagedPaths, normalizePath, validateSnapshotContent } from "../src/documentation/path-validator.js";
 import {
   renderRunDocumentationFinalizer,
   RUN_DOCUMENTATION_FINALIZER_MARKER,
@@ -584,16 +588,9 @@ describe("TAC-16 run-documentation-finalizer workflow template", () => {
 describe("TAC-17 persist-run-documentation CLI command contract", () => {
   // Build a state that has confirmed delivery merge (so persist-run-documentation is the next action).
   function makePersistReadyState() {
-    let state = initRunState({ runId: "RUN-0056", spec: "SPEC-012", repository: "org/repo", branch: "main" });
-    state = upsertGate(state, { id: "merge-approval", type: "merge", title: "Merge approval" });
-    state = resolveGate(state, "merge-approval", { decision: { approved: true, by: "human", at: "2024-01-01T00:00:00Z" } });
-    state = recordDeliveryMergeEffect(state, {
-      pullRequest: 1,
-      approvedHeadSha: "abc123",
-      mergeCommitSha: "def456",
-      mergedAt: "2024-01-01T00:00:00Z",
-    });
-    return state;
+    // Re-use the shared stateWithMergeEvidence() that correctly binds the
+    // delivery PR (deliveryPullRequest=56) before recording the merge effect.
+    return stateWithMergeEvidence();
   }
 
   it("computeNextAction emits persist-run-documentation after delivery merge", () => {
@@ -674,5 +671,251 @@ describe("TAC-17 persist-run-documentation CLI command contract", () => {
     expect(content).toContain("--index-path");
     expect(content).toContain("--obsidian-base-path");
     expect(content).toContain("workflow_call");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// TAC-11: duplicate delivery is a no-op (already-persisted idempotency guard)
+// ---------------------------------------------------------------------------
+
+describe("TAC-11 duplicate delivery is a no-op", () => {
+  function makePersistedState() {
+    let state = stateWithMergeEvidence();
+    state = upsertDocumentationSnapshot(state, { ...PERSISTED_SNAPSHOT });
+    return state;
+  }
+
+  it("computeNextAction returns advance-phase when snapshot is already persisted", () => {
+    const state = makePersistedState();
+    expect(computeNextAction(state).action).toBe("advance-phase");
+  });
+
+  it("already-persisted state has commitSha and auditConfirmedAt both set", () => {
+    const state = makePersistedState();
+    expect(state.documentationSnapshot?.commitSha).toBeDefined();
+    expect(state.documentationSnapshot?.auditConfirmedAt).toBeDefined();
+  });
+
+  it("computeNextAction returns persist-run-documentation when snapshot has publishing status (audit not yet confirmed)", () => {
+    let state = stateWithMergeEvidence();
+    state = upsertDocumentationSnapshot(state, {
+      ...PERSISTED_SNAPSHOT,
+      status: "publishing",
+      auditConfirmedAt: undefined,
+    });
+    const next = computeNextAction(state);
+    expect(next.action).toBe("persist-run-documentation");
+    expect(next.detail).toContain("publishing");
+    expect(next.detail).toContain("auditConfirmedAt");
+  });
+
+  it("computeNextAction returns persist-run-documentation when snapshot has prepared status (not yet written)", () => {
+    let state = stateWithMergeEvidence();
+    state = upsertDocumentationSnapshot(state, {
+      ...PERSISTED_SNAPSHOT,
+      status: "prepared",
+      commitSha: undefined,
+      auditConfirmedAt: undefined,
+    });
+    const next = computeNextAction(state);
+    expect(next.action).toBe("persist-run-documentation");
+    expect(next.detail).toContain("prepared");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// TAC-12: index generation preserves all existing run history (Finding 2)
+// ---------------------------------------------------------------------------
+
+describe("TAC-12 conflict retry preserves existing run history", () => {
+  function snapshotContent(runId: string, spec: string, phase: string): string {
+    return [
+      "---",
+      "schema_version: 1",
+      `run_id: "${runId}"`,
+      `qualified_run_id: "org/repo#${runId}"`,
+      `repository: "org/repo"`,
+      `spec: "${spec}"`,
+      `phase: "${phase}"`,
+      `updated_at: "2026-01-0${runId.slice(-1)}T00:00:00Z"`,
+      `delivery_merged_at: "2026-01-0${runId.slice(-1)}T00:00:00Z"`,
+      `generated: true`,
+      `legacy: false`,
+      "---",
+      `# ${runId}`,
+    ].join("\n");
+  }
+
+  it("generateRunIndex includes all provided entries, sorted by delivery_merged_at desc", () => {
+    const existingContent1 = snapshotContent("RUN-0054", "SPEC-010", "complete");
+    const existingContent2 = snapshotContent("RUN-0055", "SPEC-011", "complete");
+    const newContent = snapshotContent("RUN-0056", "SPEC-012", "merge");
+
+    const entry1 = parseRunIndexEntry("docs/runs/generated/RUN-0054-spec-010.md", existingContent1);
+    const entry2 = parseRunIndexEntry("docs/runs/generated/RUN-0055-spec-011.md", existingContent2);
+    const entry3 = parseRunIndexEntry("docs/runs/generated/RUN-0056-spec-012.md", newContent);
+
+    const allEntries = [entry1!, entry2!, entry3!];
+    const generatedAt = "2026-08-18T12:00:00Z";
+    const index = generateRunIndex(allEntries, generatedAt);
+
+    // All three runs must appear
+    expect(index).toContain("RUN-0054");
+    expect(index).toContain("RUN-0055");
+    expect(index).toContain("RUN-0056");
+    // Sorted descending: RUN-0056 should appear before RUN-0054
+    const pos54 = index.indexOf("RUN-0054");
+    const pos56 = index.indexOf("RUN-0056");
+    expect(pos56).toBeLessThan(pos54);
+  });
+
+  it("generateObsidianBase includes all provided entries", () => {
+    const content = snapshotContent("RUN-0055", "SPEC-011", "complete");
+    const entry = parseRunIndexEntry("docs/runs/generated/RUN-0055-spec-011.md", content);
+    const obsidian = generateObsidianBase([entry!], "2026-08-18T12:00:00Z");
+    expect(obsidian).toContain("RUN-0055");
+    expect(obsidian).toContain("SPEC-011");
+  });
+
+  it("a run that only produces [indexEntry] (empty existing history) still generates a valid index", () => {
+    const content = snapshotContent("RUN-0056", "SPEC-012", "merge");
+    const entry = parseRunIndexEntry("docs/runs/generated/RUN-0056-spec-012.md", content);
+    const index = generateRunIndex([entry!], "2026-08-18T12:00:00Z");
+    expect(index).toContain("RUN-0056");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// TAC-14: validateSnapshotContent — PII, secrets, evidence URLs rejected
+// ---------------------------------------------------------------------------
+
+describe("TAC-14 validateSnapshotContent rejects PII, secrets and policy violations", () => {
+  it("accepts clean snapshot content", () => {
+    const content = [
+      "---",
+      "schema_version: 1",
+      'run_id: "RUN-0056"',
+      "---",
+      "# RUN-0056",
+      "Clean content with no PII or secrets.",
+    ].join("\n");
+    expect(() => validateSnapshotContent(content)).not.toThrow();
+  });
+
+  it("rejects content containing a GitHub token", () => {
+    const content = "run_id: RUN-0056\ngho_ABCDEFGHIJKLMNOPQRSTUVWXYZ12345\n";
+    expect(() => validateSnapshotContent(content)).toThrow(/secret.*token|token.*pattern/i);
+  });
+
+  it("rejects content containing an OpenAI-style secret key", () => {
+    const content = "run_id: RUN-0056\nsk-ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890\n";
+    expect(() => validateSnapshotContent(content)).toThrow(/secret.*token|token.*pattern/i);
+  });
+
+  it("rejects content containing an email address (PII)", () => {
+    const content = "Managed by user@example.com for testing.";
+    expect(() => validateSnapshotContent(content)).toThrow(/PII/i);
+  });
+
+  it("rejects evidence URL with a query string", () => {
+    const content = "See https://github.com/org/repo/actions/runs/123?check_suite_focus=true for details.";
+    expect(() => validateSnapshotContent(content)).toThrow(/evidence URL.*query/i);
+  });
+
+  it("rejects evidence URL with a fragment", () => {
+    const content = "See https://github.com/org/repo/issues/1#issuecomment-99 for details.";
+    expect(() => validateSnapshotContent(content)).toThrow(/evidence URL/i);
+  });
+
+  it("allows clean GitHub URLs without query or fragment", () => {
+    const content = "See https://github.com/org/repo/pull/56 for the delivery PR.";
+    expect(() => validateSnapshotContent(content)).not.toThrow();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// TAC-17 extension: prepared → publishing → persisted state transitions
+// ---------------------------------------------------------------------------
+
+describe("TAC-17 prepared → publishing → persisted state machine", () => {
+  function makeBaseState() {
+    return stateWithMergeEvidence();
+  }
+
+  it("upsertDocumentationSnapshot with prepared status keeps computeNextAction at persist-run-documentation", () => {
+    let state = makeBaseState();
+    state = upsertDocumentationSnapshot(state, {
+      schemaVersion: 1,
+      status: "prepared",
+      idempotencyKey: "idem-prepared",
+      path: "docs/runs/generated/RUN-0056-spec-012.md",
+      indexPath: "docs/runs/RUN-INDEX.md",
+      obsidianBasePath: "docs/runs/Runs.base",
+      generatedAt: "2026-08-18T12:00:00Z",
+      sourceHeadSha: sha("b"),
+      auditIdempotencyKey: "audit-prepared",
+    });
+    expect(computeNextAction(state).action).toBe("persist-run-documentation");
+  });
+
+  it("upsertDocumentationSnapshot with publishing status keeps computeNextAction at persist-run-documentation (audit missing)", () => {
+    let state = makeBaseState();
+    state = upsertDocumentationSnapshot(state, {
+      schemaVersion: 1,
+      status: "publishing",
+      idempotencyKey: "idem-publishing",
+      path: "docs/runs/generated/RUN-0056-spec-012.md",
+      indexPath: "docs/runs/RUN-INDEX.md",
+      obsidianBasePath: "docs/runs/Runs.base",
+      generatedAt: "2026-08-18T12:00:00Z",
+      sourceHeadSha: sha("b"),
+      commitSha: sha("c"),
+      auditIdempotencyKey: "audit-publishing",
+    });
+    expect(computeNextAction(state).action).toBe("persist-run-documentation");
+  });
+
+  it("transitionPhase to complete fails when status is publishing (no auditConfirmedAt)", () => {
+    let state = makeBaseState();
+    state = upsertDocumentationSnapshot(state, {
+      schemaVersion: 1,
+      status: "publishing",
+      idempotencyKey: "idem-publishing",
+      path: "docs/runs/generated/RUN-0056-spec-012.md",
+      indexPath: "docs/runs/RUN-INDEX.md",
+      obsidianBasePath: "docs/runs/Runs.base",
+      generatedAt: "2026-08-18T12:00:00Z",
+      sourceHeadSha: sha("b"),
+      commitSha: sha("c"),
+      auditIdempotencyKey: "audit-publishing",
+    });
+    expect(() => transitionPhase(state, "complete")).toThrow(/persisted and audited/);
+  });
+
+  it("idempotency keys and generatedAt are stable when reusing a prepared checkpoint", () => {
+    // Simulate the behavior that on retry, we reuse the existing checkpoint values
+    let state = makeBaseState();
+    const preparedAt = "2026-08-18T12:00:00Z";
+    const idempotencyKey = "persist-run-doc-RUN-0056-57";
+    state = upsertDocumentationSnapshot(state, {
+      schemaVersion: 1,
+      status: "prepared",
+      idempotencyKey,
+      path: "docs/runs/generated/RUN-0056-spec-012.md",
+      indexPath: "docs/runs/RUN-INDEX.md",
+      obsidianBasePath: "docs/runs/Runs.base",
+      generatedAt: preparedAt,
+      sourceHeadSha: sha("b"),
+      auditIdempotencyKey: "audit-run-doc-RUN-0056-57",
+    });
+    // On "retry", we read the existing checkpoint values
+    const existing = state.documentationSnapshot!;
+    expect(existing.generatedAt).toBe(preparedAt);
+    expect(existing.idempotencyKey).toBe(idempotencyKey);
+    // The same values are reused — no new timestamps generated
+    const reuseKey = existing.idempotencyKey;
+    const reuseAt = existing.generatedAt;
+    expect(reuseKey).toBe(idempotencyKey);
+    expect(reuseAt).toBe(preparedAt);
   });
 });

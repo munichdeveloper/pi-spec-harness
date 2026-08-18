@@ -122,3 +122,57 @@ export function validateStagedPaths(
     );
   }
 }
+
+// ---------------------------------------------------------------------------
+// SPEC-012 TAC-14: Content safety validation (PII, secrets, evidence URLs)
+// ---------------------------------------------------------------------------
+
+/** Token/secret patterns that must never appear in rendered documentation. */
+const CONTENT_SECRET_PATTERNS: RegExp[] = [
+  /gh[oprsu]_[A-Za-z0-9]{20,}/,        // GitHub tokens
+  /sk-[A-Za-z0-9]{20,}/,               // OpenAI/Anthropic-style secret keys
+  /xox[baprs]-[A-Za-z0-9-]{10,}/,      // Slack tokens
+  /AKIA[0-9A-Z]{16}/,                   // AWS access key id
+];
+
+/** PII patterns that must not appear in rendered documentation. */
+const PII_PATTERNS: RegExp[] = [
+  // Email addresses
+  /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/,
+  // Phone numbers in common formats (+1 555-555-5555, (555) 555-5555 etc.)
+  // Word-boundary anchors prevent false positives on numeric sequences.
+  /\b(?:\+\d{1,3}[\s.-])?\(?\d{3}\)?[\s.-]\d{3}[\s.-]\d{4}\b/,
+];
+
+/**
+ * Evidence URL pattern: a URL with a query string (`?...`) or fragment (`#...`)
+ * is not allowed in documentation (policy: evidence URLs must be clean).
+ */
+const EVIDENCE_URL_WITH_QUERY_OR_FRAGMENT = /https?:\/\/[^\s"']+[?#][^\s"']*/;
+
+/**
+ * Validate the rendered snapshot content for PII, secrets, and policy
+ * violations. Throws a descriptive error if any pattern is matched.
+ * SPEC-012 TAC-14.
+ */
+export function validateSnapshotContent(content: string): void {
+  for (const pattern of CONTENT_SECRET_PATTERNS) {
+    if (pattern.test(content)) {
+      throw new Error(
+        `snapshot content rejected: matches secret/token pattern ${pattern}`,
+      );
+    }
+  }
+  for (const pattern of PII_PATTERNS) {
+    if (pattern.test(content)) {
+      throw new Error(
+        `snapshot content rejected: matches PII pattern ${pattern}`,
+      );
+    }
+  }
+  if (EVIDENCE_URL_WITH_QUERY_OR_FRAGMENT.test(content)) {
+    throw new Error(
+      "snapshot content rejected: contains evidence URL with query string or fragment",
+    );
+  }
+}
