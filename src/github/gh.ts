@@ -845,6 +845,8 @@ export const github = {
     },
   ): Promise<string> {
     // --- Idempotency check: scan existing comments for the same key ---
+    // Filter in JavaScript rather than embedding the key in jq to avoid injection
+    // if the idempotency key ever contains characters special to jq (e.g. `"`).
     const idempotencyMarker = `idempotencyKey: \`${auditData.idempotencyKey}\``;
     try {
       const listOut = await runGh([
@@ -852,12 +854,13 @@ export const github = {
         `repos/${repository}/issues/${issueNumber}/comments`,
         "--paginate",
         "--jq",
-        `[.[] | select(.body | contains("${idempotencyMarker}")) | .created_at] | first`,
+        "[.[] | {created_at, body}]",
       ]);
-      const existing = listOut.trim();
-      if (existing && existing !== "null") {
+      const comments = JSON.parse(listOut.trim() || "[]") as Array<{ created_at: string; body: string }>;
+      const existingComment = comments.find((c) => c.body.includes(idempotencyMarker));
+      if (existingComment) {
         // Audit record already confirmed; return the original confirmed timestamp.
-        return existing;
+        return existingComment.created_at;
       }
     } catch {
       // If listing fails (e.g. rate limit), fall through to creation attempt.
