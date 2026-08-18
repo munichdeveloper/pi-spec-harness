@@ -30,6 +30,7 @@ import type { StateStore } from "./state/state-store.js";
 import { FileStateStore } from "./state/store.js";
 import {
   PHASE_ORDER,
+  classifyDeliveryPrMergeEffect,
   computeNextAction,
   bindDeliveryPullRequest,
   bindImplementationPullRequest,
@@ -38,8 +39,10 @@ import {
   findPendingGateCleanup,
   findPendingGatePublication,
   finishIteration,
+  findPassedMergeApprovalGate,
   initRunState,
   needsGateReconciliation,
+  recordDeliveryMergeEffect,
   reconcileInit,
   resolveGate,
   startIteration,
@@ -1173,6 +1176,118 @@ async function cmdImplPrMerge(argv: StoreArgs): Promise<void> {
 }
 
 /**
+ * Persist the GitHub-verified merge effect of the bound delivery PR.
+ * A passed merge-approval gate authorises the SHA, but the run may complete
+ * only after GitHub reports the PR as merged and exposes the resulting merge commit.
+ */
+async function cmdDeliveryPrMergeEffect(
+  argv: StoreArgs & { pullRequest?: number },
+): Promise<void> {
+  const store = await resolveExistingStore(argv);
+  let state = await store.load();
+
+  const classification = classifyDeliveryPrMergeEffect(state, argv.pullRequest);
+  if (classification.kind === "unbound") {
+    if (argv.pullRequest !== undefined) {
+      throw new Error(`no delivery PR bound on run '${state.runId}'`);
+    }
+    const next = computeNextAction(state);
+    printResult(
+      "delivery-pr-merge-effect",
+      { skipped: "no-delivery-pr-bound", nextAction: next },
+      next.detail,
+    );
+    return;
+  }
+  if (classification.kind === "skip") {
+    const next = computeNextAction(state);
+    printResult(
+      "delivery-pr-merge-effect",
+      {
+        deliveryPullRequest: classification.deliveryPullRequest,
+        observedPullRequest: classification.observedPullRequest,
+        skipped: "non-delivery-pull-request",
+        nextAction: next,
+      },
+      next.detail,
+    );
+    return;
+  }
+
+  if (!argv.repository) {
+    throw new Error("--repository is required for delivery-pr-merge-effect");
+  }
+
+  const deliveryPr = classification.deliveryPullRequest;
+
+  const prData = await github.viewPullRequest(argv.repository, deliveryPr) as {
+    state?: string;
+    headRefOid?: string;
+    mergedAt?: string | null;
+    mergeCommit?: { oid?: string } | null;
+  };
+
+  if (prData.state !== "MERGED") {
+    const next = computeNextAction(state);
+    printResult(
+      "delivery-pr-merge-effect",
+      {
+        deliveryPullRequest: deliveryPr,
+        pending: "delivery-pr-not-yet-merged",
+        prState: prData.state ?? "unknown",
+        nextAction: next,
+      },
+      next.detail,
+    );
+    return;
+  }
+  if (!prData.headRefOid) {
+    throw new Error(`delivery PR #${deliveryPr} did not expose a HEAD SHA`);
+  }
+  if (!prData.mergedAt) {
+    throw new Error(`delivery PR #${deliveryPr} did not expose a mergedAt timestamp`);
+  }
+  if (!prData.mergeCommit?.oid) {
+    throw new Error(`delivery PR #${deliveryPr} did not expose a merge commit SHA`);
+  }
+
+  if (!findPassedMergeApprovalGate(state)) {
+    const next = computeNextAction(state);
+    printResult(
+      "delivery-pr-merge-effect",
+      {
+        deliveryPullRequest: deliveryPr,
+        pending: "no-passed-merge-approval-gate",
+        nextAction: next,
+      },
+      next.detail,
+    );
+    return;
+  }
+
+  state = recordDeliveryMergeEffect(state, {
+    pullRequest: deliveryPr,
+    approvedHeadSha: prData.headRefOid,
+    mergeCommitSha: prData.mergeCommit.oid,
+    mergedAt: prData.mergedAt,
+  });
+
+  await store.save(state);
+  const next = computeNextAction(state);
+  printResult(
+    "delivery-pr-merge-effect",
+    {
+      deliveryPullRequest: deliveryPr,
+      approvedHeadSha: prData.headRefOid,
+      deliveryMergeCommitSha: state.deliveryMergeCommitSha,
+      deliveryMergedAt: state.deliveryMergedAt,
+      nextAction: next,
+    },
+    next.detail,
+  );
+}
+
+/**
  * Run the bounded, idempotent orchestrator:
  * advances gate-free phases up to --max-steps times and stops at any gate,
  * error, or completion. Outputs the full step log and stop reason.
@@ -1688,6 +1803,20 @@ await yargs(hideBin(process.argv))
         state: argv.state,
         repository: argv.repository,
         runId: argv.runId,
+      }),
+  )
+  .command(
+    "delivery-pr-merge-effect",
+    "Persist the GitHub-verified merge effect for the bound delivery PR before completing the run",
+    (y) =>
+      storeOptions(y)
+        .option("pull-request", { type: "number", describe: "Delivery pull request number (defaults to the bound delivery PR)" }),
+    async (argv) =>
+      cmdDeliveryPrMergeEffect({
+        state: argv.state,
+        repository: argv.repository,
+        runId: argv.runId,
+        pullRequest: argv.pullRequest,
       }),
   )
   .command(

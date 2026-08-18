@@ -1,10 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
   acknowledgeRejectedGate,
+  bindDeliveryPullRequest,
+  bindImplementationPullRequest,
   bindPullRequest,
+  classifyDeliveryPrMergeEffect,
   computeNextAction,
   finishIteration,
   hasOpenHumanGate,
+  recordDeliveryMergeEffect,
   initRunState,
   reconcileInit,
   resolveGate,
@@ -157,15 +161,56 @@ describe("state-machine", () => {
     expect(() => transitionPhase(spec, "requirement")).toThrow(/invalid phase transition/);
   });
 
-  it("requires passed merge evidence before complete", () => {
-    let state = { ...baseRun(), phase: "merge" as const };
-    expect(() => transitionPhase(state, "complete")).toThrow(/merge evidence/);
-    state = upsertGate(state, { id: `merge-approval-${"a".repeat(40)}`, type: "human" });
-    state = resolveGate(state, `merge-approval-${"a".repeat(40)}`, {
+  it("requires persisted delivery merge evidence before complete", () => {
+    const approvedHeadSha = "a".repeat(40);
+    const mergeCommitSha = "b".repeat(40);
+    const gateId = `merge-approval-pr47-sha${approvedHeadSha.slice(0, 8)}`;
+    let state = {
+      ...baseRun(),
+      phase: "merge" as const,
+      deliveryPullRequest: 47,
+      deliveryHeadSha: approvedHeadSha,
+    };
+    expect(() => transitionPhase(state, "complete")).toThrow(/persisted delivery merge evidence/);
+    state = upsertGate(state, { id: gateId, type: "human", question: "Approve delivery merge?" });
+    state = resolveGate(state, gateId, {
       result: "passed",
       decision: { approved: true, by: "test", at: new Date().toISOString() },
     });
+    expect(computeNextAction(state).action).toBe("await-technical-gate");
+    expect(() => transitionPhase(state, "complete")).toThrow(/persisted delivery merge evidence/);
+
+    state = recordDeliveryMergeEffect(state, {
+      pullRequest: 47,
+      approvedHeadSha,
+      mergeCommitSha,
+      mergedAt: "2026-08-18T13:19:11Z",
+    });
+
+    expect(recordDeliveryMergeEffect(state, {
+      pullRequest: 47,
+      approvedHeadSha,
+      mergeCommitSha,
+      mergedAt: "2026-08-18T13:19:11Z",
+    })).toBe(state);
+    expect(state.deliveryMergeCommitSha).toBe(mergeCommitSha);
+    expect(state.deliveryMergedAt).toBe("2026-08-18T13:19:11Z");
     expect(transitionPhase(state, "complete").phase).toBe("complete");
+  });
+
+  it("skips delivery merge-effect persistence for implementation PR merge events", () => {
+    let state = bindDeliveryPullRequest(baseRun(), 47, "a".repeat(40));
+    state = bindImplementationPullRequest(state, 48, "b".repeat(40));
+
+    expect(classifyDeliveryPrMergeEffect(state, 48)).toEqual({
+      kind: "skip",
+      deliveryPullRequest: 47,
+      observedPullRequest: 48,
+    });
+    expect(classifyDeliveryPrMergeEffect(state, 47)).toEqual({
+      kind: "record",
+      deliveryPullRequest: 47,
+    });
   });
 
   it("binds one PR, permits a new checkpoint SHA, and invalidates review evidence", () => {

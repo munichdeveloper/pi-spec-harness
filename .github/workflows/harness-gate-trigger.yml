@@ -18,6 +18,7 @@ on:
 permissions:
   contents: read
   issues: write
+  pull-requests: read
 
 # TAC-10: serialise all gate processing repo-wide to avoid concurrent writes
 # to the same canonical issue-state.
@@ -60,18 +61,34 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
+          npm run harness -- resume \
+            --repository "${{ github.repository }}" \
+            --run-id "${{ steps.run.outputs.run_id }}"
+
+      - name: Reconcile delivery PR merge evidence (approval-first path)
+        id: merge_effect
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
           result="$(
-            npm run harness -- resume \
+            npm run harness -- delivery-pr-merge-effect \
               --repository "${{ github.repository }}" \
               --run-id "${{ steps.run.outputs.run_id }}"
           )"
           printf '%s\n' "$result"
           action="$(printf '%s\n' "$result" | sed -n '/^{/,$p' | jq -r '.result.nextAction.action')"
-          if [[ "$action" == "advance-phase" ]]; then
-            npm run harness -- orchestrate \
-              --repository "${{ github.repository }}" \
-              --run-id "${{ steps.run.outputs.run_id }}"
-          fi
+          echo "action=$action" >> "$GITHUB_OUTPUT"
+
+      - name: Orchestrate after gate decision
+        if: steps.merge_effect.outputs.action == 'advance-phase'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          npm run harness -- orchestrate \
+            --repository "${{ github.repository }}" \
+            --run-id "${{ steps.run.outputs.run_id }}"
 
   orchestrate-on-pr-event:
     # Orchestrate after implementation PR is merged or CI/review events occur
@@ -100,6 +117,17 @@ jobs:
           else
             echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
           fi
+
+      - name: Persist delivery PR merge effect
+        if: steps.run.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          npm run harness -- delivery-pr-merge-effect \
+            --repository "${{ github.repository }}" \
+            --run-id "${{ steps.run.outputs.run_id }}" \
+            --pull-request "${{ github.event.pull_request.number }}"
 
       - name: Orchestrate after PR merge
         if: steps.run.outputs.skip != 'true'

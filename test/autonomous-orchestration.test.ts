@@ -21,6 +21,7 @@ import {
   bindPullRequest,
   computeNextAction,
   initRunState,
+  recordDeliveryMergeEffect,
   reconcileInit,
   resolveGate,
   upsertGate,
@@ -149,14 +150,29 @@ describe("TAC-01 delivery and implementation PR binding", () => {
   });
 
   it("updating delivery SHA invalidates merge gates (stale head regression)", () => {
-    let state = bindDeliveryPullRequest(baseRun(), 10, sha("d"));
-    state = upsertGate(state, { id: "merge-approval-1", type: "merge" });
-    state = resolveGate(state, "merge-approval-1", { result: "passed", evidence: ["ci/old"] });
+    const approvedHeadSha = sha("d");
+    let state = bindDeliveryPullRequest(baseRun(), 10, approvedHeadSha);
+    state = upsertGate(state, {
+      id: `merge-approval-pr10-sha${approvedHeadSha.slice(0, 8)}`,
+      type: "human",
+      question: "Approve delivery merge?",
+    });
+    state = resolveGate(state, `merge-approval-pr10-sha${approvedHeadSha.slice(0, 8)}`, {
+      result: "passed",
+      decision: { approved: true, by: "munichdeveloper", at: "2026-08-18T13:17:42Z" },
+    });
+    state = recordDeliveryMergeEffect(state, {
+      pullRequest: 10,
+      approvedHeadSha,
+      mergeCommitSha: sha("c"),
+      mergedAt: "2026-08-18T13:19:11Z",
+    });
     // Now update the delivery head -- should invalidate the merge gate
     const rebound = bindDeliveryPullRequest(state, 10, sha("e"));
     expect(rebound.deliveryHeadSha).toBe(sha("e"));
-    expect(rebound.gates.find((g) => g.id === "merge-approval-1")?.result).toBe("pending");
-    expect(rebound.gates.find((g) => g.id === "merge-approval-1")?.evidence).toBeUndefined();
+    expect(rebound.gates.find((g) => g.id === `merge-approval-pr10-sha${approvedHeadSha.slice(0, 8)}`)).toBeUndefined();
+    expect(rebound.deliveryMergeCommitSha).toBeUndefined();
+    expect(rebound.deliveryMergedAt).toBeUndefined();
   });
 
   it("binds an implementation PR separately from the delivery PR", () => {
@@ -427,6 +443,137 @@ describe("TAC-04 orchestrator", () => {
     const result = await orchestrate(store, 2);
     // Should have advanced exactly 2 phases then stopped
     expect(result.steps.length).toBeLessThanOrEqual(2);
+  });
+
+  it("does not complete on merge approval alone, but completes after persisted delivery merge effect", async () => {
+    const approvedHeadSha = sha("a");
+    const gateId = `merge-approval-pr47-sha${approvedHeadSha.slice(0, 8)}`;
+    let state: RunState = {
+      ...baseRun(),
+      phase: "merge",
+      deliveryPullRequest: 47,
+      deliveryHeadSha: approvedHeadSha,
+    };
+    state = upsertGate(state, { id: gateId, type: "human", question: "Approve delivery merge?" });
+    state = resolveGate(state, gateId, {
+      result: "passed",
+      decision: { approved: true, by: "munichdeveloper", at: "2026-08-18T13:17:42Z" },
+    });
+
+    const states: RunState[] = [state];
+    const store = {
+      issueRef: undefined,
+      async load() { return states[states.length - 1]; },
+      async save(s: RunState) { states.push(s); },
+    };
+
+    const beforeMergeEffect = await orchestrate(store, 5);
+    expect(beforeMergeEffect.stopReason).toBe("open-gate");
+    expect(beforeMergeEffect.finalNextAction.action).toBe("await-technical-gate");
+    expect(states[states.length - 1].phase).toBe("merge");
+
+    state = recordDeliveryMergeEffect(states[states.length - 1], {
+      pullRequest: 47,
+      approvedHeadSha,
+      mergeCommitSha: sha("c"),
+      mergedAt: "2026-08-18T13:19:11Z",
+    });
+    states.push(state);
+
+    const afterMergeEffect = await orchestrate(store, 5);
+    expect(afterMergeEffect.stopReason).toBe("complete");
+    expect(states[states.length - 1].phase).toBe("complete");
+    expect(states[states.length - 1].deliveryMergeCommitSha).toBe(sha("c"));
+  });
+
+  it("event order: merge-first — persisted evidence is pending until approval arrives", async () => {
+    const approvedHeadSha = sha("a");
+    const gateId = `merge-approval-pr47-sha${approvedHeadSha.slice(0, 8)}`;
+    let state: RunState = {
+      ...baseRun(),
+      phase: "merge",
+      deliveryPullRequest: 47,
+      deliveryHeadSha: approvedHeadSha,
+    };
+    state = upsertGate(state, { id: gateId, type: "human", question: "Approve delivery merge?" });
+
+    // Delivery PR merged, but no gate passed yet → delivery-pr-merge-effect must remain pending
+    // (recordDeliveryMergeEffect would throw here — the CLI returns pending instead)
+    expect(() =>
+      recordDeliveryMergeEffect(state, {
+        pullRequest: 47,
+        approvedHeadSha,
+        mergeCommitSha: sha("c"),
+        mergedAt: "2026-08-18T14:00:00Z",
+      }),
+    ).toThrow(/passed merge approval gate/);
+
+    // Gate is approved → now record evidence
+    state = resolveGate(state, gateId, {
+      result: "passed",
+      decision: { approved: true, by: "munichdeveloper", at: "2026-08-18T14:01:00Z" },
+    });
+    state = recordDeliveryMergeEffect(state, {
+      pullRequest: 47,
+      approvedHeadSha,
+      mergeCommitSha: sha("c"),
+      mergedAt: "2026-08-18T14:00:00Z",
+    });
+
+    const states: RunState[] = [state];
+    const store = {
+      issueRef: undefined,
+      async load() { return states[states.length - 1]; },
+      async save(s: RunState) { states.push(s); },
+    };
+
+    const result = await orchestrate(store, 5);
+    expect(result.stopReason).toBe("complete");
+    expect(states[states.length - 1].phase).toBe("complete");
+    expect(states[states.length - 1].deliveryMergeCommitSha).toBe(sha("c"));
+  });
+
+  it("event order: approval-first — merge evidence recorded after delivery PR merges completes run", async () => {
+    const approvedHeadSha = sha("b");
+    const gateId = `merge-approval-pr48-sha${approvedHeadSha.slice(0, 8)}`;
+    let state: RunState = {
+      ...baseRun(),
+      phase: "merge",
+      deliveryPullRequest: 48,
+      deliveryHeadSha: approvedHeadSha,
+    };
+    state = upsertGate(state, { id: gateId, type: "human", question: "Approve delivery merge?" });
+    state = resolveGate(state, gateId, {
+      result: "passed",
+      decision: { approved: true, by: "munichdeveloper", at: "2026-08-18T14:02:00Z" },
+    });
+
+    const states: RunState[] = [state];
+    const store = {
+      issueRef: undefined,
+      async load() { return states[states.length - 1]; },
+      async save(s: RunState) { states.push(s); },
+    };
+
+    // Gate passed but PR not yet merged → approval-first path is pending
+    const beforePrMerge = await orchestrate(store, 5);
+    expect(beforePrMerge.stopReason).toBe("open-gate");
+    expect(beforePrMerge.finalNextAction.action).toBe("await-technical-gate");
+    expect(states[states.length - 1].phase).toBe("merge");
+
+    // PR merges → record evidence and complete
+    state = recordDeliveryMergeEffect(states[states.length - 1], {
+      pullRequest: 48,
+      approvedHeadSha,
+      mergeCommitSha: sha("d"),
+      mergedAt: "2026-08-18T14:03:00Z",
+    });
+    states.push(state);
+
+    const afterPrMerge = await orchestrate(store, 5);
+    expect(afterPrMerge.stopReason).toBe("complete");
+    expect(states[states.length - 1].phase).toBe("complete");
+    expect(states[states.length - 1].deliveryMergeCommitSha).toBe(sha("d"));
   });
 });
 

@@ -18,13 +18,29 @@ describe("GitHub workflow contracts", () => {
     expect(workflow).not.toContain("git push");
   });
 
+  it("resume job runs delivery-pr-merge-effect reconciliation before orchestration (approval-first path)", async () => {
+    const workflow = await readFile(".github/workflows/harness-gate-trigger.yml", "utf8");
+    const resumeJob = workflow.slice(workflow.indexOf("  resume:"), workflow.indexOf("\n  orchestrate-on-pr-event:"));
+
+    expect(resumeJob).toContain("delivery-pr-merge-effect");
+    expect(resumeJob.indexOf("delivery-pr-merge-effect")).toBeLessThan(resumeJob.indexOf("npm run harness -- orchestrate"));
+    // Orchestrate is conditional on the next action from delivery-pr-merge-effect
+    expect(resumeJob).toContain("advance-phase");
+    expect(resumeJob).toContain(".result.nextAction.action");
+  });
+
   it("triggers on pull_request closed events for implementation PR orchestration (TAC-12)", async () => {
     const workflow = await readFile(".github/workflows/harness-gate-trigger.yml", "utf8");
+    const prJob = workflow.slice(workflow.indexOf("  orchestrate-on-pr-event:"), workflow.indexOf("\n  reconcile:"));
+    const permissions = workflow.slice(workflow.indexOf("permissions:"), workflow.indexOf("\n# TAC-10"));
 
     expect(workflow).toContain("pull_request:");
     expect(workflow).toContain("types: [closed]");
+    expect(permissions).toContain("pull-requests: read");
     // Serialises across concurrent runs
     expect(workflow).toContain("cancel-in-progress: false");
+    expect(prJob).toContain("delivery-pr-merge-effect");
+    expect(prJob.indexOf("delivery-pr-merge-effect")).toBeLessThan(prJob.indexOf("npm run harness -- orchestrate"));
   });
 
   // TAC-09: workflow supports workflow_dispatch and push (own file on default branch)
