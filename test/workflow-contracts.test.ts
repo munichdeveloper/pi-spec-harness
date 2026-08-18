@@ -415,23 +415,44 @@ describe("SPEC-005 normalize_process_audit_input.mjs (Finding 2)", () => {
 
   it("accepts canonical actor values including GITHUB_COPILOT, CODEX, HUMAN_PRODUCT_OWNER", async () => {
     const { normalizeProcessAuditInput } = await import("../scripts/normalize_process_audit_input.mjs");
-    for (const actor of ["GITHUB_ACTIONS", "COPILOT", "HUMAN", "GITHUB_COPILOT", "HUMAN_PRODUCT_OWNER", "HUMAN_DEVELOPER", "CODEX", "VERCEL", "NEON", "MAKE", "N8N"]) {
+    for (const actor of ["GITHUB_ACTIONS", "COPILOT", "HUMAN", "GITHUB_COPILOT", "HUMAN_PRODUCT_OWNER", "HUMAN_DEVELOPER", "CODEX", "VERCEL", "NEON", "MAKE", "N8N", "IMMOGENT_APPLICATION", "EXTERNAL_SYSTEM"]) {
       expect(() => normalizeProcessAuditInput(validEnvelope({ actor }))).not.toThrow();
     }
   });
 
-  it("accepts canonical outcome values including STARTED, BLOCKED, PARTIAL", async () => {
+  it("accepts canonical outcome values including STARTED, BLOCKED, PARTIAL, REJECTED, SUPERSEDED", async () => {
     const { normalizeProcessAuditInput } = await import("../scripts/normalize_process_audit_input.mjs");
-    for (const outcome of ["SUCCEEDED", "FAILED", "SKIPPED", "STARTED", "BLOCKED", "PARTIAL"]) {
+    for (const outcome of ["SUCCEEDED", "FAILED", "SKIPPED", "STARTED", "BLOCKED", "PARTIAL", "REJECTED", "SUPERSEDED"]) {
       expect(() => normalizeProcessAuditInput(validEnvelope({ outcome }))).not.toThrow();
     }
   });
 
-  it("accepts canonical access_role values including GITHUB_PERSONAL_ACCESS_TOKEN", async () => {
+  it("accepts canonical access_role values including all service/session roles", async () => {
     const { normalizeProcessAuditInput } = await import("../scripts/normalize_process_audit_input.mjs");
-    for (const access_role of ["GITHUB_ACTIONS_TOKEN", "PERSONAL_ACCESS_TOKEN", "APP_INSTALLATION_TOKEN", "HUMAN_BROWSER_SESSION", "GITHUB_PERSONAL_ACCESS_TOKEN", "LOCAL_WORKSPACE", "GITHUB_APP_USER_AUTHORIZATION", "GITHUB_COPILOT_AGENT_IDENTITY", "CODEX_CHAT_SESSION", "PERSONAL_BROWSER_SESSION"]) {
+    for (const access_role of [
+      "GITHUB_ACTIONS_TOKEN", "PERSONAL_ACCESS_TOKEN", "APP_INSTALLATION_TOKEN", "HUMAN_BROWSER_SESSION",
+      "GITHUB_PERSONAL_ACCESS_TOKEN", "LOCAL_WORKSPACE", "GITHUB_APP_USER_AUTHORIZATION",
+      "GITHUB_COPILOT_AGENT_IDENTITY", "CODEX_CHAT_SESSION", "PERSONAL_BROWSER_SESSION",
+      "SYSTEM_SERVICE_IDENTITY", "VERCEL_ACCOUNT_SESSION", "VERCEL_AUTOMATION_BYPASS",
+      "NEON_ACCOUNT_SESSION", "MAKE_ACCOUNT_SESSION", "N8N_SERVICE_CREDENTIAL",
+      "WEBHOOK_HMAC_IDENTITY", "ANONYMOUS_READ_ONLY",
+    ]) {
       expect(() => normalizeProcessAuditInput(validEnvelope({ access_role }))).not.toThrow();
     }
+  });
+
+  it("accepts canonical access_role values in supporting_access_roles", async () => {
+    const { normalizeProcessAuditInput } = await import("../scripts/normalize_process_audit_input.mjs");
+    expect(() => normalizeProcessAuditInput(validEnvelope({
+      supporting_access_roles: ["CODEX_CHAT_SESSION", "PERSONAL_BROWSER_SESSION"],
+    }))).not.toThrow();
+  });
+
+  it("rejects unknown values in supporting_access_roles (enum validation)", async () => {
+    const { normalizeProcessAuditInput } = await import("../scripts/normalize_process_audit_input.mjs");
+    expect(() => normalizeProcessAuditInput(validEnvelope({
+      supporting_access_roles: ["UNKNOWN_ROLE"],
+    }))).toThrow(/unknown value/);
   });
 
   it("rejects unknown actor values (not in canonical enum)", async () => {

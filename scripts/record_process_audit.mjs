@@ -26,6 +26,10 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
 import { normalizeProcessAuditInput } from "./normalize_process_audit_input.mjs";
+import {
+  normalizeTimestampForFilename,
+  renderAuditFrontmatter,
+} from "./process_audit_support.mjs";
 
 // ---------------------------------------------------------------------------
 // Configuration from environment (never from shell args to avoid injection)
@@ -73,9 +77,7 @@ const keyHash = createHash("sha256")
   .slice(0, 16);
 
 // Compact ISO timestamp: 20260802T152132Z (safe for filenames on all OSes).
-const compactTs = event.occurred_at
-  .replace(/[-:]/g, "")
-  .replace(/\.\d+Z$/, "Z");
+const compactTs = normalizeTimestampForFilename(event.occurred_at);
 
 const filename = `${compactTs}-${keyHash}.md`;
 const journalFile = join(JOURNAL_DIR, filename);
@@ -84,6 +86,10 @@ const journalFile = join(JOURNAL_DIR, filename);
 // Idempotency: scan existing journal entries for the same idempotency_key
 // ---------------------------------------------------------------------------
 
+// The idempotency marker is the raw idempotency_key value enclosed in
+// double-quotes as it appears in the YAML frontmatter.  rejectSecrets() has
+// already ensured the key cannot contain `"` or other YAML-unsafe characters,
+// so this plain substring match is safe and unambiguous.
 const idempotencyMarker = `idempotency_key: "${event.idempotency_key}"`;
 
 if (existsSync(JOURNAL_DIR)) {
@@ -101,49 +107,15 @@ if (existsSync(JOURNAL_DIR)) {
 }
 
 // ---------------------------------------------------------------------------
-// Write the journal entry (YAML frontmatter at column 0, no interpolation)
+// Write the journal entry using the shared safe YAML serialiser
+// (SPEC-005 §security: no user data interpolated into YAML structure)
 // ---------------------------------------------------------------------------
 
 const confirmedAt = new Date().toISOString();
-const correlationIdsYaml = event.correlation_ids
-  .map((id) => `  - "${id}"`)
-  .join("\n");
-const evidenceYaml = event.evidence
-  .map((url) => `  - "${url}"`)
-  .join("\n");
-const supportingRolesYaml = event.supporting_access_roles
-  .map((r) => `  - "${r}"`)
-  .join("\n");
 
-// Build YAML frontmatter using template literal (no user data in YAML keys;
-// string values are quoted and cannot contain injected YAML structure because
-// they come from the validated normalizer which enforces string types only).
-const frontmatter = [
-  "---",
-  `schema_version: ${event.schema_version}`,
-  `occurred_at: "${event.occurred_at}"`,
-  `confirmed_at: "${confirmedAt}"`,
-  `process_instance: "${event.process_instance}"`,
-  `idempotency_key: "${event.idempotency_key}"`,
-  `process_code: "${event.process_code}"`,
-  `actor: "${event.actor}"`,
-  `access_role: "${event.access_role}"`,
-  event.supporting_access_roles.length > 0
-    ? `supporting_access_roles:\n${supportingRolesYaml}`
-    : "supporting_access_roles: []",
-  `outcome: "${event.outcome}"`,
-  `repository: "${event.repository}"`,
-  `artifact: "${event.artifact}"`,
-  event.correlation_ids.length > 0
-    ? `correlation_ids:\n${correlationIdsYaml}`
-    : "correlation_ids: []",
-  event.evidence.length > 0
-    ? `evidence:\n${evidenceYaml}`
-    : "evidence: []",
-  `reason: "${event.reason}"`,
-  `description: "${event.description}"`,
-  "---",
-].join("\n");
+// renderAuditFrontmatter escapes all string values through yamlDoubleQuoteEscape
+// so that no raw payload bytes can inject YAML structure.
+const frontmatter = renderAuditFrontmatter(event, confirmedAt);
 
 const body = `# Process Audit Journal Entry\n\n` +
   `<!-- harness:audit-record process_code=${event.process_code} -->\n\n` +

@@ -12,118 +12,18 @@
  *   repository, artifact, correlation_ids, evidence, reason, description
  */
 
-// ---------------------------------------------------------------------------
-// Allowed enum values
-// ---------------------------------------------------------------------------
+import {
+  ALLOWED_PROCESS_CODES,
+  ALLOWED_OUTCOMES,
+  ALLOWED_ACTORS,
+  ALLOWED_ACCESS_ROLES,
+  rejectSecrets,
+  rejectSecretsInArray,
+} from "./process_audit_support.mjs";
 
-const ALLOWED_PROCESS_CODES = new Set([
-  "PR_MERGE",
-  "SPEC_TO_ISSUE",
-  "GATE_APPROVED",
-  "GATE_REJECTED",
-  "DOCUMENTATION_UPDATE",
-  "CAPABILITY_SMOKE",
-  "BUG_TO_PR",
-]);
-
-// Canonical outcome enum (SPEC-005 §external-contract).
-const ALLOWED_OUTCOMES = new Set([
-  "SUCCEEDED",
-  "FAILED",
-  "SKIPPED",
-  "STARTED",
-  "BLOCKED",
-  "PARTIAL",
-]);
-
-// Canonical actor enum (SPEC-005 §external-contract).
-const ALLOWED_ACTORS = new Set([
-  "GITHUB_ACTIONS",
-  "COPILOT",
-  "HUMAN",
-  "GITHUB_COPILOT",
-  "HUMAN_PRODUCT_OWNER",
-  "HUMAN_DEVELOPER",
-  "CODEX",
-  "VERCEL",
-  "NEON",
-  "MAKE",
-  "N8N",
-]);
-
-// Canonical access-role enum (SPEC-005 §external-contract).
-const ALLOWED_ACCESS_ROLES = new Set([
-  "GITHUB_ACTIONS_TOKEN",
-  "PERSONAL_ACCESS_TOKEN",
-  "APP_INSTALLATION_TOKEN",
-  "HUMAN_BROWSER_SESSION",
-  "GITHUB_PERSONAL_ACCESS_TOKEN",
-  "LOCAL_WORKSPACE",
-  "GITHUB_APP_USER_AUTHORIZATION",
-  "GITHUB_COPILOT_AGENT_IDENTITY",
-  "CODEX_CHAT_SESSION",
-  "PERSONAL_BROWSER_SESSION",
-]);
-
-// ---------------------------------------------------------------------------
-// Secret-pattern rejection (SPEC-005 §security)
-// ---------------------------------------------------------------------------
-
-const SECRET_PATTERNS = [
-  /ghp_[A-Za-z0-9]{36,}/,        // GitHub personal access token
-  /ghs_[A-Za-z0-9]{36,}/,        // GitHub server-to-server token
-  /gho_[A-Za-z0-9]{36,}/,        // GitHub OAuth token
-  /github_pat_[A-Za-z0-9_]{50,}/,// GitHub fine-grained PAT
-  /sk-[A-Za-z0-9]{32,}/,         // OpenAI-style secret key
-  /eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}/, // JWT
-];
-
-function rejectSecrets(value, fieldName) {
-  if (typeof value !== "string") return;
-  for (const pattern of SECRET_PATTERNS) {
-    if (pattern.test(value)) {
-      throw new Error(
-        `SPEC-005 validation failed: field '${fieldName}' contains a secret-like pattern and cannot be recorded.`,
-      );
-    }
-  }
-  // Characters that would break YAML scalar serialisation or allow injection:
-  // - Double-quote: breaks "quoted scalar" boundaries and idempotency markers
-  // - Backslash: introduces YAML escape sequences in double-quoted scalars
-  // - Newline / carriage-return: breaks multi-line scalar boundaries
-  // - Control characters (0x00–0x1F excluding tab 0x09): unsafe in any YAML
-  if (value.includes('"')) {
-    throw new Error(
-      `SPEC-005 validation failed: field '${fieldName}' must not contain double-quote characters.`,
-    );
-  }
-  if (value.includes("\\")) {
-    throw new Error(
-      `SPEC-005 validation failed: field '${fieldName}' must not contain backslash characters.`,
-    );
-  }
-  if (/[\n\r]/.test(value)) {
-    throw new Error(
-      `SPEC-005 validation failed: field '${fieldName}' must not contain newline characters.`,
-    );
-  }
-  // Reject control characters (0x00–0x08, 0x0B–0x0C, 0x0E–0x1F) — tab (0x09)
-  // and newlines (0x0A, 0x0D) are already handled above or safe in YAML block
-  // scalars, but are excluded from the allowed scalar set here for strictness.
-  // eslint-disable-next-line no-control-regex
-  if (/[\x00-\x08\x0B\x0C\x0E-\x1F]/.test(value)) {
-    throw new Error(
-      `SPEC-005 validation failed: field '${fieldName}' must not contain control characters.`,
-    );
-  }
-}
-
-function rejectSecretsInArray(arr, fieldName) {
-  if (!Array.isArray(arr)) return;
-  for (const item of arr) {
-    rejectSecrets(item, fieldName);
-  }
-}
+// Re-export canonical enums so importers can validate/display the allowed sets
+// without importing process_audit_support directly.
+export { ALLOWED_PROCESS_CODES, ALLOWED_OUTCOMES, ALLOWED_ACTORS, ALLOWED_ACCESS_ROLES };
 
 // ---------------------------------------------------------------------------
 // Core validation
@@ -222,6 +122,18 @@ export function normalizeProcessAuditInput(raw) {
   rejectSecretsInArray(raw["supporting_access_roles"], "supporting_access_roles");
   rejectSecretsInArray(raw["correlation_ids"], "correlation_ids");
   rejectSecretsInArray(raw["evidence"], "evidence");
+
+  // Each element of supporting_access_roles must be a known access-role enum
+  // value (not just a safe string). This prevents arbitrary strings from
+  // bypassing the access-role contract. SPEC-005 §external-contract.
+  for (const role of raw["supporting_access_roles"]) {
+    if (typeof role !== "string" || !ALLOWED_ACCESS_ROLES.has(role)) {
+      throw new Error(
+        `SPEC-005 validation failed: 'supporting_access_roles' contains unknown value '${role}'. ` +
+        `Each element must be one of [${[...ALLOWED_ACCESS_ROLES].join(", ")}].`,
+      );
+    }
+  }
 
   // --- no extra top-level fields that could smuggle data --------------------
   const ALLOWED_FIELDS = new Set([

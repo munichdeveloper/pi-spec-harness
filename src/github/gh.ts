@@ -798,6 +798,29 @@ export const github = {
   },
 
   /**
+   * Returns the set of file paths changed by a specific commit.
+   * Used to verify that an adopted crash-after-push commit atomically contains
+   * all three expected documentation paths. SPEC-012, TAC-11.
+   *
+   * Uses the GitHub Commits API (`GET /repos/{owner}/{repo}/commits/{sha}`).
+   * Returns an empty set on any error so the caller can treat it as "unknown"
+   * and fall through to a fresh commit.
+   */
+  async getCommitChangedPaths(repository: string, commitSha: string): Promise<Set<string>> {
+    try {
+      const out = await runGh([
+        "api",
+        `repos/${repository}/commits/${encodeURIComponent(commitSha)}`,
+        "--jq", "[.files[].filename] | join(\"\\n\")",
+      ]);
+      const paths = out.trim().split("\n").filter((p) => p.length > 0);
+      return new Set(paths);
+    } catch {
+      return new Set();
+    }
+  },
+
+  /**
    * Verify that a commit SHA is the current HEAD of the given branch or is
    * reachable (an ancestor) from it. Uses the GitHub compare API to check
    * ancestry so that a subsequent legitimate commit on the branch does not

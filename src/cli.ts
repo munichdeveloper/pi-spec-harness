@@ -80,6 +80,12 @@ export interface WriterGithubAdapter {
   getFileContentIfExists(repository: string, path: string, ref?: string): Promise<{ content: string; blobSha: string } | undefined>;
   /** Returns the SHA of the most recent commit on `branch` that touched `filePath`, or undefined if not found. */
   getLatestCommitForPath(repository: string, branch: string, filePath: string): Promise<string | undefined>;
+  /**
+   * Returns the set of file paths changed by a specific commit.
+   * Used to verify that an adopted crash-after-push commit atomically contains
+   * all three expected documentation paths. SPEC-012, TAC-11.
+   */
+  getCommitChangedPaths(repository: string, commitSha: string): Promise<Set<string>>;
   dispatchProcessAuditEnvelopeV1(recorderRepository: string, payload: {
     schema_version: 1;
     occurred_at: string;
@@ -634,12 +640,12 @@ export async function cmdPersistRunDocumentation(argv: {
   const sourceHeadSha = isResuming ? existing.sourceHeadSha : await gh.getBranchSha(repository, branch);
 
   if (!isResuming) {
-    // Pre-compute the snapshot content (deterministic: depends only on state,
-    // not on origin). Its SHA-256 hash is persisted in the `prepared`
-    // checkpoint to enable crash-after-push reconciliation: if the process dies
-    // after the atomic commit but before the `publishing` checkpoint is saved,
-    // the next attempt can detect the already-landed commit by comparing
-    // origin's snapshot content against this hash. SPEC-012, TAC-11.
+    // Pre-compute all three output file contents (deterministic: snapshot
+    // depends only on state; index/base depend on existing origin entries at
+    // sourceHeadSha). Hashing all three and persisting them enables
+    // crash-after-push reconciliation that can verify the ATOMIC three-file
+    // commit landed — not just that the snapshot path was touched by some
+    // partial or concurrent commit. SPEC-012, TAC-11.
     const preparedSnapshotContent = renderRunSnapshot({
       state,
       trackingIssue,
@@ -647,8 +653,20 @@ export async function cmdPersistRunDocumentation(argv: {
       harnessVersion: argv.harnessVersion ?? "unknown",
       generatedAt,
     });
+
+    // Read existing entries from origin at sourceHeadSha so the index/base
+    // hashes are deterministic for the same parent state. readAllRunEntries is
+    // a hoisted function declaration defined later in this function body.
+    const preparedExistingEntries = await readAllRunEntries(sourceHeadSha, snapshotPath);
+    const preparedNewEntry = parseRunIndexEntry(snapshotPath, preparedSnapshotContent);
+    if (preparedNewEntry) preparedExistingEntries.push(preparedNewEntry);
+    const preparedIndexContent = generateRunIndex(preparedExistingEntries, generatedAt);
+    const preparedObsidianContent = generateObsidianBase(preparedExistingEntries, generatedAt);
+
     const preparedContentHashes: Record<string, string> = {
       [snapshotPath]: createHash("sha256").update(preparedSnapshotContent, "utf8").digest("hex"),
+      [indexPath]: createHash("sha256").update(preparedIndexContent, "utf8").digest("hex"),
+      [obsidianBasePath]: createHash("sha256").update(preparedObsidianContent, "utf8").digest("hex"),
     };
 
     // Persist the `prepared` checkpoint BEFORE the first external write.
@@ -708,17 +726,46 @@ export async function cmdPersistRunDocumentation(argv: {
     ) {
       // Crash-after-push reconciliation (SPEC-012, TAC-11): the `prepared`
       // checkpoint has no commitSha, but a prior attempt may have already
-      // landed the three-file commit. Check origin's snapshot content against
-      // the stored hash; if it matches, adopt the existing commit SHA.
-      const expectedHash = state.documentationSnapshot.contentHashes[snapshotPath];
-      const originFile = await gh.getFileContentIfExists(repository, snapshotPath);
-      if (originFile) {
-        const originHash = createHash("sha256").update(originFile.content, "utf8").digest("hex");
-        if (originHash === expectedHash) {
-          const adoptedSha = await gh.getLatestCommitForPath(repository, branch, snapshotPath);
-          if (adoptedSha) {
-            commitSha = adoptedSha;
+      // landed the three-file atomic commit. To safely adopt it we must
+      // verify ALL THREE expected output files match their stored hashes —
+      // not just the snapshot. This prevents a concurrent or partial commit
+      // that touches only the snapshot path from being falsely adopted.
+      const hashes = state.documentationSnapshot.contentHashes;
+      const expectedSnapshotHash = hashes[snapshotPath];
+      const expectedIndexHash = hashes[indexPath];
+      const expectedBaseHash = hashes[obsidianBasePath];
+
+      const [originSnapshot, originIndex, originBase] = await Promise.all([
+        gh.getFileContentIfExists(repository, snapshotPath),
+        expectedIndexHash ? gh.getFileContentIfExists(repository, indexPath) : Promise.resolve(undefined),
+        expectedBaseHash ? gh.getFileContentIfExists(repository, obsidianBasePath) : Promise.resolve(undefined),
+      ]);
+
+      const snapshotHashMatches = originSnapshot &&
+        createHash("sha256").update(originSnapshot.content, "utf8").digest("hex") === expectedSnapshotHash;
+      const indexHashMatches = !expectedIndexHash ||
+        (originIndex &&
+          createHash("sha256").update(originIndex.content, "utf8").digest("hex") === expectedIndexHash);
+      const baseHashMatches = !expectedBaseHash ||
+        (originBase &&
+          createHash("sha256").update(originBase.content, "utf8").digest("hex") === expectedBaseHash);
+
+      if (snapshotHashMatches && indexHashMatches && baseHashMatches) {
+        // All three origin files match the prepared hashes. Find the latest
+        // commit that touched the snapshot path and verify it also contains
+        // the index and base paths (confirming the three-file atomicity).
+        const candidateSha = await gh.getLatestCommitForPath(repository, branch, snapshotPath);
+        if (candidateSha) {
+          const commitPaths = await gh.getCommitChangedPaths(repository, candidateSha);
+          const hasAllThree =
+            commitPaths.has(snapshotPath) &&
+            commitPaths.has(indexPath) &&
+            commitPaths.has(obsidianBasePath);
+          const isReachable = await gh.verifyCommitOnBranch(repository, branch, candidateSha);
+          if (hasAllThree && isReachable) {
+            commitSha = candidateSha;
           } else {
+            // Commit does not contain all three paths or is not reachable.
             commitSha = await performAtomicDocCommit();
           }
         } else {

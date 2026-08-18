@@ -1152,6 +1152,7 @@ function makeFakeGithub(overrides: Partial<WriterGithubAdapter> = {}): WriterGit
     async getFileContent() { return { content: "", blobSha: "x".repeat(40) }; },
     async getFileContentIfExists() { return undefined; },
     async getLatestCommitForPath() { return undefined; },
+    async getCommitChangedPaths() { return new Set<string>(); },
     async dispatchProcessAuditEnvelopeV1(recorder, payload) {
       dispatchedEvents.push({ recorder, payload });
       // Simulate recorder immediately writing the journal entry.
@@ -1258,10 +1259,14 @@ describe("TAC-18 cmdPersistRunDocumentation integration via injected adapter", (
     const hashes = preparedState!.documentationSnapshot?.contentHashes;
     expect(hashes).toBeDefined();
     const keys = Object.keys(hashes!);
-    expect(keys).toHaveLength(1);
-    // The snapshot path key must be present and be a 64-char hex SHA-256 digest.
-    expect(keys[0]).toMatch(/\.md$/);
-    expect(hashes![keys[0]]).toMatch(/^[0-9a-f]{64}$/);
+    expect(keys).toHaveLength(3);
+    // All three paths (snapshot, index, base) must have 64-char hex SHA-256 digests.
+    for (const key of keys) {
+      expect(hashes![key]).toMatch(/^[0-9a-f]{64}$/);
+    }
+    // The snapshot path key must end with .md
+    const snapshotKey = keys.find(k => k.includes("generated/"));
+    expect(snapshotKey).toMatch(/\.md$/);
   });
 
   it("crash-after-push reconciliation: adopts already-landed commit when hash matches", async () => {
@@ -1286,17 +1291,33 @@ describe("TAC-18 cmdPersistRunDocumentation integration via injected adapter", (
     const expectedHash = createHash("sha256").update(snapshotContent, "utf8").digest("hex");
     const existingCommitSha = "adopted".padEnd(40, "0").slice(0, 40);
 
+    // Compute all three hashes (snapshot, index, base) from the same state,
+    // since readAllRunEntries with empty origin returns only the new entry.
+    const { generateRunIndex, generateObsidianBase, parseRunIndexEntry } = await import("../src/documentation/run-index.js");
+    const indexPath = "docs/runs/RUN-INDEX.md";
+    const obsidianBasePath = "docs/runs/Runs.base";
+    const newEntry = parseRunIndexEntry(snapshotPath, snapshotContent);
+    const allEntries = newEntry ? [newEntry] : [];
+    const indexContent = generateRunIndex(allEntries, generatedAt);
+    const obsidianContent = generateObsidianBase(allEntries, generatedAt);
+    const expectedIndexHash = createHash("sha256").update(indexContent, "utf8").digest("hex");
+    const expectedBaseHash = createHash("sha256").update(obsidianContent, "utf8").digest("hex");
+
     const preparedState = upsertDocumentationSnapshot(state0, {
       schemaVersion: 1,
       status: "prepared",
       idempotencyKey: idemKey,
       auditIdempotencyKey: auditIdemKey,
       path: snapshotPath,
-      indexPath: "docs/runs/RUN-INDEX.md",
-      obsidianBasePath: "docs/runs/Runs.base",
+      indexPath,
+      obsidianBasePath,
       generatedAt,
       sourceHeadSha,
-      contentHashes: { [snapshotPath]: expectedHash },
+      contentHashes: {
+        [snapshotPath]: expectedHash,
+        [indexPath]: expectedIndexHash,
+        [obsidianBasePath]: expectedBaseHash,
+      },
     });
 
     const store = new MemoryStateStore(preparedState);
@@ -1307,9 +1328,15 @@ describe("TAC-18 cmdPersistRunDocumentation integration via injected adapter", (
       async verifyCommitOnBranch() { return true; },
       async getFileContentIfExists(_repo, path) {
         if (path === snapshotPath) return { content: snapshotContent, blobSha: "x".repeat(40) };
+        if (path === indexPath) return { content: indexContent, blobSha: "y".repeat(40) };
+        if (path === obsidianBasePath) return { content: obsidianContent, blobSha: "z".repeat(40) };
         return undefined;
       },
       async getLatestCommitForPath() { return existingCommitSha; },
+      async getCommitChangedPaths() {
+        // The adopted commit atomically contains all three expected paths.
+        return new Set([snapshotPath, indexPath, obsidianBasePath]);
+      },
       async createAtomicMultiFileCommit() {
         atomicCommitCallCount++;
         return "new-commit-sha".padEnd(40, "x").slice(0, 40);
@@ -1381,6 +1408,154 @@ describe("TAC-18 cmdPersistRunDocumentation integration via injected adapter", (
   });
 
   // --- Commit-success / state-save-failure adoption (finding #2) ----------
+
+  // --- Commit-success / state-save-failure adoption (finding #2) ----------
+
+  // Negative test: snapshot matches but index differs → must NOT adopt, must re-commit.
+  it("reconciliation negative: snapshot matches but index differs — re-commits instead of adopting", async () => {
+    const state0 = mergeReadyState();
+    const generatedAt = "2026-01-01T00:00:00.000Z";
+    const snapshotPath = "docs/runs/generated/RUN-0056-spec-012.md";
+    const indexPath = "docs/runs/RUN-INDEX.md";
+    const obsidianBasePath = "docs/runs/Runs.base";
+    const sourceHeadSha = "aaa".repeat(14) + "aa";
+
+    const { renderRunSnapshot } = await import("../src/documentation/run-snapshot.js");
+    const snapshotContent = renderRunSnapshot({
+      state: state0,
+      trackingIssue: { repository: "org/repo", number: 56, url: "https://github.com/org/repo/issues/56" },
+      repositoryDefaultBranch: "main",
+      harnessVersion: "unknown",
+      generatedAt,
+    });
+    const snapshotHash = createHash("sha256").update(snapshotContent, "utf8").digest("hex");
+    const indexHash = createHash("sha256").update("expected-index-content", "utf8").digest("hex");
+    const baseHash = createHash("sha256").update("expected-base-content", "utf8").digest("hex");
+
+    const preparedState = upsertDocumentationSnapshot(state0, {
+      schemaVersion: 1,
+      status: "prepared",
+      idempotencyKey: "persist-run-doc-RUN-0056-56",
+      auditIdempotencyKey: "audit-run-doc-RUN-0056-56",
+      path: snapshotPath,
+      indexPath,
+      obsidianBasePath,
+      generatedAt,
+      sourceHeadSha,
+      contentHashes: {
+        [snapshotPath]: snapshotHash,
+        [indexPath]: indexHash,
+        [obsidianBasePath]: baseHash,
+      },
+    });
+
+    const store = new MemoryStateStore(preparedState);
+    let atomicCommitCallCount = 0;
+    const gh = makeFakeGithub({
+      async getBranchSha() { return sourceHeadSha; },
+      async verifyCommitOnBranch() { return true; },
+      async getFileContentIfExists(_repo, path) {
+        if (path === snapshotPath) return { content: snapshotContent, blobSha: "x".repeat(40) };
+        // Index has DIFFERENT content from the stored hash — should not adopt.
+        if (path === indexPath) return { content: "different-index-content", blobSha: "y".repeat(40) };
+        if (path === obsidianBasePath) return { content: "expected-base-content", blobSha: "z".repeat(40) };
+        return undefined;
+      },
+      async getLatestCommitForPath() { return "some-commit-sha".padEnd(40, "0").slice(0, 40); },
+      async getCommitChangedPaths() {
+        return new Set([snapshotPath, indexPath, obsidianBasePath]);
+      },
+      async createAtomicMultiFileCommit(_repo, _branch, buildFiles) {
+        atomicCommitCallCount++;
+        await buildFiles(sourceHeadSha);
+        return "new-commit-sha".padEnd(40, "x").slice(0, 40);
+      },
+    });
+
+    await cmdPersistRunDocumentation({
+      repository: "org/repo",
+      issueNumber: 56,
+      branch: "main",
+      _githubAdapter: gh,
+      _storeFactory: () => store as never,
+    });
+
+    // Must re-commit because index hash did not match.
+    expect(atomicCommitCallCount).toBe(1);
+  });
+
+  // Negative test: commit doesn't contain all three paths → must NOT adopt, must re-commit.
+  it("reconciliation negative: commit lacks index/base paths — re-commits instead of adopting", async () => {
+    const state0 = mergeReadyState();
+    const generatedAt = "2026-01-01T00:00:00.000Z";
+    const snapshotPath = "docs/runs/generated/RUN-0056-spec-012.md";
+    const indexPath = "docs/runs/RUN-INDEX.md";
+    const obsidianBasePath = "docs/runs/Runs.base";
+    const sourceHeadSha = "aaa".repeat(14) + "aa";
+
+    const { renderRunSnapshot } = await import("../src/documentation/run-snapshot.js");
+    const snapshotContent = renderRunSnapshot({
+      state: state0,
+      trackingIssue: { repository: "org/repo", number: 56, url: "https://github.com/org/repo/issues/56" },
+      repositoryDefaultBranch: "main",
+      harnessVersion: "unknown",
+      generatedAt,
+    });
+    const { generateRunIndex, generateObsidianBase, parseRunIndexEntry } = await import("../src/documentation/run-index.js");
+    const newEntry = parseRunIndexEntry(snapshotPath, snapshotContent);
+    const allEntries = newEntry ? [newEntry] : [];
+    const indexContent = generateRunIndex(allEntries, generatedAt);
+    const obsidianContent = generateObsidianBase(allEntries, generatedAt);
+
+    const preparedState = upsertDocumentationSnapshot(state0, {
+      schemaVersion: 1,
+      status: "prepared",
+      idempotencyKey: "persist-run-doc-RUN-0056-56",
+      auditIdempotencyKey: "audit-run-doc-RUN-0056-56",
+      path: snapshotPath,
+      indexPath,
+      obsidianBasePath,
+      generatedAt,
+      sourceHeadSha,
+      contentHashes: {
+        [snapshotPath]: createHash("sha256").update(snapshotContent, "utf8").digest("hex"),
+        [indexPath]: createHash("sha256").update(indexContent, "utf8").digest("hex"),
+        [obsidianBasePath]: createHash("sha256").update(obsidianContent, "utf8").digest("hex"),
+      },
+    });
+
+    const store = new MemoryStateStore(preparedState);
+    let atomicCommitCallCount = 0;
+    const gh = makeFakeGithub({
+      async getBranchSha() { return sourceHeadSha; },
+      async verifyCommitOnBranch() { return true; },
+      async getFileContentIfExists(_repo, path) {
+        if (path === snapshotPath) return { content: snapshotContent, blobSha: "x".repeat(40) };
+        if (path === indexPath) return { content: indexContent, blobSha: "y".repeat(40) };
+        if (path === obsidianBasePath) return { content: obsidianContent, blobSha: "z".repeat(40) };
+        return undefined;
+      },
+      async getLatestCommitForPath() { return "partial-commit-sha".padEnd(40, "0").slice(0, 40); },
+      // Commit only touched snapshot — NOT index and base (partial/concurrent commit).
+      async getCommitChangedPaths() { return new Set([snapshotPath]); },
+      async createAtomicMultiFileCommit(_repo, _branch, buildFiles) {
+        atomicCommitCallCount++;
+        await buildFiles(sourceHeadSha);
+        return "new-commit-sha".padEnd(40, "x").slice(0, 40);
+      },
+    });
+
+    await cmdPersistRunDocumentation({
+      repository: "org/repo",
+      issueNumber: 56,
+      branch: "main",
+      _githubAdapter: gh,
+      _storeFactory: () => store as never,
+    });
+
+    // Must re-commit because the candidate commit lacked index and base paths.
+    expect(atomicCommitCallCount).toBe(1);
+  });
 
   it("reconciliation: adopts existing publishing commit when it is on origin", async () => {
     let state0 = mergeReadyState();
