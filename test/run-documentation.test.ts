@@ -1409,8 +1409,6 @@ describe("TAC-18 cmdPersistRunDocumentation integration via injected adapter", (
 
   // --- Commit-success / state-save-failure adoption (finding #2) ----------
 
-  // --- Commit-success / state-save-failure adoption (finding #2) ----------
-
   // Negative test: snapshot matches but index differs → must NOT adopt, must re-commit.
   it("reconciliation negative: snapshot matches but index differs — re-commits instead of adopting", async () => {
     const state0 = mergeReadyState();
