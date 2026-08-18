@@ -72,12 +72,17 @@ jobs:
       - name: Persist run documentation snapshot
         env:
           GH_TOKEN: ${{ github.token }}
+          AUDIT_RECORDER_REPO: ${{ inputs.audit-recorder-repo }}
+          LEGACY_DIR_FLAGS: ${{ steps.legacy-dirs.outputs.flags }}
         working-directory: .pi-spec-harness
         run: |
-          recorder_flag=""
-          [ -n "${{ inputs.audit-recorder-repo }}" ] && recorder_flag="--audit-recorder-repo \"${{ inputs.audit-recorder-repo }}\""
+          recorder_args=()
+          if [ -n "$AUDIT_RECORDER_REPO" ]; then
+            recorder_args=(--audit-recorder-repo "$AUDIT_RECORDER_REPO")
+          fi
 
-          eval npm run harness -- persist-run-documentation \
+          # shellcheck disable=SC2086 -- LEGACY_DIR_FLAGS contains intentional word-splitting
+          npm run harness -- persist-run-documentation \
             --repository "${{ github.repository }}" \
             --issue-number "${{ github.event.issue.number || github.event.pull_request.number }}" \
             --generated-directory "${{ inputs.generated-directory }}" \
@@ -85,5 +90,5 @@ jobs:
             --obsidian-base-path "${{ inputs.obsidian-base-path }}" \
             --audit-journal-path "${{ inputs.audit-journal-path }}" \
             --harness-version "${{ inputs.harness-ref }}" \
-            ${{ steps.legacy-dirs.outputs.flags }} \
-            $recorder_flag
+            $LEGACY_DIR_FLAGS \
+            "${recorder_args[@]}"

@@ -1140,7 +1140,7 @@ function makeFakeGithub(overrides: Partial<WriterGithubAdapter> = {}): WriterGit
   const base: WriterGithubAdapter = {
     async preflightRunDocumentationWriter() { /* pass */ },
     async getBranchSha() { return branchHead; },
-    async verifyCommitOnBranch(_repo, _branch, sha) { return sha === branchHead || true; },
+    async verifyCommitOnBranch(_repo, _branch, sha) { return sha === branchHead; },
     async createAtomicMultiFileCommit(_repo, _branch, buildFiles) {
       await buildFiles(branchHead);
       const newSha = "bbb".repeat(14) + "bb";

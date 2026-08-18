@@ -60,34 +60,34 @@ jobs:
 
           confirmed_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
-          cat > "$journal_file" << EOF
-          ---
-          schema_version: ${schema_version}
-          event_type: "${event_type}"
-          idempotency_key: "${idempotency_key}"
-          generated_at: "${generated_at}"
-          confirmed_at: "${confirmed_at}"
-          ---
-          # Audit Journal Entry
-
-          <!-- harness:audit-record type=${event_type} -->
-
-          $(echo "$AUDIT_PAYLOAD" | jq -r '
-            "- schema_version: \(.schema_version)\n" +
-            "- event_type: \(.event_type)\n" +
-            "- actor: \(.actor // "unknown")\n" +
-            "- role: \(.role // "unknown")\n" +
-            "- run_id: \(.run_id // "unknown")\n" +
-            "- correlation_run_id: \(.correlation_run_id // "unknown")\n" +
-            "- correlation_issue: \(.correlation_issue // "unknown")\n" +
-            (if .delivery_pr then "- delivery_pr: #\(.delivery_pr)\n" else "" end) +
-            "- source_commit_sha: \(.source_commit_sha // "unknown")\n" +
-            "- documentation_commit_sha: \(.documentation_commit_sha // "unknown")\n" +
-            "- idempotency_key: \"\(.idempotency_key)\"\n" +
-            "- generated_at: \"\(.generated_at)\"\n" +
-            "- confirmed_at: \"'"${confirmed_at}"'\""
-          ')
-          EOF
+          # Build the journal file using printf to avoid heredoc indentation
+          # issues (space-indented heredocs produce leading spaces in output).
+          {
+            printf -- '---\n'
+            printf 'schema_version: %s\n' "${schema_version}"
+            printf 'event_type: "%s"\n' "${event_type}"
+            printf 'idempotency_key: "%s"\n' "${idempotency_key}"
+            printf 'generated_at: "%s"\n' "${generated_at}"
+            printf 'confirmed_at: "%s"\n' "${confirmed_at}"
+            printf -- '---\n'
+            printf '# Audit Journal Entry\n\n'
+            printf '<!-- harness:audit-record type=%s -->\n\n' "${event_type}"
+            echo "$AUDIT_PAYLOAD" | jq -r '
+              "- schema_version: \(.schema_version)\n" +
+              "- event_type: \(.event_type)\n" +
+              "- actor: \(.actor // "unknown")\n" +
+              "- role: \(.role // "unknown")\n" +
+              "- run_id: \(.run_id // "unknown")\n" +
+              "- correlation_run_id: \(.correlation_run_id // "unknown")\n" +
+              "- correlation_issue: \(.correlation_issue // "unknown")\n" +
+              (if .delivery_pr then "- delivery_pr: #\(.delivery_pr)\n" else "" end) +
+              "- source_commit_sha: \(.source_commit_sha // "unknown")\n" +
+              "- documentation_commit_sha: \(.documentation_commit_sha // "unknown")\n" +
+              "- idempotency_key: \"\(.idempotency_key)\"\n" +
+              "- generated_at: \"\(.generated_at)\"\n" +
+              "- confirmed_at: \"'"${confirmed_at}"'\""
+            '
+          } > "$journal_file"
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
