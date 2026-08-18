@@ -166,6 +166,47 @@ export interface ReviewRecord {
   loopProtected?: boolean;
 }
 
+/**
+ * Canonical run identity derived from the persistent tracking-issue number.
+ * SPEC-012, decision 1 / TAC-01.
+ */
+export interface CanonicalRunId {
+  /** e.g. "RUN-0056" — zero-padded to at least four digits. */
+  runId: string;
+  /** e.g. "munichdeveloper/pi-spec-harness#RUN-0056" */
+  qualifiedRunId: string;
+  /** e.g. "PI-MUNICHDEVELOPER-PI-SPEC-HARNESS-RUN-0056" */
+  processInstance: string;
+}
+
+/**
+ * Lifecycle checkpoint for the run-documentation snapshot.
+ * Persisted before any external write so that every retry can reproduce
+ * the same byte-identical content. SPEC-012, decision 2.
+ */
+export interface DocumentationSnapshotCheckpoint {
+  schemaVersion: 1;
+  status: "prepared" | "publishing" | "persisted";
+  /** Stable idempotency key for the write operation. */
+  idempotencyKey: string;
+  /** Relative path of the generated snapshot (relative to repo root). */
+  path: string;
+  /** Relative path of the run index document. */
+  indexPath: string;
+  /** Relative path of the Obsidian base document. */
+  obsidianBasePath: string;
+  /** ISO timestamp when the checkpoint was prepared. */
+  generatedAt: string;
+  /** HEAD SHA of the source branch used to render the snapshot. */
+  sourceHeadSha: string;
+  /** SHA of the documentation commit once the push is confirmed. */
+  commitSha?: string;
+  /** Idempotency key for the follow-up audit event (REQ-005). */
+  auditIdempotencyKey: string;
+  /** ISO timestamp recorded once the audit event is confirmed. */
+  auditConfirmedAt?: string;
+}
+
 export interface RunState {
   schemaVersion: typeof SCHEMA_VERSION;
   runId: string;
@@ -230,6 +271,12 @@ export interface RunState {
    * independently. SPEC-009, decision 6.
    */
   reviewLoopCounter?: number;
+  /**
+   * Checkpoint tracking the post-merge documentation snapshot lifecycle.
+   * Optional and rückwärtskompatibel; absent for runs created before SPEC-012.
+   * SPEC-012, decision 2.
+   */
+  documentationSnapshot?: DocumentationSnapshotCheckpoint;
 }
 
 export interface CommandResult<TResult = unknown> {

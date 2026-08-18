@@ -156,6 +156,65 @@ jobs:
 `;
 }
 
+// ---------------------------------------------------------------------------
+// SPEC-012: Run documentation finalizer reference workflow template
+// ---------------------------------------------------------------------------
+
+export const RUN_DOCUMENTATION_FINALIZER_PATH = ".github/workflows/harness-run-documentation-finalizer.yml";
+export const RUN_DOCUMENTATION_FINALIZER_MARKER = "# Managed by pi-spec-harness: run-documentation-finalizer-reference v1";
+export const DEFAULT_RUN_DOCUMENTATION_FINALIZER_WORKFLOW_REF = "v0.2.2";
+
+export interface RunDocumentationFinalizerOptions {
+  harnessRef?: string;
+  reusableRepository?: string;
+  defaultBranch?: string;
+  generatedDirectory?: string;
+  indexPath?: string;
+  obsidianBasePath?: string;
+}
+
+export function renderRunDocumentationFinalizer(options: RunDocumentationFinalizerOptions = {}): string {
+  const harnessRef = options.harnessRef ?? DEFAULT_RUN_DOCUMENTATION_FINALIZER_WORKFLOW_REF;
+  const reusableRepository = options.reusableRepository ?? DEFAULT_REUSABLE_WORKFLOW_REPOSITORY;
+  const defaultBranch = options.defaultBranch ?? "main";
+  const generatedDirectory = options.generatedDirectory ?? "docs/runs/generated";
+  const indexPath = options.indexPath ?? "docs/runs/RUN-INDEX.md";
+  const obsidianBasePath = options.obsidianBasePath ?? "docs/runs/Runs.base";
+
+  return `${RUN_DOCUMENTATION_FINALIZER_MARKER}
+name: Harness Run Documentation Finalizer
+
+on:
+  issues:
+    types: [labeled]
+  pull_request:
+    types: [closed]
+
+# Non-cancelling concurrency: a waiting run must not be dropped.
+# TAC-16: cancel-in-progress must be false.
+concurrency:
+  group: harness-run-documentation-finalizer-\${{ github.repository }}-\${{ github.event.issue.number || github.event.pull_request.number }}
+  cancel-in-progress: false
+
+# TAC-16: minimal permissions only; no secrets: inherit.
+permissions:
+  contents: write
+  issues: write
+  pull-requests: read
+  actions: read
+
+jobs:
+  finalize:
+    uses: ${reusableRepository}/.github/workflows/run-documentation-finalizer.yml@${harnessRef}
+    with:
+      harness-ref: '${harnessRef}'
+      default-branch: '${defaultBranch}'
+      generated-directory: '${generatedDirectory}'
+      index-path: '${indexPath}'
+      obsidian-base-path: '${obsidianBasePath}'
+`;
+}
+
 export const WORKFLOW_TEMPLATE_CATALOG: WorkflowTemplateDefinition[] = [
   {
     name: "bug-triage",
@@ -197,6 +256,15 @@ export const WORKFLOW_TEMPLATE_CATALOG: WorkflowTemplateDefinition[] = [
     reusableWorkflowRepoPath: ".github/workflows/capability-smoke.yml",
     defaultRef: DEFAULT_CAPABILITY_SMOKE_WORKFLOW_REF,
     renderReference: (options) => renderCapabilityCallerReference(options as CapabilityCallerOptions | undefined),
+  },
+  // SPEC-012: run documentation finalizer
+  {
+    name: "run-documentation-finalizer",
+    targetPath: RUN_DOCUMENTATION_FINALIZER_PATH,
+    marker: RUN_DOCUMENTATION_FINALIZER_MARKER,
+    reusableWorkflowRepoPath: ".github/workflows/run-documentation-finalizer.yml",
+    defaultRef: DEFAULT_RUN_DOCUMENTATION_FINALIZER_WORKFLOW_REF,
+    renderReference: (options) => renderRunDocumentationFinalizer(options as RunDocumentationFinalizerOptions | undefined),
   },
 ];
 
