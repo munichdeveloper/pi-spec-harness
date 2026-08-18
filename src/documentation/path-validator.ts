@@ -103,29 +103,19 @@ export function validateStagedPaths(
     );
   }
 
-  // Enforce exact cardinality: staged count must equal expected count.
-  if (staged.length !== expected.size) {
-    const unexpected = staged.filter((p) => !expected.has(p));
-    const missing = [...expected].filter((p) => !staged.includes(p));
-    if (unexpected.length > 0) {
-      throw new Error(
-        `writer aborted: unexpected staged path(s): ${unexpected.join(", ")}`,
-      );
-    }
-    if (missing.length > 0) {
-      throw new Error(
-        `writer aborted: expected staged path(s) missing: ${missing.join(", ")}`,
-      );
-    }
-  }
-
+  // Enforce exact content match (also catches cardinality differences).
   const unexpected = staged.filter((p) => !expected.has(p));
+  const missing = [...expected].filter((p) => !staged.includes(p));
+  if (unexpected.length > 0 && missing.length > 0) {
+    throw new Error(
+      `writer aborted: unexpected staged path(s): ${unexpected.join(", ")}; expected staged path(s) missing: ${missing.join(", ")}`,
+    );
+  }
   if (unexpected.length > 0) {
     throw new Error(
       `writer aborted: unexpected staged path(s): ${unexpected.join(", ")}`,
     );
   }
-  const missing = [...expected].filter((p) => !staged.includes(p));
   if (missing.length > 0) {
     throw new Error(
       `writer aborted: expected staged path(s) missing: ${missing.join(", ")}`,

@@ -4,7 +4,7 @@ on:
   workflow_call:
     inputs:
       harness-ref: { required: true, type: string }
-      default-branch: { required: false, type: string, default: main }
+      default-branch: { required: false, type: string, default: "main" }
       generated-directory: { required: false, type: string, default: docs/runs/generated }
       index-path: { required: false, type: string, default: docs/runs/RUN-INDEX.md }
       obsidian-base-path: { required: false, type: string, default: docs/runs/Runs.base }
