@@ -54,7 +54,7 @@ import type { GateDecisionContext, GateType, HumanGateIssueRef, PhaseId, RunStat
 import { SCHEMA_VERSION } from "./state/types.js";
 import { renderRunSnapshot, buildSnapshotFilename } from "./documentation/run-snapshot.js";
 import { generateRunIndex, generateObsidianBase, parseRunIndexEntry } from "./documentation/run-index.js";
-import { validateDocumentationPath, validateStagedPaths } from "./documentation/path-validator.js";
+import { validateDocumentationPath } from "./documentation/path-validator.js";
 import { DEFAULT_RUN_DOCUMENTATION_CONFIG } from "./documentation/run-documentation-config.js";
 
 interface StoreArgs {
@@ -515,7 +515,6 @@ async function cmdPersistRunDocumentation(argv: {
   validateDocumentationPath(snapshotPath);
   validateDocumentationPath(indexPath);
   validateDocumentationPath(obsidianBasePath);
-  validateStagedPaths([snapshotPath, indexPath, obsidianBasePath], [snapshotPath, indexPath, obsidianBasePath]);
 
   const generatedAt = new Date().toISOString();
 
@@ -525,6 +524,8 @@ async function cmdPersistRunDocumentation(argv: {
   const obsidianContent = generateObsidianBase(indexEntry ? [indexEntry] : [], generatedAt);
 
   // Write each file to GitHub (create or update idempotently).
+  // Each call produces its own commit; we record the snapshot file commit SHA
+  // as the canonical documentation commit SHA for the checkpoint.
   const upsertFile = async (path: string, content: string): Promise<string> => {
     const existing = await github.getFileContentIfExists(repository, path, branch);
     const msg = `docs(harness): persist run documentation snapshot for ${state.runId}`;
@@ -534,8 +535,8 @@ async function cmdPersistRunDocumentation(argv: {
     return github.createFileOnDefaultBranch(repository, path, content, msg);
   };
 
-  await upsertFile(snapshotPath, snapshotContent);
-  const commitSha = await upsertFile(indexPath, indexContent);
+  const commitSha = await upsertFile(snapshotPath, snapshotContent);
+  await upsertFile(indexPath, indexContent);
   await upsertFile(obsidianBasePath, obsidianContent);
 
   // Record the persisted checkpoint and audit confirmation in run state.
