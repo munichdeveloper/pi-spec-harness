@@ -47,10 +47,15 @@ import {
   resolveGate,
   startIteration,
   transitionPhase,
+  upsertDocumentationSnapshot,
   upsertGate,
 } from "./state/state-machine.js";
-import type { GateDecisionContext, GateType, PhaseId, RunState } from "./state/types.js";
+import type { GateDecisionContext, GateType, HumanGateIssueRef, PhaseId, RunState } from "./state/types.js";
 import { SCHEMA_VERSION } from "./state/types.js";
+import { renderRunSnapshot, buildSnapshotFilename } from "./documentation/run-snapshot.js";
+import { generateRunIndex, generateObsidianBase, parseRunIndexEntry } from "./documentation/run-index.js";
+import { validateDocumentationPath, validateStagedPaths } from "./documentation/path-validator.js";
+import { DEFAULT_RUN_DOCUMENTATION_CONFIG } from "./documentation/run-documentation-config.js";
 
 interface StoreArgs {
   state?: string;
@@ -439,6 +444,130 @@ async function cmdResume(argv: StoreArgs): Promise<void> {
   }
 
   printResult("resume", { state, nextAction: next }, next.detail);
+}
+
+/**
+ * Persist the run documentation snapshot as Markdown in the target repository.
+ * Writes the snapshot, run index, and Obsidian base to the configured paths,
+ * then records the persisted checkpoint in the run state.
+ * SPEC-012, decision 4–7.
+ */
+async function cmdPersistRunDocumentation(argv: {
+  repository: string;
+  issueNumber: number;
+  generatedDirectory?: string;
+  indexPath?: string;
+  obsidianBasePath?: string;
+  branch?: string;
+  harnessVersion?: string;
+}): Promise<void> {
+  const { repository, issueNumber, branch = "main" } = argv;
+  const generatedDirectory = argv.generatedDirectory ?? DEFAULT_RUN_DOCUMENTATION_CONFIG.generatedDirectory;
+  const indexPath = argv.indexPath ?? DEFAULT_RUN_DOCUMENTATION_CONFIG.indexPath;
+  const obsidianBasePath = argv.obsidianBasePath ?? DEFAULT_RUN_DOCUMENTATION_CONFIG.obsidianBasePath;
+
+  const store = new IssueStateStore(repository, issueNumber);
+  let state = await store.load();
+  const next = computeNextAction(state);
+
+  // Idempotent: skip if documentation is already persisted.
+  if (state.documentationSnapshot?.status === "persisted") {
+    printResult(
+      "persist-run-documentation",
+      { skipped: "already-persisted", documentationSnapshot: state.documentationSnapshot, nextAction: next },
+      next.detail,
+    );
+    return;
+  }
+
+  if (next.action !== "persist-run-documentation") {
+    throw new Error(`run '${state.runId}' is not ready for documentation persistence: ${next.detail}`);
+  }
+
+  // Resolve HEAD SHA of the default branch as the source reference.
+  const sourceHeadSha = await github.getBranchSha(repository, branch);
+
+  const harnessVersion = argv.harnessVersion ?? "unknown";
+
+  const trackingIssue: HumanGateIssueRef = {
+    repository,
+    number: issueNumber,
+    url: `https://github.com/${repository}/issues/${issueNumber}`,
+  };
+
+  // Build stable idempotency keys.
+  const idempotencyKey = `persist-run-doc-${state.runId}-${issueNumber}`;
+  const auditIdempotencyKey = `audit-run-doc-${state.runId}-${issueNumber}`;
+
+  // Render the snapshot document.
+  const snapshotContent = renderRunSnapshot({
+    state,
+    trackingIssue,
+    repositoryDefaultBranch: branch,
+    harnessVersion,
+  });
+
+  // Derive the snapshot path from the run ID and spec.
+  const snapshotFilename = buildSnapshotFilename(state.runId, state.spec);
+  const snapshotPath = `${generatedDirectory}/${snapshotFilename}`;
+
+  // Validate all three destination paths before touching any files.
+  validateDocumentationPath(snapshotPath);
+  validateDocumentationPath(indexPath);
+  validateDocumentationPath(obsidianBasePath);
+  validateStagedPaths([snapshotPath, indexPath, obsidianBasePath], [snapshotPath, indexPath, obsidianBasePath]);
+
+  const generatedAt = new Date().toISOString();
+
+  // Build the run index from the new snapshot entry only.
+  const indexEntry = parseRunIndexEntry(snapshotPath, snapshotContent);
+  const indexContent = generateRunIndex(indexEntry ? [indexEntry] : [], generatedAt);
+  const obsidianContent = generateObsidianBase(indexEntry ? [indexEntry] : [], generatedAt);
+
+  // Write each file to GitHub (create or update idempotently).
+  const upsertFile = async (path: string, content: string): Promise<string> => {
+    const existing = await github.getFileContentIfExists(repository, path, branch);
+    const msg = `docs(harness): persist run documentation snapshot for ${state.runId}`;
+    if (existing) {
+      return github.updateFileOnDefaultBranch(repository, path, content, existing.blobSha, msg);
+    }
+    return github.createFileOnDefaultBranch(repository, path, content, msg);
+  };
+
+  await upsertFile(snapshotPath, snapshotContent);
+  const commitSha = await upsertFile(indexPath, indexContent);
+  await upsertFile(obsidianBasePath, obsidianContent);
+
+  // Record the persisted checkpoint and audit confirmation in run state.
+  state = upsertDocumentationSnapshot(state, {
+    schemaVersion: 1,
+    status: "persisted",
+    idempotencyKey,
+    path: snapshotPath,
+    indexPath,
+    obsidianBasePath,
+    generatedAt,
+    sourceHeadSha,
+    commitSha,
+    auditIdempotencyKey,
+    auditConfirmedAt: new Date().toISOString(),
+  });
+
+  await store.save(state);
+  const following = computeNextAction(state);
+  printResult(
+    "persist-run-documentation",
+    {
+      snapshotPath,
+      indexPath,
+      obsidianBasePath,
+      commitSha,
+      sourceHeadSha,
+      documentationSnapshot: state.documentationSnapshot,
+      nextAction: following,
+    },
+    following.detail,
+  );
 }
 
 async function cmdAdvance(argv: StoreArgs): Promise<void> {
@@ -1817,6 +1946,29 @@ await yargs(hideBin(process.argv))
         repository: argv.repository,
         runId: argv.runId,
         pullRequest: argv.pullRequest,
+      }),
+  )
+  .command(
+    "persist-run-documentation",
+    "Persist the run documentation snapshot to the repository and record the checkpoint in run state (SPEC-012)",
+    (y) =>
+      y
+        .option("repository", { type: "string", demandOption: true, describe: "owner/repo of the target repository" })
+        .option("issue-number", { type: "number", demandOption: true, describe: "Tracking issue number (harness:run issue)" })
+        .option("generated-directory", { type: "string", describe: "Directory for generated snapshots (default: docs/runs/generated)" })
+        .option("index-path", { type: "string", describe: "Path for the run index document (default: docs/runs/RUN-INDEX.md)" })
+        .option("obsidian-base-path", { type: "string", describe: "Path for the Obsidian base document (default: docs/runs/Runs.base)" })
+        .option("branch", { type: "string", describe: "Default branch to write to (default: main)" })
+        .option("harness-version", { type: "string", describe: "Harness version string to embed in the snapshot metadata" }),
+    async (argv) =>
+      cmdPersistRunDocumentation({
+        repository: argv.repository as string,
+        issueNumber: argv["issue-number"] as number,
+        generatedDirectory: argv["generated-directory"] as string | undefined,
+        indexPath: argv["index-path"] as string | undefined,
+        obsidianBasePath: argv["obsidian-base-path"] as string | undefined,
+        branch: argv.branch as string | undefined,
+        harnessVersion: argv["harness-version"] as string | undefined,
       }),
   )
   .command(

@@ -576,3 +576,103 @@ describe("TAC-16 run-documentation-finalizer workflow template", () => {
     expect(content).toContain("workflow_call");
   });
 });
+
+// ---------------------------------------------------------------------------
+// TAC-17: persist-run-documentation CLI command contract
+// ---------------------------------------------------------------------------
+
+describe("TAC-17 persist-run-documentation CLI command contract", () => {
+  // Build a state that has confirmed delivery merge (so persist-run-documentation is the next action).
+  function makePersistReadyState() {
+    let state = initRunState({ runId: "RUN-0056", spec: "SPEC-012", repository: "org/repo", branch: "main" });
+    state = upsertGate(state, { id: "merge-approval", type: "merge", title: "Merge approval" });
+    state = resolveGate(state, "merge-approval", { decision: { approved: true, by: "human", at: "2024-01-01T00:00:00Z" } });
+    state = recordDeliveryMergeEffect(state, {
+      pullRequest: 1,
+      approvedHeadSha: "abc123",
+      mergeCommitSha: "def456",
+      mergedAt: "2024-01-01T00:00:00Z",
+    });
+    return state;
+  }
+
+  it("computeNextAction emits persist-run-documentation after delivery merge", () => {
+    const state = makePersistReadyState();
+    const next = computeNextAction(state);
+    expect(next.action).toBe("persist-run-documentation");
+  });
+
+  it("renderRunSnapshot produces valid content and buildSnapshotFilename derives the path", () => {
+    const state = makePersistReadyState();
+    const trackingIssue = { repository: "org/repo", number: 56, url: "https://github.com/org/repo/issues/56" };
+    const content = renderRunSnapshot({ state, trackingIssue, repositoryDefaultBranch: "main", harnessVersion: "v0.2.2" });
+    expect(content).toContain("run_id:");
+    expect(content).toContain("RUN-0056");
+
+    const filename = buildSnapshotFilename("RUN-0056", "SPEC-012");
+    expect(filename).toBe("RUN-0056-spec-012.md");
+    const snapshotPath = `docs/runs/generated/${filename}`;
+    // Paths must all pass validation
+    expect(() => validateDocumentationPath(snapshotPath)).not.toThrow();
+    expect(() => validateDocumentationPath("docs/runs/RUN-INDEX.md")).not.toThrow();
+    expect(() => validateDocumentationPath("docs/runs/Runs.base")).not.toThrow();
+    expect(() => validateStagedPaths(
+      [snapshotPath, "docs/runs/RUN-INDEX.md", "docs/runs/Runs.base"],
+      [snapshotPath, "docs/runs/RUN-INDEX.md", "docs/runs/Runs.base"],
+    )).not.toThrow();
+  });
+
+  it("upsertDocumentationSnapshot with status=persisted allows phase advance to complete", () => {
+    let state = makePersistReadyState();
+    const filename = buildSnapshotFilename(state.runId, state.spec);
+    const snapshotPath = `docs/runs/generated/${filename}`;
+    state = upsertDocumentationSnapshot(state, {
+      schemaVersion: 1,
+      status: "persisted",
+      idempotencyKey: `persist-run-doc-${state.runId}-56`,
+      path: snapshotPath,
+      indexPath: "docs/runs/RUN-INDEX.md",
+      obsidianBasePath: "docs/runs/Runs.base",
+      generatedAt: "2024-01-02T00:00:00Z",
+      sourceHeadSha: "abc123",
+      commitSha: "commitsha",
+      auditIdempotencyKey: `audit-run-doc-${state.runId}-56`,
+      auditConfirmedAt: "2024-01-02T00:00:01Z",
+    });
+    const next = computeNextAction(state);
+    expect(next.action).toBe("advance-phase");
+  });
+
+  it("transitionPhase to complete succeeds after persisted snapshot", () => {
+    let state = makePersistReadyState();
+    const filename = buildSnapshotFilename(state.runId, state.spec);
+    const snapshotPath = `docs/runs/generated/${filename}`;
+    state = upsertDocumentationSnapshot(state, {
+      schemaVersion: 1,
+      status: "persisted",
+      idempotencyKey: `persist-run-doc-${state.runId}-56`,
+      path: snapshotPath,
+      indexPath: "docs/runs/RUN-INDEX.md",
+      obsidianBasePath: "docs/runs/Runs.base",
+      generatedAt: "2024-01-02T00:00:00Z",
+      sourceHeadSha: "abc123",
+      commitSha: "commitsha",
+      auditIdempotencyKey: `audit-run-doc-${state.runId}-56`,
+      auditConfirmedAt: "2024-01-02T00:00:01Z",
+    });
+    const complete = transitionPhase(state, "complete");
+    expect(complete.phase).toBe("complete");
+  });
+
+  it("reusable workflow invokes persist-run-documentation command", async () => {
+    const { readFileSync } = await import("fs");
+    const content = readFileSync(".github/workflows/run-documentation-finalizer.yml", "utf8");
+    expect(content).toContain("persist-run-documentation");
+    expect(content).toContain("--repository");
+    expect(content).toContain("--issue-number");
+    expect(content).toContain("--generated-directory");
+    expect(content).toContain("--index-path");
+    expect(content).toContain("--obsidian-base-path");
+    expect(content).toContain("workflow_call");
+  });
+});
