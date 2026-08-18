@@ -329,8 +329,9 @@ bezieht keine Secrets per `secrets: inherit`.
 - TAC-09: Index und Obsidian Base sind deterministisch, chronologisch
   absteigend und enthalten generierte sowie explizit konfigurierte
   Legacy-Dokumente mit ihrer korrekten Klassifikation.
-- TAC-10: Der Writer verweigert absolute Pfade, Traversal, Symlink-Escape und
-  jeden vierten beziehungsweise unerwarteten staged Pfad.
+- TAC-10: Der Writer verweigert absolute Pfade, Traversal und Symlink-Escape.
+  Er bricht außerdem ab, sobald mehr als die drei vorgesehenen Pfade oder ein
+  anderer unerwarteter Pfad gestaged ist.
 - TAC-11: Zwei gleiche Zustellungen erzeugen genau einen Snapshot und einen
   Audit-Effekt; der zweite Lauf bestätigt einen No-op.
 - TAC-12: Ein simulierter Push-Konflikt wird begrenzt gerebased; der Index wird

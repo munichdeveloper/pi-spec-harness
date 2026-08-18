@@ -76,8 +76,8 @@ rekonstruiert beziehungsweise unbekannt gekennzeichnet.
 - AC-07: Optionaler menschlicher Rückblick lebt in einer separaten
   `*-notes.md`-Datei. Der Harness erstellt oder überschreibt diese Datei nie.
 - AC-08: Generierte Snapshots liegen in einem konfigurierbaren generierten
-  Run-Verzeichnis. Der Default ist `docs/runs/generated/`; Zielrepositories
-  dürfen beispielsweise `docs/50-quality/runs/generated/` konfigurieren.
+  Run-Verzeichnis. Der Default ist `docs/runs/generated`; Zielrepositories
+  dürfen beispielsweise `docs/50-quality/runs/generated` konfigurieren.
 - AC-09: Der Harness erzeugt einen deterministischen, chronologisch absteigend
   sortierten Markdown-Index und eine Obsidian-Base aus standardisiertem
   YAML-Frontmatter. Die Markdown-Ansicht funktioniert ohne Obsidian; die Base
