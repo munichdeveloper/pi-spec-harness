@@ -103,7 +103,14 @@ jobs:
             });
           ")
           # Encode the validated args as NUL-delimited in a temp file to pass to the next step.
-          printf '%s\0' "${legacy_args[@]}" > /tmp/legacy_args.bin
+          # Only write when non-empty — an empty printf would leave a single NUL byte that
+          # the reconstruction loop would misread as one empty argument.
+          # Use a run-attempt-scoped path to avoid races on shared self-hosted runners.
+          LEGACY_ARGS_FILE="${RUNNER_TEMP}/legacy_args_${{ github.run_id }}_${{ github.run_attempt }}.bin"
+          echo "legacy_args_file=${LEGACY_ARGS_FILE}" >> "$GITHUB_OUTPUT"
+          if [ ${#legacy_args[@]} -gt 0 ]; then
+            printf '%s\0' "${legacy_args[@]}" > "${LEGACY_ARGS_FILE}"
+          fi
 
       - name: Persist run documentation snapshot
         env:
@@ -118,10 +125,11 @@ jobs:
 
           # Reconstruct the legacy_args Bash array from the NUL-delimited temp file.
           legacy_args=()
-          if [ -s /tmp/legacy_args.bin ]; then
+          LEGACY_ARGS_FILE="${{ steps.legacy-dirs.outputs.legacy_args_file }}"
+          if [ -n "$LEGACY_ARGS_FILE" ] && [ -s "$LEGACY_ARGS_FILE" ]; then
             while IFS= read -r -d $'\0' arg; do
               legacy_args+=("$arg")
-            done < /tmp/legacy_args.bin
+            done < "$LEGACY_ARGS_FILE"
           fi
 
           npm run harness -- persist-run-documentation \
