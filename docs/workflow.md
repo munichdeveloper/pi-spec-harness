@@ -175,12 +175,13 @@ etwas zu verändern oder zu löschen. Die Option ist unabhängig von
 
 ### Überblick
 
-Bevor der produktive Bug-Agent startet, prüft der Bug-Lauf, ob unter der
-aktuell wirksamen Credential- und Berechtigungskonfiguration tatsächlich
-Bash-, Write- und Edit-Toolaufrufe gelingen. Das Ergebnis ist eine
-kryptographisch gebundene Cache-Attestation. Ein Cache-Treffer (korrekter
-Fingerprint, valides Manifest) überspringt den kostenpflichtigen Smoke-Lauf
-vollständig; erst ein Cache-Miss löst genau einen Smoke aus.
+Nach dem Post-Release-Rollout des Harness in die Bug-Pipeline des Ziel-Repos
+prüft der Bug-Lauf, ob unter der aktuell wirksamen Credential- und
+Berechtigungskonfiguration tatsächlich Bash-, Write- und Edit-Toolaufrufe
+gelingen. Das Ergebnis ist eine kryptographisch gebundene Cache-Attestation.
+Ein Cache-Treffer (korrekter Fingerprint, valides Manifest) überspringt den
+kostenpflichtigen Smoke-Lauf vollständig; erst ein Cache-Miss löst genau
+einen Smoke aus.
 
 ### Fingerprint (TAC-01)
 
