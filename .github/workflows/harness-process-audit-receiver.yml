@@ -7,9 +7,10 @@ name: Harness Process Audit Receiver
 # harness producer) and delegates to the reusable process-audit-automation
 # workflow for validated, idempotent, conflict-safe journal recording.
 #
-# For target repositories that use the harness: install a copy of this file
-# (or a file with the same structure) via `harness install`.  Change the
-# `uses:` ref to the specific harness version pinned by the project.
+# For target repositories that use the harness: install via
+# `harness install process-audit-receiver` — the installed file calls the
+# remote reusable workflow at a pinned, immutable harness ref so it works
+# without any additional files in the target repository.
 
 on:
   repository_dispatch:
@@ -27,6 +28,9 @@ jobs:
       # payload value is never interpolated into shell commands.
       audit-payload-json: ${{ toJson(github.event.client_payload.audit) }}
       journal-dir: docs/process-audit/journal
-      harness-ref: main
+      # Use github.sha so that the recorder scripts are always the same
+      # version as the workflow files currently executing, avoiding a
+      # dependency on the mutable 'main' branch ref.
+      harness-ref: ${{ github.sha }}
     permissions:
       contents: write

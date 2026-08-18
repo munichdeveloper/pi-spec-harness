@@ -26,19 +26,34 @@ const ALLOWED_PROCESS_CODES = new Set([
   "BUG_TO_PR",
 ]);
 
-const ALLOWED_OUTCOMES = new Set(["SUCCEEDED", "FAILED", "SKIPPED"]);
+// Canonical outcome enum (SPEC-005 §external-contract).
+const ALLOWED_OUTCOMES = new Set([
+  "SUCCEEDED",
+  "FAILED",
+  "SKIPPED",
+  "STARTED",
+  "BLOCKED",
+  "PARTIAL",
+]);
 
+// Canonical actor enum (SPEC-005 §external-contract).
 const ALLOWED_ACTORS = new Set([
   "GITHUB_ACTIONS",
   "COPILOT",
   "HUMAN",
+  "GITHUB_COPILOT",
+  "HUMAN_PRODUCT_OWNER",
+  "CODEX",
+  "CODEX_CHAT_SESSION",
 ]);
 
+// Canonical access-role enum (SPEC-005 §external-contract).
 const ALLOWED_ACCESS_ROLES = new Set([
   "GITHUB_ACTIONS_TOKEN",
   "PERSONAL_ACCESS_TOKEN",
   "APP_INSTALLATION_TOKEN",
   "HUMAN_BROWSER_SESSION",
+  "GITHUB_PERSONAL_ACCESS_TOKEN",
 ]);
 
 // ---------------------------------------------------------------------------
@@ -63,11 +78,33 @@ function rejectSecrets(value, fieldName) {
       );
     }
   }
-  // Double-quote characters would break YAML-quoted scalar serialisation and
-  // could cause idempotency marker mismatches — reject them outright.
+  // Characters that would break YAML scalar serialisation or allow injection:
+  // - Double-quote: breaks "quoted scalar" boundaries and idempotency markers
+  // - Backslash: introduces YAML escape sequences in double-quoted scalars
+  // - Newline / carriage-return: breaks multi-line scalar boundaries
+  // - Control characters (0x00–0x1F excluding tab 0x09): unsafe in any YAML
   if (value.includes('"')) {
     throw new Error(
       `SPEC-005 validation failed: field '${fieldName}' must not contain double-quote characters.`,
+    );
+  }
+  if (value.includes("\\")) {
+    throw new Error(
+      `SPEC-005 validation failed: field '${fieldName}' must not contain backslash characters.`,
+    );
+  }
+  if (/[\n\r]/.test(value)) {
+    throw new Error(
+      `SPEC-005 validation failed: field '${fieldName}' must not contain newline characters.`,
+    );
+  }
+  // Reject control characters (0x00–0x08, 0x0B–0x0C, 0x0E–0x1F) — tab (0x09)
+  // and newlines (0x0A, 0x0D) are already handled above or safe in YAML block
+  // scalars, but are excluded from the allowed scalar set here for strictness.
+  // eslint-disable-next-line no-control-regex
+  if (/[\x00-\x08\x0B\x0C\x0E-\x1F]/.test(value)) {
+    throw new Error(
+      `SPEC-005 validation failed: field '${fieldName}' must not contain control characters.`,
     );
   }
 }

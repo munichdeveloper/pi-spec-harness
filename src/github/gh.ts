@@ -1,6 +1,7 @@
 import { execFile as execFileCb, spawn } from "node:child_process";
 import { promisify } from "node:util";
 import { validateStagedPaths } from "../documentation/path-validator.js";
+import { PROCESS_AUDIT_RECEIVER_MARKER, PROCESS_AUDIT_RECEIVER_PATH } from "../workflows/template-catalog.js";
 
 const execFile = promisify(execFileCb);
 
@@ -900,10 +901,19 @@ export const github = {
           continue;
         }
         if (content.includes(marker)) {
-          // Extract confirmed_at from the journal entry, or fall back to the
-          // commit timestamp we recorded during delivery.
+          // Extract confirmed_at from the journal entry.  Fail closed: a
+          // journal file that contains the idempotency_key but no
+          // confirmed_at field is an incomplete/corrupt entry; fabricating a
+          // local timestamp would produce an unaudited confirmed-at value.
           const match = content.match(/confirmed_at:\s*"([^"]+)"/);
-          return match ? match[1] : new Date().toISOString();
+          if (!match) {
+            throw new Error(
+              `audit journal entry for idempotency_key "${idempotencyKey}" in ` +
+              `"${journalDirectory}" of "${recorderRepository}" is missing the ` +
+              `required 'confirmed_at' field — the entry may be incomplete or corrupt.`,
+            );
+          }
+          return match[1];
         }
       }
     }
@@ -996,6 +1006,38 @@ export const github = {
         `run-documentation-writer preflight failed: audit recorder repository '${recorder}' is not reachable: ${msg}. ` +
         `Ensure the process-audit-receiver workflow is installed and the token has access to '${recorder}'. ` +
         `Configure --audit-recorder-repo if the recorder lives in a different repository.`,
+      );
+    }
+
+    // Check 4: the process-audit receiver workflow is installed in the recorder
+    // repository (SPEC-012 §11 / TAC-17 "fehlenden Auditvertrag").
+    //
+    // A `repository_dispatch` sent to a recorder that has no matching workflow
+    // will silently succeed (HTTP 204) but never write a journal entry.  We
+    // detect this before any productive write by verifying the receiver file
+    // exists on the recorder's default branch and carries the expected marker.
+    let receiverFile: { content: string } | undefined;
+    try {
+      receiverFile = await this.getFileContentIfExists(recorder, PROCESS_AUDIT_RECEIVER_PATH);
+    } catch (err) {
+      const msg = err instanceof GhError ? err.message : String(err);
+      throw new Error(
+        `run-documentation-writer preflight failed: cannot verify process-audit receiver in '${recorder}': ${msg}.`,
+      );
+    }
+    if (!receiverFile) {
+      throw new Error(
+        `run-documentation-writer preflight failed: process-audit receiver workflow ` +
+        `'${PROCESS_AUDIT_RECEIVER_PATH}' not found in '${recorder}'. ` +
+        `Run \`harness install process-audit-receiver\` in '${recorder}' to install it.`,
+      );
+    }
+    if (!receiverFile.content.includes(PROCESS_AUDIT_RECEIVER_MARKER)) {
+      throw new Error(
+        `run-documentation-writer preflight failed: the process-audit receiver at ` +
+        `'${PROCESS_AUDIT_RECEIVER_PATH}' in '${recorder}' is not a pi-spec-harness managed receiver ` +
+        `(expected marker '${PROCESS_AUDIT_RECEIVER_MARKER}' not found). ` +
+        `Run \`harness install process-audit-receiver\` in '${recorder}' to install a compatible receiver.`,
       );
     }
   },

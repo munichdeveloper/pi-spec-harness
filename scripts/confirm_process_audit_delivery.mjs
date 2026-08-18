@@ -40,8 +40,14 @@ for (const name of files) {
   const content = readFileSync(join(JOURNAL_DIR, name), "utf8");
   if (content.includes(marker)) {
     const match = content.match(/confirmed_at:\s*"([^"]+)"/);
-    const confirmedAt = match ? match[1] : new Date().toISOString();
-    process.stdout.write(confirmedAt + "\n");
+    if (!match) {
+      console.error(
+        `::error::Audit journal entry for idempotency_key "${IDEMPOTENCY_KEY}" in '${JOURNAL_DIR}/${name}' ` +
+        `is missing the required 'confirmed_at' field — the entry may be incomplete or corrupt.`,
+      );
+      process.exit(1);
+    }
+    process.stdout.write(match[1] + "\n");
     process.exit(0);
   }
 }

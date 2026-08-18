@@ -1494,4 +1494,68 @@ describe("TAC-18 cmdPersistRunDocumentation integration via injected adapter", (
     // it can't reach GitHub in the test environment).
     expect(typeof github.confirmAuditEventInJournal).toBe("function");
   });
+
+  // --- Finding 4 regression: confirmAuditEventInJournal fails-closed on missing confirmed_at ---
+
+  it("Finding-4: command fails when confirmAuditEventInJournal finds journal entry without confirmed_at field", async () => {
+    // Simulate a recorder that writes an incomplete journal entry (marker present but no confirmed_at).
+    // The adapter's confirmAuditEventInJournal must throw, not fabricate a timestamp.
+    const store = new MemoryStateStore(mergeReadyState());
+    const gh = makeFakeGithub({
+      async confirmAuditEventInJournal(_repo, _dir, key) {
+        // Simulate the fail-closed behavior: journal file found but confirmed_at missing
+        throw new Error(
+          `audit journal entry for idempotency_key "${key}" is missing the required 'confirmed_at' field`,
+        );
+      },
+    });
+    await expect(cmdPersistRunDocumentation({
+      repository: "org/repo",
+      issueNumber: 56,
+      branch: "main",
+      _githubAdapter: gh,
+      _storeFactory: () => store as never,
+    })).rejects.toThrow(/confirmed_at/);
+  });
+
+  // --- Finding 3 regression: preflight blocks on missing / unmanaged receiver ---
+
+  it("Finding-3: preflight blocks when process-audit receiver workflow is not found in recorder", async () => {
+    const store = new MemoryStateStore(mergeReadyState());
+    const gh = makeFakeGithub({
+      async preflightRunDocumentationWriter(_repo, _branch, recorderRepo) {
+        throw new Error(
+          `run-documentation-writer preflight failed: process-audit receiver workflow ` +
+          `'.github/workflows/harness-process-audit-receiver.yml' not found in '${recorderRepo ?? _repo}'.`,
+        );
+      },
+    });
+    await expect(cmdPersistRunDocumentation({
+      repository: "org/repo",
+      issueNumber: 56,
+      branch: "main",
+      _githubAdapter: gh,
+      _storeFactory: () => store as never,
+    })).rejects.toThrow(/process-audit receiver workflow.*not found/);
+  });
+
+  it("Finding-3: preflight blocks when receiver exists but lacks the managed marker", async () => {
+    const store = new MemoryStateStore(mergeReadyState());
+    const gh = makeFakeGithub({
+      async preflightRunDocumentationWriter(_repo, _branch, recorderRepo) {
+        throw new Error(
+          `run-documentation-writer preflight failed: the process-audit receiver at ` +
+          `'.github/workflows/harness-process-audit-receiver.yml' in '${recorderRepo ?? _repo}' ` +
+          `is not a pi-spec-harness managed receiver (expected marker not found).`,
+        );
+      },
+    });
+    await expect(cmdPersistRunDocumentation({
+      repository: "org/repo",
+      issueNumber: 56,
+      branch: "main",
+      _githubAdapter: gh,
+      _storeFactory: () => store as never,
+    })).rejects.toThrow(/not a pi-spec-harness managed receiver/);
+  });
 });

@@ -384,3 +384,83 @@ describe("SPEC-010 capability-smoke reusable workflow contracts", () => {
     expect(caller).not.toContain("vars.HARNESS_CLAUDE_CODE_ACTION_VERSION");
   });
 });
+
+// ---------------------------------------------------------------------------
+// SPEC-005 normalizeProcessAuditInput: canonical enums + YAML injection safety
+// (Finding 2 regression tests)
+// ---------------------------------------------------------------------------
+
+describe("SPEC-005 normalize_process_audit_input.mjs (Finding 2)", () => {
+  // Helper: build a minimal valid envelope
+  function validEnvelope(overrides: Record<string, unknown> = {}) {
+    return {
+      schema_version: 1,
+      occurred_at: "2026-08-18T12:00:00Z",
+      process_instance: "run-0056",
+      idempotency_key: "idem-001",
+      process_code: "DOCUMENTATION_UPDATE",
+      actor: "GITHUB_ACTIONS",
+      access_role: "GITHUB_ACTIONS_TOKEN",
+      supporting_access_roles: [],
+      outcome: "SUCCEEDED",
+      repository: "org/repo",
+      artifact: "docs/runs/generated/RUN-0056.md",
+      correlation_ids: [],
+      evidence: [],
+      reason: "run completed",
+      description: "Snapshot written for RUN-0056",
+      ...overrides,
+    };
+  }
+
+  it("accepts canonical actor values including GITHUB_COPILOT, CODEX, HUMAN_PRODUCT_OWNER", async () => {
+    const { normalizeProcessAuditInput } = await import("../scripts/normalize_process_audit_input.mjs");
+    for (const actor of ["GITHUB_ACTIONS", "COPILOT", "HUMAN", "GITHUB_COPILOT", "HUMAN_PRODUCT_OWNER", "CODEX", "CODEX_CHAT_SESSION"]) {
+      expect(() => normalizeProcessAuditInput(validEnvelope({ actor }))).not.toThrow();
+    }
+  });
+
+  it("accepts canonical outcome values including STARTED, BLOCKED, PARTIAL", async () => {
+    const { normalizeProcessAuditInput } = await import("../scripts/normalize_process_audit_input.mjs");
+    for (const outcome of ["SUCCEEDED", "FAILED", "SKIPPED", "STARTED", "BLOCKED", "PARTIAL"]) {
+      expect(() => normalizeProcessAuditInput(validEnvelope({ outcome }))).not.toThrow();
+    }
+  });
+
+  it("accepts canonical access_role values including GITHUB_PERSONAL_ACCESS_TOKEN", async () => {
+    const { normalizeProcessAuditInput } = await import("../scripts/normalize_process_audit_input.mjs");
+    for (const access_role of ["GITHUB_ACTIONS_TOKEN", "PERSONAL_ACCESS_TOKEN", "APP_INSTALLATION_TOKEN", "HUMAN_BROWSER_SESSION", "GITHUB_PERSONAL_ACCESS_TOKEN"]) {
+      expect(() => normalizeProcessAuditInput(validEnvelope({ access_role }))).not.toThrow();
+    }
+  });
+
+  it("rejects unknown actor values (not in canonical enum)", async () => {
+    const { normalizeProcessAuditInput } = await import("../scripts/normalize_process_audit_input.mjs");
+    expect(() => normalizeProcessAuditInput(validEnvelope({ actor: "UNKNOWN_BOT" }))).toThrow(/actor/);
+  });
+
+  it("rejects string fields containing backslash characters (YAML injection)", async () => {
+    const { normalizeProcessAuditInput } = await import("../scripts/normalize_process_audit_input.mjs");
+    expect(() => normalizeProcessAuditInput(validEnvelope({ description: "foo\\bar" }))).toThrow(/backslash/);
+  });
+
+  it("rejects string fields containing newline characters (YAML injection)", async () => {
+    const { normalizeProcessAuditInput } = await import("../scripts/normalize_process_audit_input.mjs");
+    expect(() => normalizeProcessAuditInput(validEnvelope({ description: "line1\nline2" }))).toThrow(/newline/);
+  });
+
+  it("rejects string fields containing carriage-return characters (YAML injection)", async () => {
+    const { normalizeProcessAuditInput } = await import("../scripts/normalize_process_audit_input.mjs");
+    expect(() => normalizeProcessAuditInput(validEnvelope({ reason: "foo\rbar" }))).toThrow(/newline/);
+  });
+
+  it("rejects string fields containing control characters (YAML injection)", async () => {
+    const { normalizeProcessAuditInput } = await import("../scripts/normalize_process_audit_input.mjs");
+    expect(() => normalizeProcessAuditInput(validEnvelope({ reason: "foo\x01bar" }))).toThrow(/control character/);
+  });
+
+  it("still rejects double-quote characters", async () => {
+    const { normalizeProcessAuditInput } = await import("../scripts/normalize_process_audit_input.mjs");
+    expect(() => normalizeProcessAuditInput(validEnvelope({ description: 'has "quotes"' }))).toThrow(/double-quote/);
+  });
+});
