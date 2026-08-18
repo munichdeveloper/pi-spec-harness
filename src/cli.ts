@@ -77,17 +77,20 @@ export interface WriterGithubAdapter {
   getFileContent(repository: string, path: string, ref: string): Promise<{ content: string; blobSha: string }>;
   dispatchProcessAuditEnvelopeV1(recorderRepository: string, payload: {
     schema_version: 1;
-    event_type: "DOCUMENTATION_UPDATE";
-    actor: string;
-    role: string;
-    run_id: string;
-    correlation_run_id: string;
-    correlation_issue: string;
-    delivery_pr?: number;
-    source_commit_sha: string;
-    documentation_commit_sha: string;
+    occurred_at: string;
+    process_instance: string;
     idempotency_key: string;
-    generated_at: string;
+    process_code: "DOCUMENTATION_UPDATE";
+    actor: string;
+    access_role: string;
+    supporting_access_roles: string[];
+    outcome: string;
+    repository: string;
+    artifact: string;
+    correlation_ids: string[];
+    evidence: string[];
+    reason: string;
+    description: string;
   }): Promise<void>;
   confirmAuditEventInJournal(
     recorderRepository: string,
@@ -706,19 +709,23 @@ export async function cmdPersistRunDocumentation(argv: {
       auditRecorderRepo,
       {
         schema_version: 1,
-        event_type: "DOCUMENTATION_UPDATE",
-        actor: "GITHUB_ACTIONS",
-        role: "GITHUB_ACTIONS_TOKEN",
-        run_id: state.runId,
-        correlation_run_id: state.runId,
-        correlation_issue: `${repository}#${issueNumber}`,
-        ...(state.deliveryPullRequest !== undefined
-          ? { delivery_pr: state.deliveryPullRequest }
-          : {}),
-        source_commit_sha: sourceHeadSha,
-        documentation_commit_sha: commitSha,
+        occurred_at: generatedAt,
+        process_instance: state.runId,
         idempotency_key: auditIdempotencyKey,
-        generated_at: generatedAt,
+        process_code: "DOCUMENTATION_UPDATE",
+        actor: "GITHUB_ACTIONS",
+        access_role: "GITHUB_ACTIONS_TOKEN",
+        supporting_access_roles: [],
+        outcome: "SUCCEEDED",
+        repository,
+        artifact: commitSha,
+        correlation_ids: [state.runId, `${repository}#${issueNumber}`],
+        evidence: [
+          `https://github.com/${repository}/issues/${issueNumber}`,
+          `https://github.com/${repository}/commit/${commitSha}`,
+        ],
+        reason: `Run documentation persisted for run ${state.runId}.`,
+        description: `The harness run-documentation-finalizer committed the structured run snapshot at ${snapshotPath}.`,
       },
     );
 

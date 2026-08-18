@@ -1211,9 +1211,9 @@ describe("TAC-18 cmdPersistRunDocumentation integration via injected adapter", (
     });
 
     expect(gh.dispatchedEvents).toHaveLength(1);
-    const event = gh.dispatchedEvents[0] as { recorder: string; payload: { event_type: string } };
+    const event = gh.dispatchedEvents[0] as { recorder: string; payload: { process_code: string } };
     expect(event.recorder).toBe("org/repo");
-    expect(event.payload.event_type).toBe("DOCUMENTATION_UPDATE");
+    expect(event.payload.process_code).toBe("DOCUMENTATION_UPDATE");
   });
 
   // --- Duplicate delivery no-op (TAC-11 with origin + journal re-confirmation) ---
@@ -1437,15 +1437,22 @@ describe("TAC-18 cmdPersistRunDocumentation integration via injected adapter", (
     expect(content).toContain("audit-journal-path");
   });
 
-  // --- Process-audit-receiver workflow contract ---------------------------
+  // --- Process-audit-automation workflow contract ---------------------------
 
-  it("harness-process-audit-receiver workflow exists and triggers on repository_dispatch", async () => {
+  it("process-audit-automation reusable workflow exists and has workflow_call trigger", async () => {
+    const { readFileSync } = await import("fs");
+    const content = readFileSync(".github/workflows/process-audit-automation.yml", "utf8");
+    expect(content).toContain("workflow_call");
+    expect(content).toContain("audit-payload-json");
+    expect(content).toContain("record_process_audit.mjs");
+  });
+
+  it("harness-process-audit-receiver workflow exists and calls process-audit-automation", async () => {
     const { readFileSync } = await import("fs");
     const content = readFileSync(".github/workflows/harness-process-audit-receiver.yml", "utf8");
     expect(content).toContain("repository_dispatch");
     expect(content).toContain("process_audit");
-    expect(content).toContain("idempotency_key");
-    expect(content).toContain("confirmed_at");
+    expect(content).toContain("process-audit-automation.yml");
   });
 
   // --- Preflight blocks on missing recorder (finding #1) -----------------

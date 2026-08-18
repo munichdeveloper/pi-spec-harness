@@ -820,7 +820,8 @@ export const github = {
    * Dispatch a SPEC-005 envelope-v1 `process_audit` event to the configured
    * recorder repository. The event is delivered via `repository_dispatch` with
    * `event_type: "process_audit"` and the full payload nested under
-   * `client_payload.audit` (envelope-v1 contract: exactly one top-level field).
+   * `client_payload.audit` (envelope-v1 contract: exactly one top-level field,
+   * exactly 15 canonical fields as defined in SPEC-005).
    *
    * This is the producer side of the REQ-005 audit contract. Delivery is
    * confirmed only after `confirmAuditEventInJournal()` finds the idempotency
@@ -831,17 +832,20 @@ export const github = {
     recorderRepository: string,
     payload: {
       schema_version: 1;
-      event_type: "DOCUMENTATION_UPDATE";
-      actor: string;
-      role: string;
-      run_id: string;
-      correlation_run_id: string;
-      correlation_issue: string;
-      delivery_pr?: number;
-      source_commit_sha: string;
-      documentation_commit_sha: string;
+      occurred_at: string;
+      process_instance: string;
       idempotency_key: string;
-      generated_at: string;
+      process_code: "DOCUMENTATION_UPDATE";
+      actor: string;
+      access_role: string;
+      supporting_access_roles: string[];
+      outcome: string;
+      repository: string;
+      artifact: string;
+      correlation_ids: string[];
+      evidence: string[];
+      reason: string;
+      description: string;
     },
   ): Promise<void> {
     await runGhWithJson(
