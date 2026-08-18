@@ -21,9 +21,11 @@ describe("GitHub workflow contracts", () => {
   it("triggers on pull_request closed events for implementation PR orchestration (TAC-12)", async () => {
     const workflow = await readFile(".github/workflows/harness-gate-trigger.yml", "utf8");
     const prJob = workflow.slice(workflow.indexOf("  orchestrate-on-pr-event:"), workflow.indexOf("\n  reconcile:"));
+    const permissions = workflow.slice(workflow.indexOf("permissions:"), workflow.indexOf("\n# TAC-10"));
 
     expect(workflow).toContain("pull_request:");
     expect(workflow).toContain("types: [closed]");
+    expect(permissions).toContain("pull-requests: read");
     // Serialises across concurrent runs
     expect(workflow).toContain("cancel-in-progress: false");
     expect(prJob).toContain("delivery-pr-merge-effect");

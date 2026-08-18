@@ -18,6 +18,7 @@ on:
 permissions:
   contents: read
   issues: write
+  pull-requests: read
 
 # TAC-10: serialise all gate processing repo-wide to avoid concurrent writes
 # to the same canonical issue-state.

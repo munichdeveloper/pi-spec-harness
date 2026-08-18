@@ -150,14 +150,29 @@ describe("TAC-01 delivery and implementation PR binding", () => {
   });
 
   it("updating delivery SHA invalidates merge gates (stale head regression)", () => {
-    let state = bindDeliveryPullRequest(baseRun(), 10, sha("d"));
-    state = upsertGate(state, { id: "merge-approval-1", type: "merge" });
-    state = resolveGate(state, "merge-approval-1", { result: "passed", evidence: ["ci/old"] });
+    const approvedHeadSha = sha("d");
+    let state = bindDeliveryPullRequest(baseRun(), 10, approvedHeadSha);
+    state = upsertGate(state, {
+      id: `merge-approval-pr10-sha${approvedHeadSha.slice(0, 8)}`,
+      type: "human",
+      question: "Approve delivery merge?",
+    });
+    state = resolveGate(state, `merge-approval-pr10-sha${approvedHeadSha.slice(0, 8)}`, {
+      result: "passed",
+      decision: { approved: true, by: "munichdeveloper", at: "2026-08-18T13:17:42Z" },
+    });
+    state = recordDeliveryMergeEffect(state, {
+      pullRequest: 10,
+      approvedHeadSha,
+      mergeCommitSha: sha("c"),
+      mergedAt: "2026-08-18T13:19:11Z",
+    });
     // Now update the delivery head -- should invalidate the merge gate
     const rebound = bindDeliveryPullRequest(state, 10, sha("e"));
     expect(rebound.deliveryHeadSha).toBe(sha("e"));
-    expect(rebound.gates.find((g) => g.id === "merge-approval-1")?.result).toBe("pending");
-    expect(rebound.gates.find((g) => g.id === "merge-approval-1")?.evidence).toBeUndefined();
+    expect(rebound.gates.find((g) => g.id === `merge-approval-pr10-sha${approvedHeadSha.slice(0, 8)}`)).toBeUndefined();
+    expect(rebound.deliveryMergeCommitSha).toBeUndefined();
+    expect(rebound.deliveryMergedAt).toBeUndefined();
   });
 
   it("binds an implementation PR separately from the delivery PR", () => {
@@ -432,14 +447,15 @@ describe("TAC-04 orchestrator", () => {
 
   it("does not complete on merge approval alone, but completes after persisted delivery merge effect", async () => {
     const approvedHeadSha = sha("a");
+    const gateId = `merge-approval-pr47-sha${approvedHeadSha.slice(0, 8)}`;
     let state: RunState = {
       ...baseRun(),
       phase: "merge",
       deliveryPullRequest: 47,
       deliveryHeadSha: approvedHeadSha,
     };
-    state = upsertGate(state, { id: `merge-approval-pr47-sha${approvedHeadSha.slice(0, 8)}`, type: "merge" });
-    state = resolveGate(state, `merge-approval-pr47-sha${approvedHeadSha.slice(0, 8)}`, {
+    state = upsertGate(state, { id: gateId, type: "human", question: "Approve delivery merge?" });
+    state = resolveGate(state, gateId, {
       result: "passed",
       decision: { approved: true, by: "munichdeveloper", at: "2026-08-18T13:17:42Z" },
     });

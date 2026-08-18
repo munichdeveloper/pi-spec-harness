@@ -30,6 +30,7 @@ import type { StateStore } from "./state/state-store.js";
 import { FileStateStore } from "./state/store.js";
 import {
   PHASE_ORDER,
+  classifyDeliveryPrMergeEffect,
   computeNextAction,
   bindDeliveryPullRequest,
   bindImplementationPullRequest,
@@ -1184,14 +1185,29 @@ async function cmdDeliveryPrMergeEffect(
   const store = await resolveExistingStore(argv);
   let state = await store.load();
 
+  const classification = classifyDeliveryPrMergeEffect(state, argv.pullRequest);
+  if (classification.kind === "unbound") {
+    throw new Error(`no delivery PR bound on run '${state.runId}'`);
+  }
+  if (classification.kind === "skip") {
+    const next = computeNextAction(state);
+    printResult(
+      "delivery-pr-merge-effect",
+      {
+        deliveryPullRequest: classification.deliveryPullRequest,
+        observedPullRequest: classification.observedPullRequest,
+        skipped: "non-delivery-pull-request",
+      },
+      next.detail,
+    );
+    return;
+  }
+
   if (!argv.repository) {
     throw new Error("--repository is required for delivery-pr-merge-effect");
   }
 
-  const deliveryPr = argv.pullRequest ?? state.deliveryPullRequest ?? state.pullRequest;
-  if (!deliveryPr) {
-    throw new Error(`no delivery PR bound on run '${state.runId}'`);
-  }
+  const deliveryPr = classification.deliveryPullRequest;
 
   const prData = await github.viewPullRequest(argv.repository, deliveryPr) as {
     state?: string;

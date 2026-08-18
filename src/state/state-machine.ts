@@ -188,6 +188,23 @@ export function hasPersistedDeliveryMergeEvidence(state: RunState): boolean {
   );
 }
 
+export function classifyDeliveryPrMergeEffect(
+  state: RunState,
+  observedPullRequest?: number,
+):
+  | { kind: "record"; deliveryPullRequest: number }
+  | { kind: "skip"; deliveryPullRequest: number; observedPullRequest: number }
+  | { kind: "unbound" } {
+  const deliveryPullRequest = state.deliveryPullRequest ?? state.pullRequest;
+  if (!deliveryPullRequest) {
+    return { kind: "unbound" };
+  }
+  if (observedPullRequest !== undefined && observedPullRequest !== deliveryPullRequest) {
+    return { kind: "skip", deliveryPullRequest, observedPullRequest };
+  }
+  return { kind: "record", deliveryPullRequest };
+}
+
 export function recordDeliveryMergeEffect(
   state: RunState,
   effect: { pullRequest: number; approvedHeadSha: string; mergeCommitSha: string; mergedAt: string },
@@ -358,7 +375,8 @@ export function bindPullRequest(
 /**
  * Bind the delivery PR (against the default branch) and its HEAD SHA.
  * Once the PR number is set it is immutable; the HEAD SHA can be updated
- * to a new checkpoint, which invalidates `merge` type gates.
+ * to a new checkpoint, which invalidates any SHA-specific merge approval and
+ * clears persisted merge evidence gathered for the old delivery head.
  * TAC-01, TAC-03.
  */
 export function bindDeliveryPullRequest(
@@ -385,19 +403,18 @@ export function bindDeliveryPullRequest(
     state.deliveryPullRequest === pullRequest &&
     state.deliveryHeadSha !== undefined &&
     state.deliveryHeadSha !== normalizedHeadSha;
-  // Invalidate merge gates when the delivery head changes -- any merge
-  // evidence was gathered against the old SHA and must be re-verified.
+  // Invalidate SHA-specific merge approvals when the delivery head changes.
+  // They authorize one exact head, so keeping them (even as open gates) would
+  // let the old issue timeline or gate result speak for the new SHA.
   const gates = headChanged
-    ? state.gates.map((gate) =>
-        gate.type === "merge"
-          ? { ...gate, result: "pending" as const, evidence: undefined, updatedAt: nowIso() }
-          : gate,
-      )
+    ? state.gates.flatMap((gate) => (isMergeApprovalGate(gate) ? [] : [gate]))
     : state.gates;
   return {
     ...state,
     deliveryPullRequest: pullRequest,
     deliveryHeadSha: normalizedHeadSha,
+    deliveryMergeCommitSha: headChanged ? undefined : state.deliveryMergeCommitSha,
+    deliveryMergedAt: headChanged ? undefined : state.deliveryMergedAt,
     gates,
     updatedAt: nowIso(),
   };
