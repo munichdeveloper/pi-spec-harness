@@ -180,3 +180,97 @@ export function validateSnapshotContent(content: string): void {
     );
   }
 }
+
+// ---------------------------------------------------------------------------
+// Legacy directory path validation (SPEC-012, shared with validate_legacy_path.mjs)
+// ---------------------------------------------------------------------------
+
+/**
+ * Validate a repository-relative legacy directory path supplied via
+ * `--legacy-directory`.  Mirrors the validation rules from
+ * `scripts/validate_legacy_path.mjs`; keep both in sync.
+ *
+ * Rejection rules:
+ *   - Empty string
+ *   - POSIX absolute paths (start with `/`)
+ *   - Windows drive paths (`C:\...` or `C:/...`)
+ *   - Windows UNC / device paths (start with `\\` or `//`)
+ *   - True `..` traversal segments (any component that is exactly `..`)
+ *   - Dot-only segments (any component that is exactly `.`)
+ *   - Option-like paths (start with `-`)
+ *   - NUL byte (0x00) or other control characters (0x01–0x1F, 0x7F)
+ *
+ * Allowed:
+ *   - Relative paths with forward or backward slashes (normalized to `/`)
+ *   - Spaces in path components
+ *   - Double-dot within a name (e.g. `docs/v1..v2`)
+ *
+ * @throws {Error}  If the path violates any constraint.
+ */
+export function validateLegacyDirectoryPath(rawPath: string): void {
+  if (typeof rawPath !== "string") {
+    throw new Error(`legacy directory path must be a string, got ${typeof rawPath}.`);
+  }
+  if (rawPath.length === 0) {
+    throw new Error("legacy directory path must not be empty.");
+  }
+
+  // NUL and control characters (0x00–0x1F, 0x7F DEL)
+  // eslint-disable-next-line no-control-regex
+  if (/[\x00-\x1F\x7F]/.test(rawPath)) {
+    throw new Error(
+      `legacy directory path must not contain NUL or control characters: '${rawPath}'.`,
+    );
+  }
+
+  // Option-like
+  if (rawPath.startsWith("-")) {
+    throw new Error(
+      `legacy directory path must not start with '-' (option-like value rejected): '${rawPath}'.`,
+    );
+  }
+
+  // Windows UNC / device paths — check BEFORE POSIX absolute
+  if (/^(\\\\|\/{2})/.test(rawPath)) {
+    throw new Error(
+      `legacy directory path must be relative (Windows UNC/device path rejected): '${rawPath}'.`,
+    );
+  }
+
+  // Windows drive paths
+  if (/^[A-Za-z]:[/\\]/.test(rawPath)) {
+    throw new Error(
+      `legacy directory path must be relative (Windows drive path rejected): '${rawPath}'.`,
+    );
+  }
+
+  // POSIX absolute
+  if (rawPath.startsWith("/")) {
+    throw new Error(
+      `legacy directory path must be relative (POSIX absolute path rejected): '${rawPath}'.`,
+    );
+  }
+
+  // Segment-level checks
+  const normalized = rawPath.replace(/\\/g, "/");
+  const segments = normalized.split("/");
+  for (let i = 0; i < segments.length; i++) {
+    const segment = segments[i];
+    if (segment === "") {
+      if (i === segments.length - 1) continue; // trailing slash is acceptable
+      throw new Error(
+        `legacy directory path must not contain internal double-slashes: '${rawPath}'.`,
+      );
+    }
+    if (segment === "..") {
+      throw new Error(
+        `legacy directory path must not contain '..' traversal segments: '${rawPath}'.`,
+      );
+    }
+    if (segment === ".") {
+      throw new Error(
+        `legacy directory path must not contain '.' segments: '${rawPath}'.`,
+      );
+    }
+  }
+}

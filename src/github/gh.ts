@@ -92,6 +92,139 @@ export function parsePaginatedIssues(out: string): { number: number; title: stri
 }
 
 /**
+ * Supported marker versions for the process-audit receiver workflow.
+ * The receiver YAML must contain the managed marker with one of these versions.
+ */
+const SUPPORTED_RECEIVER_MARKER_VERSIONS = ["v1"] as const;
+
+/**
+ * Validate the content of an installed process-audit receiver workflow YAML.
+ *
+ * Extracted as a separate exported function so that it can be tested
+ * independently of the live `preflightRunDocumentationWriter` (which requires
+ * GitHub API access).  The production preflight calls this function with the
+ * content fetched from the recorder's default branch.
+ *
+ * Checks (in order):
+ * 1. Managed marker is present with a supported version.
+ * 2. `repository_dispatch` event with type `process_audit` is configured.
+ * 3. `uses:` delegates to the canonical remote reusable workflow.
+ * 4. The `uses:` ref is immutable (version tag or 40-char SHA).
+ * 5. The `uses:` ref matches the expected configured harness ref.
+ * 6. The `harness-ref:` input is wired and its value matches the `uses:` ref.
+ *
+ * @param content      Raw YAML content of the receiver workflow file.
+ * @param expectedRef  The harness ref the caller expects the receiver to use
+ *                     (e.g. `"v0.2.2"` from `DEFAULT_PROCESS_AUDIT_RECEIVER_WORKFLOW_REF`).
+ * @param receiverPath Path used in error messages (e.g. `PROCESS_AUDIT_RECEIVER_PATH`).
+ * @param recorder     Repository name used in error messages.
+ * @throws {Error}  When any check fails, with a descriptive human-readable message.
+ */
+export function validateReceiverContent(
+  content: string,
+  expectedRef: string,
+  receiverPath: string,
+  recorder: string,
+): void {
+  // Check 1: Managed marker with supported version.
+  if (!content.includes(PROCESS_AUDIT_RECEIVER_MARKER)) {
+    throw new Error(
+      `run-documentation-writer preflight failed: the process-audit receiver at ` +
+      `'${receiverPath}' in '${recorder}' is not a pi-spec-harness managed receiver ` +
+      `(expected marker '${PROCESS_AUDIT_RECEIVER_MARKER}' not found). ` +
+      `Run \`harness install process-audit-receiver\` in '${recorder}' to install a compatible receiver.`,
+    );
+  }
+  // Extract the version from the marker line (e.g. "... v1").
+  const markerVersionMatch = PROCESS_AUDIT_RECEIVER_MARKER.match(/(\S+)$/);
+  const markerVersion = markerVersionMatch ? markerVersionMatch[1] : null;
+  if (!markerVersion || !(SUPPORTED_RECEIVER_MARKER_VERSIONS as ReadonlyArray<string>).includes(markerVersion)) {
+    throw new Error(
+      `run-documentation-writer preflight failed: the process-audit receiver at ` +
+      `'${receiverPath}' in '${recorder}' uses unsupported marker version '${markerVersion}'. ` +
+      `Supported versions: ${SUPPORTED_RECEIVER_MARKER_VERSIONS.join(", ")}. ` +
+      `Re-install with \`harness install process-audit-receiver\`.`,
+    );
+  }
+
+  // Check 2: event trigger.
+  if (!content.includes("repository_dispatch") || !content.includes("process_audit")) {
+    throw new Error(
+      `run-documentation-writer preflight failed: the process-audit receiver at ` +
+      `'${receiverPath}' in '${recorder}' does not appear to handle ` +
+      `'repository_dispatch' events of type 'process_audit'. ` +
+      `Re-install with \`harness install process-audit-receiver\`.`,
+    );
+  }
+
+  // Check 3: uses: calls canonical remote reusable workflow.
+  const expectedUsesPrefix = `${DEFAULT_REUSABLE_WORKFLOW_REPOSITORY}/.github/workflows/process-audit-automation.yml@`;
+  const usesLineMatch = content.match(/uses:\s*(\S+)/);
+  if (!usesLineMatch) {
+    throw new Error(
+      `run-documentation-writer preflight failed: the process-audit receiver at ` +
+      `'${receiverPath}' in '${recorder}' has no 'uses:' directive. ` +
+      `Re-install with \`harness install process-audit-receiver\`.`,
+    );
+  }
+  const usesValue = usesLineMatch[1];
+  if (!usesValue.startsWith(expectedUsesPrefix)) {
+    throw new Error(
+      `run-documentation-writer preflight failed: the process-audit receiver at ` +
+      `'${receiverPath}' in '${recorder}' delegates to '${usesValue}' ` +
+      `instead of the canonical '${expectedUsesPrefix}<ref>'. ` +
+      `Re-install with \`harness install process-audit-receiver\`.`,
+    );
+  }
+
+  // Check 4: ref must be immutable.
+  const harnessRef = usesValue.slice(expectedUsesPrefix.length);
+  const isMutableRef =
+    !/^v\d/.test(harnessRef) &&           // not a version tag
+    !/^[0-9a-f]{40}$/.test(harnessRef);   // not a full SHA
+  if (isMutableRef) {
+    throw new Error(
+      `run-documentation-writer preflight failed: the process-audit receiver at ` +
+      `'${receiverPath}' in '${recorder}' pins to mutable ref '${harnessRef}'. ` +
+      `Use an immutable version tag (e.g. 'v0.2.2') or a full commit SHA. ` +
+      `Re-install with \`harness install process-audit-receiver --harness-ref <immutable-ref>\`.`,
+    );
+  }
+
+  // Check 5: uses: ref must match the expected configured harness ref.
+  if (harnessRef !== expectedRef) {
+    throw new Error(
+      `run-documentation-writer preflight failed: the process-audit receiver at ` +
+      `'${receiverPath}' in '${recorder}' uses ref '${harnessRef}' but the ` +
+      `configured expected ref is '${expectedRef}'. ` +
+      `Re-install with \`harness install process-audit-receiver --harness-ref ${expectedRef}\`.`,
+    );
+  }
+
+  // Check 6: harness-ref: input must be present and match the uses: ref.
+  if (!content.includes("harness-ref:")) {
+    throw new Error(
+      `run-documentation-writer preflight failed: the process-audit receiver at ` +
+      `'${receiverPath}' in '${recorder}' is missing the required ` +
+      `'harness-ref:' input. Re-install with \`harness install process-audit-receiver\`.`,
+    );
+  }
+  // Extract the harness-ref: value and verify it matches the uses: ref.
+  const harnessRefInputMatch = content.match(/harness-ref:\s*['"]?([^\s'"]+)['"]?/);
+  if (harnessRefInputMatch) {
+    const harnessRefInput = harnessRefInputMatch[1];
+    if (harnessRefInput !== harnessRef) {
+      throw new Error(
+        `run-documentation-writer preflight failed: the process-audit receiver at ` +
+        `'${receiverPath}' in '${recorder}' has mismatched refs: ` +
+        `uses: '${harnessRef}' but harness-ref input is '${harnessRefInput}'. ` +
+        `Re-install with \`harness install process-audit-receiver --harness-ref ${expectedRef}\`.`,
+      );
+    }
+  }
+}
+
+/**
  * Thin, explicit wrapper around the `gh` CLI. Every write action here is a
  * deliberate, named function -- there is no generic "run arbitrary gh
  * mutation" escape hatch, so every write the harness performs is auditable
@@ -947,40 +1080,50 @@ export const github = {
         // Fail closed: any file-read error propagates immediately; unreadable
         // journal files are NOT silently skipped (SPEC-005 §external-contract).
         const { content } = await this.getFileContent(recorderRepository, file.path, branch);
-        if (content.includes(marker)) {
-          // Extract confirmed_at from the journal entry.  Fail closed: a
-          // journal file that contains the idempotency_key but no
-          // confirmed_at field is an incomplete/corrupt entry; fabricating a
-          // local timestamp would produce an unaudited confirmed-at value.
-          const match = content.match(/confirmed_at:\s*"([^"]+)"/);
-          if (!match) {
-            throw new Error(
-              `audit journal entry for idempotency_key "${idempotencyKey}" in ` +
-              `"${journalDirectory}" of "${recorderRepository}" is missing the ` +
-              `required 'confirmed_at' field — the entry may be incomplete or corrupt.`,
-            );
-          }
-          // Validate that confirmed_at is a canonical ISO UTC timestamp
-          // (SPEC-005 §external-contract). A non-UTC or malformed timestamp
-          // indicates the recorder wrote a corrupt entry; do not accept it.
-          const confirmedAt = match[1];
-          if (!confirmedAt.endsWith("Z")) {
-            throw new Error(
-              `audit journal entry for idempotency_key "${idempotencyKey}" in ` +
-              `"${journalDirectory}" of "${recorderRepository}" has a non-UTC ` +
-              `'confirmed_at' value '${confirmedAt}' — must end with 'Z'.`,
-            );
-          }
-          const d = new Date(confirmedAt);
-          if (isNaN(d.getTime())) {
-            throw new Error(
-              `audit journal entry for idempotency_key "${idempotencyKey}" in ` +
-              `"${journalDirectory}" of "${recorderRepository}" has an unparseable ` +
-              `'confirmed_at' value '${confirmedAt}'.`,
-            );
-          }
-          return confirmedAt;
+        if (!content.includes(marker)) {
+          continue; // not this entry
         }
+        // Canonical parser logic (mirrors parseJournalEntry in
+        // scripts/process_audit_support.mjs — keep in sync).
+        // Fail closed: missing or invalid confirmed_at is not silently skipped.
+        const confirmedAtMatch = content.match(/confirmed_at:\s*"([^"]+)"/);
+        if (!confirmedAtMatch) {
+          throw new Error(
+            `audit journal entry for idempotency_key "${idempotencyKey}" in ` +
+            `"${journalDirectory}" of "${recorderRepository}" is missing the ` +
+            `required 'confirmed_at' field — the entry may be incomplete or corrupt.`,
+          );
+        }
+        const rawConfirmedAt = confirmedAtMatch[1];
+        // Canonical UTC validation with round-trip check: the stored timestamp
+        // must be byte-identical to Date.toISOString() canonical form
+        // (e.g. "2026-08-18T22:09:10.000Z").  A non-UTC or non-canonical value
+        // indicates the recorder wrote a corrupt entry.
+        if (!rawConfirmedAt.endsWith("Z")) {
+          throw new Error(
+            `audit journal entry for idempotency_key "${idempotencyKey}" in ` +
+            `"${journalDirectory}" of "${recorderRepository}" has a non-UTC ` +
+            `'confirmed_at' value '${rawConfirmedAt}' — must end with 'Z'.`,
+          );
+        }
+        const d = new Date(rawConfirmedAt);
+        if (isNaN(d.getTime())) {
+          throw new Error(
+            `audit journal entry for idempotency_key "${idempotencyKey}" in ` +
+            `"${journalDirectory}" of "${recorderRepository}" has an unparseable ` +
+            `'confirmed_at' value '${rawConfirmedAt}'.`,
+          );
+        }
+        const canonical = d.toISOString();
+        if (rawConfirmedAt !== canonical) {
+          throw new Error(
+            `audit journal entry for idempotency_key "${idempotencyKey}" in ` +
+            `"${journalDirectory}" of "${recorderRepository}" has a non-canonical ` +
+            `'confirmed_at' value '${rawConfirmedAt}' — must equal canonical ` +
+            `ISO 8601 UTC form (e.g. '${canonical}').`,
+          );
+        }
+        return canonical;
       }
     }
     throw new Error(
@@ -1007,7 +1150,27 @@ export const github = {
     repository: string,
     branch: string,
     recorderRepository?: string,
+    expectedHarnessRef?: string,
   ): Promise<void> {
+    // Resolve defaults.
+    const recorder = recorderRepository ?? repository;
+    const { DEFAULT_PROCESS_AUDIT_RECEIVER_WORKFLOW_REF } = await import("../workflows/template-catalog.js");
+    const expectedRef = expectedHarnessRef ?? DEFAULT_PROCESS_AUDIT_RECEIVER_WORKFLOW_REF;
+
+    // Cross-repo check: repository-scoped GITHUB_TOKEN cannot dispatch events
+    // to a different repository.  Reject unless the recorder is the same repo
+    // (token is implicitly scoped to the current repository and cannot reach
+    // external repos without an explicit PAT or GitHub App token).
+    if (recorder !== repository) {
+      throw new Error(
+        `run-documentation-writer preflight failed: audit recorder repository '${recorder}' ` +
+        `is in a different repository from '${repository}'. ` +
+        `The repository-scoped GITHUB_TOKEN cannot dispatch events to a different repository. ` +
+        `Provide an explicit PAT or GitHub App token with access to '${recorder}', ` +
+        `or configure the recorder to be the same repository as the documentation target.`,
+      );
+    }
+
     // Check 1: branch exists and is readable.
     try {
       await runGh([
@@ -1056,10 +1219,8 @@ export const github = {
     // Check 3: audit recorder is reachable (SPEC-012 §8 / TAC-17).
     //
     // The recorder defaults to the tracking-issue repository (same token, same
-    // permissions). A different recorder repository may require separate tokens
-    // and must be explicitly configured. This check is not deferred: a missing
-    // or unreachable recorder blocks the writer before any state is mutated.
-    const recorder = recorderRepository ?? repository;
+    // permissions). This check is not deferred: a missing or unreachable
+    // recorder blocks the writer before any state is mutated.
     try {
       await runGh([
         "api",
@@ -1070,22 +1231,16 @@ export const github = {
       const msg = err instanceof GhError ? err.message : String(err);
       throw new Error(
         `run-documentation-writer preflight failed: audit recorder repository '${recorder}' is not reachable: ${msg}. ` +
-        `Ensure the process-audit-receiver workflow is installed and the token has access to '${recorder}'. ` +
-        `Configure --audit-recorder-repo if the recorder lives in a different repository.`,
+        `Ensure the process-audit-receiver workflow is installed and the token has access to '${recorder}'.`,
       );
     }
 
-    // Check 4: the process-audit receiver workflow is installed in the recorder
-    // repository and its contract is fully compatible (SPEC-012 §11 / TAC-17).
+    // Check 4: the process-audit receiver workflow is installed, compatible,
+    // and pinned to the expected configured harness ref (SPEC-012 §11 / TAC-17).
     //
-    // A `repository_dispatch` sent to a recorder that has no matching workflow
-    // will silently succeed (HTTP 204) but never write a journal entry.
-    // Beyond checking presence, we also verify:
-    //   - The managed marker is present (not an unmanaged copy).
-    //   - The `uses:` line delegates to the canonical remote reusable workflow
-    //     at a non-mutable (version tag or full SHA) ref.
-    //   - The harness-ref input is wired in the call.
-    //   - The event trigger is `repository_dispatch` with type `process_audit`.
+    // Uses validateReceiverContent() which verifies: managed marker + version,
+    // event/trigger wiring, canonical uses: target, immutable ref, ref matches
+    // expectedRef, and harness-ref: input matches uses: ref.
     let receiverFile: { content: string } | undefined;
     try {
       receiverFile = await this.getFileContentIfExists(recorder, PROCESS_AUDIT_RECEIVER_PATH);
@@ -1102,71 +1257,6 @@ export const github = {
         `Run \`harness install process-audit-receiver\` in '${recorder}' to install it.`,
       );
     }
-    const receiverContent = receiverFile.content;
-    if (!receiverContent.includes(PROCESS_AUDIT_RECEIVER_MARKER)) {
-      throw new Error(
-        `run-documentation-writer preflight failed: the process-audit receiver at ` +
-        `'${PROCESS_AUDIT_RECEIVER_PATH}' in '${recorder}' is not a pi-spec-harness managed receiver ` +
-        `(expected marker '${PROCESS_AUDIT_RECEIVER_MARKER}' not found). ` +
-        `Run \`harness install process-audit-receiver\` in '${recorder}' to install a compatible receiver.`,
-      );
-    }
-
-    // Verify event trigger: must handle `repository_dispatch` with `process_audit`.
-    if (!receiverContent.includes("repository_dispatch") || !receiverContent.includes("process_audit")) {
-      throw new Error(
-        `run-documentation-writer preflight failed: the process-audit receiver at ` +
-        `'${PROCESS_AUDIT_RECEIVER_PATH}' in '${recorder}' does not appear to handle ` +
-        `'repository_dispatch' events of type 'process_audit'. ` +
-        `Re-install with \`harness install process-audit-receiver\`.`,
-      );
-    }
-
-    // Verify the `uses:` line calls the canonical remote reusable workflow.
-    // Expected form: `uses: munichdeveloper/pi-spec-harness/.github/workflows/process-audit-automation.yml@<ref>`
-    const expectedUsesPrefix = `${DEFAULT_REUSABLE_WORKFLOW_REPOSITORY}/.github/workflows/process-audit-automation.yml@`;
-    const usesLineMatch = receiverContent.match(/uses:\s*(\S+)/);
-    if (!usesLineMatch) {
-      throw new Error(
-        `run-documentation-writer preflight failed: the process-audit receiver at ` +
-        `'${PROCESS_AUDIT_RECEIVER_PATH}' in '${recorder}' has no 'uses:' directive. ` +
-        `Re-install with \`harness install process-audit-receiver\`.`,
-      );
-    }
-    const usesValue = usesLineMatch[1];
-    if (!usesValue.startsWith(expectedUsesPrefix)) {
-      throw new Error(
-        `run-documentation-writer preflight failed: the process-audit receiver at ` +
-        `'${PROCESS_AUDIT_RECEIVER_PATH}' in '${recorder}' delegates to '${usesValue}' ` +
-        `instead of the canonical '${expectedUsesPrefix}<ref>'. ` +
-        `Re-install with \`harness install process-audit-receiver\`.`,
-      );
-    }
-
-    // Verify the ref is not a mutable branch name. Mutable refs (e.g. 'main',
-    // 'master') mean the receiver's behaviour can change at any time without
-    // the recorder operator's knowledge. Only version tags (v1.2.3) and full
-    // 40-char SHAs are considered immutable.
-    const harnessRef = usesValue.slice(expectedUsesPrefix.length);
-    const isMutableRef =
-      !/^v\d/.test(harnessRef) &&           // not a version tag
-      !/^[0-9a-f]{40}$/.test(harnessRef);   // not a full SHA
-    if (isMutableRef) {
-      throw new Error(
-        `run-documentation-writer preflight failed: the process-audit receiver at ` +
-        `'${PROCESS_AUDIT_RECEIVER_PATH}' in '${recorder}' pins to mutable ref '${harnessRef}'. ` +
-        `Use an immutable version tag (e.g. 'v0.2.2') or a full commit SHA. ` +
-        `Re-install with \`harness install process-audit-receiver --harness-ref <immutable-ref>\`.`,
-      );
-    }
-
-    // Verify the harness-ref input is wired in the call.
-    if (!receiverContent.includes("harness-ref:")) {
-      throw new Error(
-        `run-documentation-writer preflight failed: the process-audit receiver at ` +
-        `'${PROCESS_AUDIT_RECEIVER_PATH}' in '${recorder}' is missing the required ` +
-        `'harness-ref:' input. Re-install with \`harness install process-audit-receiver\`.`,
-      );
-    }
+    validateReceiverContent(receiverFile.content, expectedRef, PROCESS_AUDIT_RECEIVER_PATH, recorder);
   },
 };

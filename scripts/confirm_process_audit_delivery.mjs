@@ -19,7 +19,7 @@
 
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { validateCanonicalUtcTimestamp } from "./process_audit_support.mjs";
+import { parseJournalEntry } from "./process_audit_support.mjs";
 
 const JOURNAL_DIR = process.env["JOURNAL_DIR"] ?? "docs/process-audit/journal";
 const IDEMPOTENCY_KEY = process.env["IDEMPOTENCY_KEY"] ?? "";
@@ -59,26 +59,20 @@ for (const name of files) {
   }
 
   if (content.includes(marker)) {
-    const match = content.match(/confirmed_at:\s*"([^"]+)"/);
-    if (!match) {
-      console.error(
-        `::error::Audit journal entry for idempotency_key "${IDEMPOTENCY_KEY}" in '${JOURNAL_DIR}/${name}' ` +
-        `is missing the required 'confirmed_at' field — the entry may be incomplete or corrupt.`,
-      );
-      process.exit(1);
-    }
-    // Validate that confirmed_at is a canonical UTC timestamp (SPEC-005 §external-contract).
+    // Delegate to the shared canonical parser.  It validates idempotency_key
+    // presence, confirmed_at existence, and the canonical UTC round-trip.
+    // Any validation error propagates immediately (fail-closed).
+    let result;
     try {
-      validateCanonicalUtcTimestamp(match[1], "confirmed_at");
-    } catch (validationErr) {
-      console.error(
-        `::error::Audit journal entry for idempotency_key "${IDEMPOTENCY_KEY}" in '${JOURNAL_DIR}/${name}' ` +
-        `has an invalid 'confirmed_at' timestamp: ${validationErr.message}`,
-      );
+      result = parseJournalEntry(content, `${JOURNAL_DIR}/${name}`, IDEMPOTENCY_KEY);
+    } catch (parseErr) {
+      console.error(`::error::${parseErr.message}`);
       process.exit(1);
     }
-    process.stdout.write(match[1] + "\n");
-    process.exit(0);
+    if (result) {
+      process.stdout.write(result.confirmedAt + "\n");
+      process.exit(0);
+    }
   }
 }
 

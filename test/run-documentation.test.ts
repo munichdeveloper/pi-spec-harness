@@ -2040,7 +2040,7 @@ describe("Fix-2: normalizeProcessAuditInput field/array bounds + URL validation"
   function validPayload(overrides: Record<string, unknown> = {}) {
     return {
       schema_version: 1,
-      occurred_at: "2026-08-18T22:09:10Z",
+      occurred_at: "2026-08-18T22:09:10.000Z",
       process_instance: "PI-MUNICHDEVELOPER-PI-SPEC-HARNESS-RUN-0056",
       idempotency_key: "audit-run-doc-RUN-0056-56",
       process_code: "DOCUMENTATION_UPDATE",
@@ -2345,5 +2345,304 @@ describe("Fix-5: validateLegacyPath — correct traversal detection and Windows/
 
   it("rejects dot-only segment '.'", async () => {
     await expect(validate("docs/./runs")).rejects.toThrow(/\./);
+  });
+});
+
+// ===========================================================================
+// Iteration-4 Fix-1: Complete canonical ALLOWED_PROCESS_CODES parity
+// ===========================================================================
+
+describe("Iter4-Fix-1: ALLOWED_PROCESS_CODES complete canonical parity", () => {
+  async function getCodes(): Promise<Set<string>> {
+    const { ALLOWED_PROCESS_CODES } = await import("../scripts/process_audit_support.mjs" as never as string) as { ALLOWED_PROCESS_CODES: Set<string> };
+    return ALLOWED_PROCESS_CODES;
+  }
+
+  const requiredCategories: Record<string, string[]> = {
+    "Requirement lifecycle": ["REQUIREMENT_CREATE", "REQUIREMENT_UPDATE", "REQUIREMENT_ARCHIVE"],
+    "Specification lifecycle": ["SPEC_CREATE", "SPEC_UPDATE", "SPEC_ARCHIVE", "SPEC_TO_ISSUE"],
+    "Human-gate lifecycle": ["GATE_OPEN", "GATE_APPROVED", "GATE_REJECTED", "GATE_ESCALATE"],
+    "Agent / iteration lifecycle": ["AGENT_TASK_START", "AGENT_TASK_FINISH", "ITERATION_START", "ITERATION_FINISH"],
+    "Implementation lifecycle": ["IMPLEMENTATION_START", "IMPLEMENTATION_FINISH"],
+    "CI / quality lifecycle": ["CI_TRIGGER", "CI_JOB_START", "CI_JOB_COMPLETE", "CI_FAILURE", "CI_VERIFICATION", "TEST_EXECUTION"],
+    "Preview lifecycle": ["PREVIEW_DEPLOY", "PREVIEW_VERIFY", "PREVIEW_TEARDOWN"],
+    "Database migration lifecycle": ["DB_MIGRATION_RUN", "DB_ROLLBACK_RUN"],
+    "Pull-request lifecycle": ["PR_OPEN", "PR_APPROVE", "PR_CLOSE", "PR_MERGE", "BUG_TO_PR"],
+    "Production deployment lifecycle": ["PRODUCTION_DEPLOY", "PRODUCTION_ROLLBACK", "PRODUCTION_VERIFY"],
+    "Incident management": ["INCIDENT_CREATE", "INCIDENT_RESOLVE", "INCIDENT_CLOSE"],
+    "Manual / ad-hoc actions": ["MANUAL_ACTION", "MANUAL_OVERRIDE"],
+    "Reconciliation": ["RECONCILIATION_START", "RECONCILIATION_COMPLETE"],
+    "Issue and review lifecycle": ["ISSUE_CREATE", "CODE_REVIEW", "REVIEW_COMMENT_CREATE", "REVIEW_FINDING_RESOLVE"],
+    "Documentation and harness-internal": ["DOCUMENTATION_UPDATE", "CAPABILITY_SMOKE"],
+  };
+
+  for (const [category, codes] of Object.entries(requiredCategories)) {
+    it(`includes all ${category} codes: ${codes.join(", ")}`, async () => {
+      const set = await getCodes();
+      for (const code of codes) {
+        expect(set.has(code), `expected ${code} in ALLOWED_PROCESS_CODES (category: ${category})`).toBe(true);
+      }
+    });
+  }
+
+  it("does not contain legacy/invented alias ISSUE_CREATED", async () => {
+    expect((await getCodes()).has("ISSUE_CREATED")).toBe(false);
+  });
+
+  it("does not contain legacy/invented alias ITERATION_STARTED", async () => {
+    expect((await getCodes()).has("ITERATION_STARTED")).toBe(false);
+  });
+
+  it("does not contain legacy/invented alias RUN_COMPLETE", async () => {
+    expect((await getCodes()).has("RUN_COMPLETE")).toBe(false);
+  });
+});
+
+// ===========================================================================
+// Iter4-Fix-1b: validateCanonicalUtcTimestamp round-trip enforcement
+// ===========================================================================
+
+describe("Iter4-Fix-1b: validateCanonicalUtcTimestamp round-trip enforcement", () => {
+  async function validate(value: string) {
+    const { validateCanonicalUtcTimestamp } = await import("../scripts/process_audit_support.mjs" as never as string) as { validateCanonicalUtcTimestamp: (v: string, f: string) => string };
+    return validateCanonicalUtcTimestamp(value, "occurred_at");
+  }
+
+  it("accepts canonical form with milliseconds (2026-08-18T22:09:10.000Z)", async () => {
+    await expect(validate("2026-08-18T22:09:10.000Z")).resolves.toBe("2026-08-18T22:09:10.000Z");
+  });
+
+  it("accepts canonical form with non-zero milliseconds (2026-08-18T22:09:10.972Z)", async () => {
+    await expect(validate("2026-08-18T22:09:10.972Z")).resolves.toBe("2026-08-18T22:09:10.972Z");
+  });
+
+  it("rejects timestamp without milliseconds (2026-08-18T22:09:10Z) — non-canonical", async () => {
+    await expect(validate("2026-08-18T22:09:10Z")).rejects.toThrow(/canonical/i);
+  });
+
+  it("rejects timestamp with +00:00 offset instead of Z — non-canonical", async () => {
+    await expect(validate("2026-08-18T22:09:10.000+00:00")).rejects.toThrow();
+  });
+
+  it("rejects completely malformed timestamp", async () => {
+    await expect(validate("not-a-date")).rejects.toThrow();
+  });
+});
+
+// ===========================================================================
+// Iter4-Fix-3: parseJournalEntry shared canonical parser (production path)
+// ===========================================================================
+
+describe("Iter4-Fix-3: parseJournalEntry shared canonical parser", () => {
+  async function parse(content: string, filename: string, key: string) {
+    const { parseJournalEntry } = await import("../scripts/process_audit_support.mjs" as never as string) as { parseJournalEntry: (c: string, f: string, k: string) => { confirmedAt: string } | null };
+    return parseJournalEntry(content, filename, key);
+  }
+
+  const CANONICAL_AT = "2026-08-18T22:09:10.000Z";
+
+  it("returns null when idempotency_key is not in the file", async () => {
+    const content = `---\nidempotency_key: "other-key"\nconfirmed_at: "${CANONICAL_AT}"\n---\n`;
+    await expect(parse(content, "entry.md", "my-key")).resolves.toBeNull();
+  });
+
+  it("returns confirmedAt when entry matches and timestamp is canonical", async () => {
+    const content = `---\nidempotency_key: "my-key"\nconfirmed_at: "${CANONICAL_AT}"\n---\n`;
+    await expect(parse(content, "entry.md", "my-key")).resolves.toEqual({ confirmedAt: CANONICAL_AT });
+  });
+
+  it("throws when entry matches but confirmed_at field is missing", async () => {
+    const content = `---\nidempotency_key: "my-key"\n---\n`;
+    await expect(parse(content, "entry.md", "my-key")).rejects.toThrow(/confirmed_at.*missing|missing.*confirmed_at/i);
+  });
+
+  it("throws when confirmed_at is present but not canonical (no milliseconds)", async () => {
+    const content = `---\nidempotency_key: "my-key"\nconfirmed_at: "2026-08-18T22:09:10Z"\n---\n`;
+    await expect(parse(content, "entry.md", "my-key")).rejects.toThrow(/canonical/i);
+  });
+
+  it("throws when confirmed_at does not end with Z (non-UTC)", async () => {
+    const content = `---\nidempotency_key: "my-key"\nconfirmed_at: "2026-08-18T22:09:10.000+02:00"\n---\n`;
+    await expect(parse(content, "entry.md", "my-key")).rejects.toThrow();
+  });
+
+  it("throws when confirmed_at is completely malformed", async () => {
+    const content = `---\nidempotency_key: "my-key"\nconfirmed_at: "not-a-date"\n---\n`;
+    await expect(parse(content, "entry.md", "my-key")).rejects.toThrow();
+  });
+});
+
+// ===========================================================================
+// Iter4-Fix-2: validateReceiverContent production function tests
+// ===========================================================================
+
+describe("Iter4-Fix-2: validateReceiverContent production function (real exported function)", () => {
+  function makeContent(overrides: {
+    marker?: string;
+    uses?: string;
+    eventType?: string;
+    harnessRefLine?: string;
+  } = {}) {
+    const marker = overrides.marker ?? "# Managed by pi-spec-harness: process-audit-receiver-reference v1";
+    const uses = overrides.uses ??
+      "munichdeveloper/pi-spec-harness/.github/workflows/process-audit-automation.yml@v0.2.2";
+    const eventType = overrides.eventType ?? "repository_dispatch:\n    types: [process_audit]";
+    const harnessRefLine = overrides.harnessRefLine ?? "      harness-ref: 'v0.2.2'";
+    return `${marker}\non:\n  ${eventType}\njobs:\n  record:\n    uses: ${uses}\n${harnessRefLine}\n`;
+  }
+
+  async function validate(content: string, expectedRef = "v0.2.2") {
+    const { validateReceiverContent } = await import("../src/github/gh.js");
+    return validateReceiverContent(content, expectedRef, ".github/workflows/harness-process-audit-receiver.yml", "org/repo");
+  }
+
+  it("accepts a valid receiver pinned to the expected ref", async () => {
+    await expect(validate(makeContent())).resolves.toBeUndefined();
+  });
+
+  it("rejects receiver when uses: ref differs from expectedRef", async () => {
+    await expect(validate(makeContent(), "v0.3.0")).rejects.toThrow(/uses ref.*v0.2.2.*expected.*v0.3.0|configured expected ref.*v0.3.0/i);
+  });
+
+  it("rejects receiver with mutable ref (main)", async () => {
+    const content = makeContent({
+      uses: "munichdeveloper/pi-spec-harness/.github/workflows/process-audit-automation.yml@main",
+      harnessRefLine: "      harness-ref: 'main'",
+    });
+    await expect(validate(content, "main")).rejects.toThrow(/mutable ref/i);
+  });
+
+  it("rejects receiver when harness-ref: input does not match uses: ref", async () => {
+    const content = makeContent({ harnessRefLine: "      harness-ref: 'v0.1.0'" });
+    await expect(validate(content)).rejects.toThrow(/mismatched refs|harness-ref/i);
+  });
+
+  it("rejects receiver missing managed marker", async () => {
+    const content = makeContent({ marker: "# unmanaged receiver" });
+    await expect(validate(content)).rejects.toThrow(/not a pi-spec-harness managed receiver/i);
+  });
+
+  it("rejects receiver missing process_audit event type", async () => {
+    const content = makeContent({ eventType: "push:\n    branches: [main]" });
+    await expect(validate(content)).rejects.toThrow(/process_audit/i);
+  });
+
+  it("rejects receiver with wrong uses: target repo", async () => {
+    const content = makeContent({
+      uses: "attacker-org/pi-spec-harness/.github/workflows/process-audit-automation.yml@v0.2.2",
+    });
+    await expect(validate(content)).rejects.toThrow(/canonical/i);
+  });
+
+  it("rejects receiver missing harness-ref: input wiring", async () => {
+    const content = makeContent({ harnessRefLine: "" });
+    await expect(validate(content)).rejects.toThrow(/harness-ref/i);
+  });
+});
+
+// ===========================================================================
+// Iter4-Fix-2b: preflightRunDocumentationWriter — cross-repo rejection
+// ===========================================================================
+
+describe("Iter4-Fix-2b: preflightRunDocumentationWriter rejects cross-repo recorder", () => {
+  it("throws when recorder is a different repository (cross-repo GITHUB_TOKEN risk)", async () => {
+    const store = new MemoryStateStore(mergeReadyState());
+    const gh = makeFakeGithub({
+      async preflightRunDocumentationWriter(repo, _branch, recorderRepo) {
+        if (recorderRepo && recorderRepo !== repo) {
+          throw new Error(
+            `run-documentation-writer preflight failed: audit recorder repository '${recorderRepo}' ` +
+            `is in a different repository from '${repo}'. The repository-scoped GITHUB_TOKEN cannot dispatch events to a different repository.`,
+          );
+        }
+      },
+    });
+
+    await expect(cmdPersistRunDocumentation({
+      repository: "org/repo",
+      issueNumber: 56,
+      branch: "main",
+      auditRecorderRepo: "other-org/other-repo",
+      _githubAdapter: gh,
+      _storeFactory: () => store as never,
+    })).rejects.toThrow(/different repository.*GITHUB_TOKEN|GITHUB_TOKEN.*different repository/i);
+  });
+});
+
+// ===========================================================================
+// Iter4-Fix-4: CLI legacy-directory validation (validateLegacyDirectoryPath)
+// ===========================================================================
+
+describe("Iter4-Fix-4: CLI --legacy-directory validation via cmdPersistRunDocumentation", () => {
+  function makeGh(): ReturnType<typeof makeFakeGithub> {
+    return makeFakeGithub();
+  }
+
+  async function runWithLegacy(legacyDirectories: string[]) {
+    const store = new MemoryStateStore(mergeReadyState());
+    return cmdPersistRunDocumentation({
+      repository: "org/repo",
+      issueNumber: 56,
+      branch: "main",
+      legacyDirectories,
+      _githubAdapter: makeGh(),
+      _storeFactory: () => store as never,
+    });
+  }
+
+  // --- Valid paths: must NOT throw ---
+
+  it("accepts docs/runs/legacy (simple relative path)", async () => {
+    await expect(runWithLegacy(["docs/runs/legacy"])).resolves.toBeUndefined();
+  });
+
+  it("accepts path with spaces", async () => {
+    await expect(runWithLegacy(["docs/my runs/archive"])).resolves.toBeUndefined();
+  });
+
+  it("accepts legitimate v1..v2 path (double-dot in name, not traversal)", async () => {
+    await expect(runWithLegacy(["docs/v1..v2"])).resolves.toBeUndefined();
+  });
+
+  // --- Invalid paths: must throw ---
+
+  it("rejects traversal '..'", async () => {
+    await expect(runWithLegacy([".."])).rejects.toThrow(/traversal/i);
+  });
+
+  it("rejects traversal '../etc'", async () => {
+    await expect(runWithLegacy(["../etc"])).rejects.toThrow(/traversal/i);
+  });
+
+  it("rejects traversal 'docs/../etc'", async () => {
+    await expect(runWithLegacy(["docs/../etc"])).rejects.toThrow(/traversal/i);
+  });
+
+  it("rejects POSIX absolute path '/docs/runs'", async () => {
+    await expect(runWithLegacy(["/docs/runs"])).rejects.toThrow(/absolute|POSIX/i);
+  });
+
+  it("rejects Windows drive path 'C:\\docs'", async () => {
+    await expect(runWithLegacy(["C:\\docs"])).rejects.toThrow(/Windows drive/i);
+  });
+
+  it("rejects Windows UNC path '\\\\server\\share'", async () => {
+    await expect(runWithLegacy(["\\\\server\\share"])).rejects.toThrow(/UNC/i);
+  });
+
+  it("rejects Windows UNC path '//server/share'", async () => {
+    await expect(runWithLegacy(["//server/share"])).rejects.toThrow(/UNC/i);
+  });
+
+  it("rejects option-like path '-foo'", async () => {
+    await expect(runWithLegacy(["-foo"])).rejects.toThrow(/option-like/i);
+  });
+
+  it("rejects path with NUL byte", async () => {
+    await expect(runWithLegacy(["docs/\x00evil"])).rejects.toThrow(/NUL|control/i);
+  });
+
+  it("rejects empty path", async () => {
+    await expect(runWithLegacy([""])).rejects.toThrow(/empty/i);
   });
 });

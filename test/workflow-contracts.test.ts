@@ -395,7 +395,7 @@ describe("SPEC-005 normalize_process_audit_input.mjs (Finding 2)", () => {
   function validEnvelope(overrides: Record<string, unknown> = {}) {
     return {
       schema_version: 1,
-      occurred_at: "2026-08-18T12:00:00Z",
+      occurred_at: "2026-08-18T12:00:00.000Z",
       process_instance: "run-0056",
       idempotency_key: "idem-001",
       process_code: "DOCUMENTATION_UPDATE",

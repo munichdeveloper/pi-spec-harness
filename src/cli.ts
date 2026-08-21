@@ -56,7 +56,7 @@ import type { GateDecisionContext, GateType, HumanGateIssueRef, PhaseId, RunStat
 import { SCHEMA_VERSION } from "./state/types.js";
 import { renderRunSnapshot, buildSnapshotFilename } from "./documentation/run-snapshot.js";
 import { generateRunIndex, generateObsidianBase, parseFrontmatter, parseRunIndexEntry } from "./documentation/run-index.js";
-import { validateDocumentationPath, validateSnapshotContent } from "./documentation/path-validator.js";
+import { validateDocumentationPath, validateLegacyDirectoryPath, validateSnapshotContent } from "./documentation/path-validator.js";
 import { DEFAULT_RUN_DOCUMENTATION_CONFIG } from "./documentation/run-documentation-config.js";
 
 /**
@@ -64,7 +64,7 @@ import { DEFAULT_RUN_DOCUMENTATION_CONFIG } from "./documentation/run-documentat
  * Exported to allow integration tests to inject a stub adapter.
  */
 export interface WriterGithubAdapter {
-  preflightRunDocumentationWriter(repository: string, branch: string, recorderRepository?: string): Promise<void>;
+  preflightRunDocumentationWriter(repository: string, branch: string, recorderRepository?: string, expectedHarnessRef?: string): Promise<void>;
   getBranchSha(repository: string, branch: string): Promise<string>;
   verifyCommitOnBranch(repository: string, branch: string, expectedCommitSha: string): Promise<boolean>;
   createAtomicMultiFileCommit(
@@ -533,6 +533,10 @@ export async function cmdPersistRunDocumentation(argv: {
   const gh: WriterGithubAdapter = argv._githubAdapter ?? github;
   const generatedDirectory = argv.generatedDirectory ?? DEFAULT_RUN_DOCUMENTATION_CONFIG.generatedDirectory;
   const legacyDirectories = argv.legacyDirectories ?? DEFAULT_RUN_DOCUMENTATION_CONFIG.legacyDirectories;
+  // Validate each legacy directory path before any I/O (SPEC-012 Fix-4).
+  for (const legacyDir of legacyDirectories) {
+    validateLegacyDirectoryPath(legacyDir);
+  }
   const indexPath = argv.indexPath ?? DEFAULT_RUN_DOCUMENTATION_CONFIG.indexPath;
   const obsidianBasePath = argv.obsidianBasePath ?? DEFAULT_RUN_DOCUMENTATION_CONFIG.obsidianBasePath;
   // Audit recorder defaults to the same repository as the tracking issue.
