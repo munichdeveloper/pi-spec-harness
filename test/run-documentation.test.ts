@@ -2885,6 +2885,17 @@ describe("Iter6-Fix-A: auditReceiverRef is passed from cmdPersistRunDocumentatio
 // ===========================================================================
 
 describe("Iter6-Fix-B: CROSS_REPO_ALLOWED_ROLES contains only canonical cross-repository-capable roles", () => {
+  it("exact set equality: only GITHUB_PERSONAL_ACCESS_TOKEN and GITHUB_APP_USER_AUTHORIZATION", () => {
+    const expected = new Set(["GITHUB_PERSONAL_ACCESS_TOKEN", "GITHUB_APP_USER_AUTHORIZATION"]);
+    expect(CROSS_REPO_ALLOWED_ROLES.size).toBe(expected.size);
+    for (const role of expected) {
+      expect(CROSS_REPO_ALLOWED_ROLES.has(role)).toBe(true);
+    }
+    for (const role of CROSS_REPO_ALLOWED_ROLES) {
+      expect(expected.has(role)).toBe(true);
+    }
+  });
+
   it("contains GITHUB_PERSONAL_ACCESS_TOKEN", () => {
     expect(CROSS_REPO_ALLOWED_ROLES.has("GITHUB_PERSONAL_ACCESS_TOKEN")).toBe(true);
   });
@@ -2893,8 +2904,8 @@ describe("Iter6-Fix-B: CROSS_REPO_ALLOWED_ROLES contains only canonical cross-re
     expect(CROSS_REPO_ALLOWED_ROLES.has("GITHUB_APP_USER_AUTHORIZATION")).toBe(true);
   });
 
-  it("contains GITHUB_APP_INSTALLATION_TOKEN", () => {
-    expect(CROSS_REPO_ALLOWED_ROLES.has("GITHUB_APP_INSTALLATION_TOKEN")).toBe(true);
+  it("does NOT contain GITHUB_APP_INSTALLATION_TOKEN (not in canonical access-role enum)", () => {
+    expect(CROSS_REPO_ALLOWED_ROLES.has("GITHUB_APP_INSTALLATION_TOKEN")).toBe(false);
   });
 
   it("does NOT contain GITHUB_COPILOT_AGENT_IDENTITY (pure identity, not a dispatch-capable credential)", () => {
