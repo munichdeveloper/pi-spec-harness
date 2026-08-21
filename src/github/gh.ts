@@ -127,7 +127,13 @@ export function validateReceiverContent(
   recorder: string,
 ): void {
   // Check 1: Managed marker with supported version.
-  if (!content.includes(PROCESS_AUDIT_RECEIVER_MARKER)) {
+  // Extract the marker base (without the version suffix) and the version separately
+  // so that the version check reads from the content, not from the constant.
+  const markerBase = PROCESS_AUDIT_RECEIVER_MARKER.replace(/\s+\S+$/, ""); // strip trailing token
+  const markerInContentMatch = content.match(
+    new RegExp(`${markerBase.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s+(\\S+)`),
+  );
+  if (!markerInContentMatch) {
     throw new Error(
       `run-documentation-writer preflight failed: the process-audit receiver at ` +
       `'${receiverPath}' in '${recorder}' is not a pi-spec-harness managed receiver ` +
@@ -135,10 +141,10 @@ export function validateReceiverContent(
       `Run \`harness install process-audit-receiver\` in '${recorder}' to install a compatible receiver.`,
     );
   }
-  // Extract the version from the marker line (e.g. "... v1").
-  const markerVersionMatch = PROCESS_AUDIT_RECEIVER_MARKER.match(/(\S+)$/);
-  const markerVersion = markerVersionMatch ? markerVersionMatch[1] : null;
-  if (!markerVersion || !(SUPPORTED_RECEIVER_MARKER_VERSIONS as ReadonlyArray<string>).includes(markerVersion)) {
+  // The version is whatever the content declares after the marker base — it
+  // may differ from the constant when a newer receiver format is installed.
+  const markerVersion = markerInContentMatch[1];
+  if (!(SUPPORTED_RECEIVER_MARKER_VERSIONS as ReadonlyArray<string>).includes(markerVersion)) {
     throw new Error(
       `run-documentation-writer preflight failed: the process-audit receiver at ` +
       `'${receiverPath}' in '${recorder}' uses unsupported marker version '${markerVersion}'. ` +

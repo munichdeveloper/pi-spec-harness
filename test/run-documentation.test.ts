@@ -2517,6 +2517,13 @@ describe("Iter4-Fix-2: validateReceiverContent production function (real exporte
     await expect(validate(content)).rejects.toThrow(/mismatched refs|harness-ref/i);
   });
 
+  it("rejects receiver with unsupported marker version v2", async () => {
+    const content = makeContent({
+      marker: "# Managed by pi-spec-harness: process-audit-receiver-reference v2",
+    });
+    await expect(validate(content)).rejects.toThrow(/unsupported marker version.*v2/i);
+  });
+
   it("rejects receiver missing managed marker", async () => {
     const content = makeContent({ marker: "# unmanaged receiver" });
     await expect(validate(content)).rejects.toThrow(/not a pi-spec-harness managed receiver/i);
