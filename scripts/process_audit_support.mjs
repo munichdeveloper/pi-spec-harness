@@ -13,95 +13,60 @@
 import { URL } from "node:url";
 
 // ---------------------------------------------------------------------------
+// Shared journal parser (single source of truth — no duplication)
+// ---------------------------------------------------------------------------
+//
+// `validateCanonicalUtcTimestamp` and `parseJournalEntry` live in
+// `src/audit/journalParser.js` so that both this ESM module and the
+// TypeScript src/github/gh.ts import the **exact same compiled implementation**.
+export {
+  validateCanonicalUtcTimestamp,
+  parseJournalEntry,
+} from "../src/audit/journalParser.js";
+
+// ---------------------------------------------------------------------------
 // Canonical enum sets (SPEC-005 §external-contract)
 // ---------------------------------------------------------------------------
 
 /**
  * Canonical set of allowed `process_code` values.
  *
- * Mirrors the full docs/50-quality/process-audit/enums/process-step.md set
+ * Exact parity with docs/50-quality/process-audit/enums/process-step.md
  * from the Immogent repository.  No legacy aliases are maintained here —
  * callers must use the canonical form.
  */
 export const ALLOWED_PROCESS_CODES = new Set([
-  // Requirement lifecycle
-  "REQUIREMENT_CREATE",
-  "REQUIREMENT_UPDATE",
-  "REQUIREMENT_ARCHIVE",
-
-  // Specification lifecycle
-  "SPEC_CREATE",
-  "SPEC_UPDATE",
-  "SPEC_ARCHIVE",
-  "SPEC_TO_ISSUE",
-
-  // Human-gate lifecycle
-  "GATE_OPEN",
-  "GATE_APPROVED",
-  "GATE_REJECTED",
-  "GATE_ESCALATE",
-
-  // Agent / iteration lifecycle
-  "AGENT_TASK_START",
-  "AGENT_TASK_FINISH",
-  "ITERATION_START",
-  "ITERATION_FINISH",
-
-  // Implementation lifecycle
-  "IMPLEMENTATION_START",
-  "IMPLEMENTATION_FINISH",
-
-  // CI / quality lifecycle
-  "CI_TRIGGER",
-  "CI_JOB_START",
-  "CI_JOB_COMPLETE",
-  "CI_FAILURE",
-  "CI_VERIFICATION",
-  "TEST_EXECUTION",
-
-  // Preview lifecycle
-  "PREVIEW_DEPLOY",
-  "PREVIEW_VERIFY",
-  "PREVIEW_TEARDOWN",
-
-  // Database migration lifecycle
-  "DB_MIGRATION_RUN",
-  "DB_ROLLBACK_RUN",
-
-  // Pull-request lifecycle
-  "PR_OPEN",
-  "PR_APPROVE",
-  "PR_CLOSE",
-  "PR_MERGE",
-  "BUG_TO_PR",
-
-  // Production deployment lifecycle
-  "PRODUCTION_DEPLOY",
-  "PRODUCTION_ROLLBACK",
-  "PRODUCTION_VERIFY",
-
-  // Incident management
-  "INCIDENT_CREATE",
-  "INCIDENT_RESOLVE",
-  "INCIDENT_CLOSE",
-
-  // Manual / ad-hoc actions
-  "MANUAL_ACTION",
-  "MANUAL_OVERRIDE",
-
-  // Reconciliation
-  "RECONCILIATION_START",
-  "RECONCILIATION_COMPLETE",
-
-  // Issue and review lifecycle (issue tracker)
+  "PROCESS_AUDIT_CONFIGURATION",
+  "REQUIREMENT_DRAFT",
+  "REQUIREMENT_APPROVAL",
+  "SOFTWARE_SPEC_DRAFT",
+  "SOFTWARE_SPEC_APPROVAL",
+  "HUMAN_GATE_OPEN",
+  "HUMAN_GATE_RESOLVE",
   "ISSUE_CREATE",
+  "AGENT_ASSIGNMENT",
+  "IMPLEMENTATION_START",
+  "IMPLEMENTATION_UPDATE",
+  "TEST_EXECUTION",
+  "CI_WORKFLOW_APPROVAL",
+  "CI_VERIFICATION",
   "CODE_REVIEW",
   "REVIEW_COMMENT_CREATE",
   "REVIEW_FINDING_RESOLVE",
-
-  // Documentation and harness-internal
+  "ITERATION_START",
+  "ITERATION_FINISH",
   "DOCUMENTATION_UPDATE",
-  "CAPABILITY_SMOKE",
+  "PREVIEW_DEPLOYMENT",
+  "PREVIEW_E2E",
+  "DATABASE_MIGRATION",
+  "PR_BIND",
+  "PR_CREATE",
+  "PR_MERGE",
+  "PRODUCTION_DEPLOYMENT",
+  "PRODUCTION_VERIFICATION",
+  "INCIDENT_DIAGNOSIS",
+  "MANUAL_INTERVENTION",
+  "PROCESS_RECONCILIATION",
 ]);
 
 /**
@@ -278,51 +243,10 @@ export const ARRAY_ELEMENT_MAX_LENGTHS = {
 };
 
 // ---------------------------------------------------------------------------
-// Timestamp normalisation and validation (SPEC-005 §external-contract)
+// Timestamp normalisation (SPEC-005 §external-contract)
 // ---------------------------------------------------------------------------
-
-/**
- * Validate that a string is a canonical ISO 8601 UTC timestamp (ends with `Z`,
- * parseable by `new Date()`, and round-trips to the same ISO string).
- *
- * @param {string} value  The timestamp string to validate.
- * @param {string} fieldName  Name used in error messages.
- * @returns {string}  The canonical UTC form (`YYYY-MM-DDTHH:mm:ss.sssZ`).
- * @throws {Error}  If the timestamp is not valid canonical UTC.
- */
-export function validateCanonicalUtcTimestamp(value, fieldName) {
-  if (typeof value !== "string") {
-    throw new Error(
-      `SPEC-005 validation failed: '${fieldName}' must be a string, got ${typeof value}.`,
-    );
-  }
-  // Must end with Z (strict UTC; no offset notation like +00:00 accepted).
-  if (!value.endsWith("Z")) {
-    throw new Error(
-      `SPEC-005 validation failed: '${fieldName}' must be a canonical UTC timestamp ending with 'Z', ` +
-      `got '${value}'.`,
-    );
-  }
-  const d = new Date(value);
-  if (isNaN(d.getTime())) {
-    throw new Error(
-      `SPEC-005 validation failed: '${fieldName}' is not a valid ISO 8601 timestamp: '${value}'.`,
-    );
-  }
-  // Round-trip check: the canonical form produced by toISOString() always
-  // includes milliseconds (e.g. "2026-08-18T22:09:10.000Z").  Input that
-  // differs (e.g. "2026-08-18T22:09:10Z") is not canonical and must be
-  // rejected so that stored timestamps are byte-identical to their canonical
-  // representation.
-  const canonical = d.toISOString();
-  if (value !== canonical) {
-    throw new Error(
-      `SPEC-005 validation failed: '${fieldName}' must be the canonical ISO 8601 UTC form ` +
-      `(as produced by Date.toISOString(), e.g. "${canonical}"), got '${value}'.`,
-    );
-  }
-  return canonical;
-}
+// Note: validateCanonicalUtcTimestamp and parseJournalEntry are re-exported
+// from src/audit/journalParser.js (see top of file).
 
 /**
  * Normalise an ISO 8601 timestamp to the compact filename-safe form used for
@@ -503,49 +427,4 @@ export function renderAuditFrontmatter(event, confirmedAt) {
 // ---------------------------------------------------------------------------
 // Canonical journal-entry parser (SPEC-005 §external-contract)
 // ---------------------------------------------------------------------------
-
-/**
- * Parse and validate a SPEC-005 audit journal Markdown file for a specific
- * idempotency key.
- *
- * The function provides the shared canonical matching/validation logic used by
- * both `confirm_process_audit_delivery.mjs` (script) and the TypeScript
- * `confirmAuditEventInJournal` adapter method (whose implementation mirrors
- * this logic).
- *
- * Contract:
- *   - Returns `{ confirmedAt: string }` when the entry matches the key and
- *     has a valid canonical UTC `confirmed_at` timestamp.
- *   - Returns `null` when the file does not contain the idempotency key (not
- *     this entry; caller should try the next file).
- *   - Throws with a descriptive message when the file contains the key but is
- *     missing or has an invalid `confirmed_at` value.  Throws are NOT silently
- *     skipped — callers must propagate them immediately (fail-closed).
- *
- * @param {string} content  UTF-8 content of the journal file.
- * @param {string} filename  File name used in error messages.
- * @param {string} idempotencyKey  The idempotency key to search for.
- * @returns {{ confirmedAt: string } | null}
- */
-export function parseJournalEntry(content, filename, idempotencyKey) {
-  const marker = `idempotency_key: "${idempotencyKey}"`;
-  if (!content.includes(marker)) {
-    return null; // not this entry
-  }
-
-  // Entry matches.  Extract confirmed_at — fail-closed if absent or invalid.
-  const match = content.match(/confirmed_at:\s*"([^"]+)"/);
-  if (!match) {
-    throw new Error(
-      `audit journal entry for idempotency_key "${idempotencyKey}" in '${filename}' ` +
-      `is missing the required 'confirmed_at' field — the entry may be incomplete or corrupt.`,
-    );
-  }
-  const rawConfirmedAt = match[1];
-
-  // Delegate to the shared canonical UTC validator which also enforces
-  // the round-trip requirement (value must equal Date.toISOString()).
-  const confirmedAt = validateCanonicalUtcTimestamp(rawConfirmedAt, "confirmed_at");
-
-  return { confirmedAt };
-}
+// parseJournalEntry is re-exported from src/audit/journalParser.js (see top of file).

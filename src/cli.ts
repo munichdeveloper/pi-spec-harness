@@ -64,7 +64,7 @@ import { DEFAULT_RUN_DOCUMENTATION_CONFIG } from "./documentation/run-documentat
  * Exported to allow integration tests to inject a stub adapter.
  */
 export interface WriterGithubAdapter {
-  preflightRunDocumentationWriter(repository: string, branch: string, recorderRepository?: string, expectedHarnessRef?: string): Promise<void>;
+  preflightRunDocumentationWriter(repository: string, branch: string, recorderRepository?: string, expectedHarnessRef?: string, credentialAccessRole?: string): Promise<void>;
   getBranchSha(repository: string, branch: string): Promise<string>;
   verifyCommitOnBranch(repository: string, branch: string, expectedCommitSha: string): Promise<boolean>;
   createAtomicMultiFileCommit(
@@ -524,6 +524,15 @@ export async function cmdPersistRunDocumentation(argv: {
   harnessVersion?: string;
   auditRecorderRepo?: string;
   auditJournalPath?: string;
+  /**
+   * The access role of the credential that will be used to dispatch the
+   * process-audit event.  When the audit recorder is in a different repository,
+   * this must be a cross-repository-capable role such as
+   * `GITHUB_PERSONAL_ACCESS_TOKEN` or `GITHUB_APP_USER_AUTHORIZATION`.
+   * Defaults to `GITHUB_TOKEN` (repository-scoped; cross-repo dispatch
+   * is rejected when this is the active role).
+   */
+  auditAccessRole?: string;
   /** For testing only: inject a fake GitHub adapter to avoid live API calls. */
   _githubAdapter?: WriterGithubAdapter;
   /** For testing only: inject a store factory to use an in-memory state store. */
@@ -542,6 +551,7 @@ export async function cmdPersistRunDocumentation(argv: {
   // Audit recorder defaults to the same repository as the tracking issue.
   const auditRecorderRepo = argv.auditRecorderRepo ?? repository;
   const auditJournalPath = argv.auditJournalPath ?? "docs/process-audit/journal";
+  const auditAccessRole = argv.auditAccessRole;
 
   const store = argv._storeFactory ? argv._storeFactory(repository, issueNumber) as IssueStateStore : new IssueStateStore(repository, issueNumber);
   let state = await store.load();
@@ -603,7 +613,7 @@ export async function cmdPersistRunDocumentation(argv: {
   // configured audit recorder is reachable. Preflight runs before any state
   // is mutated; a missing capability produces a concrete error. The recorder
   // check is NOT deferred (SPEC-012 §8 / TAC-17 "fehlenden Auditvertrag").
-  await gh.preflightRunDocumentationWriter(repository, branch, auditRecorderRepo);
+  await gh.preflightRunDocumentationWriter(repository, branch, auditRecorderRepo, undefined, auditAccessRole);
 
   const harnessVersion = argv.harnessVersion ?? "unknown";
 
@@ -2454,7 +2464,8 @@ const _harnessCli = yargs(hideBin(process.argv))
         .option("branch", { type: "string", describe: "Default branch to write to (default: main)" })
         .option("harness-version", { type: "string", describe: "Harness version string to embed in the snapshot metadata" })
         .option("audit-recorder-repo", { type: "string", describe: "owner/repo of the REQ-005 audit recorder (default: same as --repository)" })
-        .option("audit-journal-path", { type: "string", describe: "Path to the audit journal directory in the recorder repo (default: docs/process-audit/journal)" }),
+        .option("audit-journal-path", { type: "string", describe: "Path to the audit journal directory in the recorder repo (default: docs/process-audit/journal)" })
+        .option("audit-access-role", { type: "string", describe: "Access role of the credential used for audit dispatch (e.g. GITHUB_PERSONAL_ACCESS_TOKEN); required when audit-recorder-repo is a different repository" }),
     async (argv) =>
       cmdPersistRunDocumentation({
         repository: argv.repository as string,
@@ -2467,6 +2478,7 @@ const _harnessCli = yargs(hideBin(process.argv))
         harnessVersion: argv["harness-version"] as string | undefined,
         auditRecorderRepo: argv["audit-recorder-repo"] as string | undefined,
         auditJournalPath: argv["audit-journal-path"] as string | undefined,
+        auditAccessRole: argv["audit-access-role"] as string | undefined,
       }),
   )
   .command(

@@ -6,6 +6,7 @@ import {
   PROCESS_AUDIT_RECEIVER_MARKER,
   PROCESS_AUDIT_RECEIVER_PATH,
 } from "../workflows/template-catalog.js";
+import { parseJournalEntry } from "../audit/journalParser.js";
 
 const execFile = promisify(execFileCb);
 
@@ -1074,7 +1075,6 @@ export const github = {
     maxAttempts = 6,
     retryDelayMs = 10_000,
   ): Promise<string> {
-    const marker = `idempotency_key: "${idempotencyKey}"`;
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
       if (attempt > 0) {
         await new Promise<void>((resolve) => setTimeout(resolve, retryDelayMs));
@@ -1086,50 +1086,13 @@ export const github = {
         // Fail closed: any file-read error propagates immediately; unreadable
         // journal files are NOT silently skipped (SPEC-005 §external-contract).
         const { content } = await this.getFileContent(recorderRepository, file.path, branch);
-        if (!content.includes(marker)) {
-          continue; // not this entry
+        // parseJournalEntry is the single shared implementation from
+        // src/audit/journalParser.js — no inline duplication.
+        const result = parseJournalEntry(content, file.path, idempotencyKey);
+        if (result === null) {
+          continue; // idempotency key not in this file
         }
-        // Canonical parser logic (mirrors parseJournalEntry in
-        // scripts/process_audit_support.mjs — keep in sync).
-        // Fail closed: missing or invalid confirmed_at is not silently skipped.
-        const confirmedAtMatch = content.match(/confirmed_at:\s*"([^"]+)"/);
-        if (!confirmedAtMatch) {
-          throw new Error(
-            `audit journal entry for idempotency_key "${idempotencyKey}" in ` +
-            `"${journalDirectory}" of "${recorderRepository}" is missing the ` +
-            `required 'confirmed_at' field — the entry may be incomplete or corrupt.`,
-          );
-        }
-        const rawConfirmedAt = confirmedAtMatch[1];
-        // Canonical UTC validation with round-trip check: the stored timestamp
-        // must be byte-identical to Date.toISOString() canonical form
-        // (e.g. "2026-08-18T22:09:10.000Z").  A non-UTC or non-canonical value
-        // indicates the recorder wrote a corrupt entry.
-        if (!rawConfirmedAt.endsWith("Z")) {
-          throw new Error(
-            `audit journal entry for idempotency_key "${idempotencyKey}" in ` +
-            `"${journalDirectory}" of "${recorderRepository}" has a non-UTC ` +
-            `'confirmed_at' value '${rawConfirmedAt}' — must end with 'Z'.`,
-          );
-        }
-        const d = new Date(rawConfirmedAt);
-        if (isNaN(d.getTime())) {
-          throw new Error(
-            `audit journal entry for idempotency_key "${idempotencyKey}" in ` +
-            `"${journalDirectory}" of "${recorderRepository}" has an unparseable ` +
-            `'confirmed_at' value '${rawConfirmedAt}'.`,
-          );
-        }
-        const canonical = d.toISOString();
-        if (rawConfirmedAt !== canonical) {
-          throw new Error(
-            `audit journal entry for idempotency_key "${idempotencyKey}" in ` +
-            `"${journalDirectory}" of "${recorderRepository}" has a non-canonical ` +
-            `'confirmed_at' value '${rawConfirmedAt}' — must equal canonical ` +
-            `ISO 8601 UTC form (e.g. '${canonical}').`,
-          );
-        }
-        return canonical;
+        return result.confirmedAt;
       }
     }
     throw new Error(
@@ -1157,24 +1120,39 @@ export const github = {
     branch: string,
     recorderRepository?: string,
     expectedHarnessRef?: string,
+    credentialAccessRole?: string,
   ): Promise<void> {
     // Resolve defaults.
     const recorder = recorderRepository ?? repository;
     const { DEFAULT_PROCESS_AUDIT_RECEIVER_WORKFLOW_REF } = await import("../workflows/template-catalog.js");
     const expectedRef = expectedHarnessRef ?? DEFAULT_PROCESS_AUDIT_RECEIVER_WORKFLOW_REF;
 
-    // Cross-repo check: repository-scoped GITHUB_TOKEN cannot dispatch events
-    // to a different repository.  Reject unless the recorder is the same repo
-    // (token is implicitly scoped to the current repository and cannot reach
-    // external repos without an explicit PAT or GitHub App token).
+    // Access roles that can dispatch events to repositories other than the one
+    // the workflow was triggered from (i.e. cross-repository-capable credentials).
+    const CROSS_REPO_ALLOWED_ROLES = new Set([
+      "GITHUB_PERSONAL_ACCESS_TOKEN",
+      "GITHUB_APP_USER_AUTHORIZATION",
+      "GITHUB_APP_INSTALLATION_TOKEN",
+      "GITHUB_COPILOT_AGENT_IDENTITY",
+    ]);
+
+    // Cross-repo check: the default repository-scoped GITHUB_TOKEN cannot
+    // dispatch events to a different repository.  Permit cross-repo dispatch
+    // only when an explicit cross-repo-capable access role is provided
+    // (e.g. a PAT or a GitHub App installation token).
     if (recorder !== repository) {
-      throw new Error(
-        `run-documentation-writer preflight failed: audit recorder repository '${recorder}' ` +
-        `is in a different repository from '${repository}'. ` +
-        `The repository-scoped GITHUB_TOKEN cannot dispatch events to a different repository. ` +
-        `Provide an explicit PAT or GitHub App token with access to '${recorder}', ` +
-        `or configure the recorder to be the same repository as the documentation target.`,
-      );
+      const role = credentialAccessRole ?? "GITHUB_TOKEN";
+      if (!CROSS_REPO_ALLOWED_ROLES.has(role)) {
+        throw new Error(
+          `run-documentation-writer preflight failed: audit recorder repository '${recorder}' ` +
+          `is in a different repository from '${repository}'. ` +
+          `The configured credential role '${role}' is repository-scoped and cannot dispatch events ` +
+          `to a different repository. ` +
+          `Set --audit-access-role to GITHUB_PERSONAL_ACCESS_TOKEN or GITHUB_APP_USER_AUTHORIZATION ` +
+          `and provide the corresponding token, or configure the recorder to be the same repository ` +
+          `as the documentation target.`,
+        );
+      }
     }
 
     // Check 1: branch exists and is readable.

@@ -2023,8 +2023,7 @@ describe("Fix-2: canonical ALLOWED_PROCESS_CODES — legacy values rejected", ()
       "ISSUE_CREATE", "ITERATION_START", "ITERATION_FINISH",
       "CODE_REVIEW", "REVIEW_COMMENT_CREATE", "REVIEW_FINDING_RESOLVE",
       "TEST_EXECUTION", "CI_VERIFICATION",
-      "PR_MERGE", "SPEC_TO_ISSUE", "GATE_APPROVED", "GATE_REJECTED",
-      "DOCUMENTATION_UPDATE", "CAPABILITY_SMOKE", "BUG_TO_PR",
+      "PR_MERGE", "DOCUMENTATION_UPDATE",
     ]) {
       expect(ALLOWED_PROCESS_CODES.has(code), `expected ${code} to be in ALLOWED_PROCESS_CODES`).toBe(true);
     }
@@ -2352,49 +2351,83 @@ describe("Fix-5: validateLegacyPath — correct traversal detection and Windows/
 // Iteration-4 Fix-1: Complete canonical ALLOWED_PROCESS_CODES parity
 // ===========================================================================
 
-describe("Iter4-Fix-1: ALLOWED_PROCESS_CODES complete canonical parity", () => {
+describe("Iter5-Fix-1: ALLOWED_PROCESS_CODES exact canonical parity (process-step.md)", () => {
+  // Exact 31-code canonical set from docs/50-quality/process-audit/enums/process-step.md.
+  // Tests assert EXACT set equality — no extra codes, no missing codes.
+  const CANONICAL_PROCESS_CODES = new Set([
+    "PROCESS_AUDIT_CONFIGURATION",
+    "REQUIREMENT_DRAFT",
+    "REQUIREMENT_APPROVAL",
+    "SOFTWARE_SPEC_DRAFT",
+    "SOFTWARE_SPEC_APPROVAL",
+    "HUMAN_GATE_OPEN",
+    "HUMAN_GATE_RESOLVE",
+    "ISSUE_CREATE",
+    "AGENT_ASSIGNMENT",
+    "IMPLEMENTATION_START",
+    "IMPLEMENTATION_UPDATE",
+    "TEST_EXECUTION",
+    "CI_WORKFLOW_APPROVAL",
+    "CI_VERIFICATION",
+    "CODE_REVIEW",
+    "REVIEW_COMMENT_CREATE",
+    "REVIEW_FINDING_RESOLVE",
+    "ITERATION_START",
+    "ITERATION_FINISH",
+    "DOCUMENTATION_UPDATE",
+    "PREVIEW_DEPLOYMENT",
+    "PREVIEW_E2E",
+    "DATABASE_MIGRATION",
+    "PR_BIND",
+    "PR_CREATE",
+    "PR_MERGE",
+    "PRODUCTION_DEPLOYMENT",
+    "PRODUCTION_VERIFICATION",
+    "INCIDENT_DIAGNOSIS",
+    "MANUAL_INTERVENTION",
+    "PROCESS_RECONCILIATION",
+  ]);
+
   async function getCodes(): Promise<Set<string>> {
     const { ALLOWED_PROCESS_CODES } = await import("../scripts/process_audit_support.mjs" as never as string) as { ALLOWED_PROCESS_CODES: Set<string> };
     return ALLOWED_PROCESS_CODES;
   }
 
-  const requiredCategories: Record<string, string[]> = {
-    "Requirement lifecycle": ["REQUIREMENT_CREATE", "REQUIREMENT_UPDATE", "REQUIREMENT_ARCHIVE"],
-    "Specification lifecycle": ["SPEC_CREATE", "SPEC_UPDATE", "SPEC_ARCHIVE", "SPEC_TO_ISSUE"],
-    "Human-gate lifecycle": ["GATE_OPEN", "GATE_APPROVED", "GATE_REJECTED", "GATE_ESCALATE"],
-    "Agent / iteration lifecycle": ["AGENT_TASK_START", "AGENT_TASK_FINISH", "ITERATION_START", "ITERATION_FINISH"],
-    "Implementation lifecycle": ["IMPLEMENTATION_START", "IMPLEMENTATION_FINISH"],
-    "CI / quality lifecycle": ["CI_TRIGGER", "CI_JOB_START", "CI_JOB_COMPLETE", "CI_FAILURE", "CI_VERIFICATION", "TEST_EXECUTION"],
-    "Preview lifecycle": ["PREVIEW_DEPLOY", "PREVIEW_VERIFY", "PREVIEW_TEARDOWN"],
-    "Database migration lifecycle": ["DB_MIGRATION_RUN", "DB_ROLLBACK_RUN"],
-    "Pull-request lifecycle": ["PR_OPEN", "PR_APPROVE", "PR_CLOSE", "PR_MERGE", "BUG_TO_PR"],
-    "Production deployment lifecycle": ["PRODUCTION_DEPLOY", "PRODUCTION_ROLLBACK", "PRODUCTION_VERIFY"],
-    "Incident management": ["INCIDENT_CREATE", "INCIDENT_RESOLVE", "INCIDENT_CLOSE"],
-    "Manual / ad-hoc actions": ["MANUAL_ACTION", "MANUAL_OVERRIDE"],
-    "Reconciliation": ["RECONCILIATION_START", "RECONCILIATION_COMPLETE"],
-    "Issue and review lifecycle": ["ISSUE_CREATE", "CODE_REVIEW", "REVIEW_COMMENT_CREATE", "REVIEW_FINDING_RESOLVE"],
-    "Documentation and harness-internal": ["DOCUMENTATION_UPDATE", "CAPABILITY_SMOKE"],
-  };
+  it("ALLOWED_PROCESS_CODES equals the canonical 31-code set exactly (no extra, no missing)", async () => {
+    const actual = await getCodes();
+    // All canonical codes must be present.
+    for (const code of CANONICAL_PROCESS_CODES) {
+      expect(actual.has(code), `canonical code '${code}' must be in ALLOWED_PROCESS_CODES`).toBe(true);
+    }
+    // No extra codes allowed.
+    for (const code of actual) {
+      expect(CANONICAL_PROCESS_CODES.has(code), `extra code '${code}' must NOT be in ALLOWED_PROCESS_CODES`).toBe(true);
+    }
+    expect(actual.size).toBe(CANONICAL_PROCESS_CODES.size);
+  });
 
-  for (const [category, codes] of Object.entries(requiredCategories)) {
-    it(`includes all ${category} codes: ${codes.join(", ")}`, async () => {
-      const set = await getCodes();
-      for (const code of codes) {
-        expect(set.has(code), `expected ${code} in ALLOWED_PROCESS_CODES (category: ${category})`).toBe(true);
-      }
-    });
-  }
-
-  it("does not contain legacy/invented alias ISSUE_CREATED", async () => {
+  it("does not contain legacy alias ISSUE_CREATED", async () => {
     expect((await getCodes()).has("ISSUE_CREATED")).toBe(false);
   });
 
-  it("does not contain legacy/invented alias ITERATION_STARTED", async () => {
+  it("does not contain legacy alias ITERATION_STARTED", async () => {
     expect((await getCodes()).has("ITERATION_STARTED")).toBe(false);
   });
 
-  it("does not contain legacy/invented alias RUN_COMPLETE", async () => {
+  it("does not contain legacy alias RUN_COMPLETE", async () => {
     expect((await getCodes()).has("RUN_COMPLETE")).toBe(false);
+  });
+
+  it("does not contain previous alias CAPABILITY_SMOKE", async () => {
+    expect((await getCodes()).has("CAPABILITY_SMOKE")).toBe(false);
+  });
+
+  it("does not contain previous alias BUG_TO_PR", async () => {
+    expect((await getCodes()).has("BUG_TO_PR")).toBe(false);
+  });
+
+  it("does not contain previous alias GATE_APPROVED", async () => {
+    expect((await getCodes()).has("GATE_APPROVED")).toBe(false);
   });
 });
 
@@ -2426,6 +2459,58 @@ describe("Iter4-Fix-1b: validateCanonicalUtcTimestamp round-trip enforcement", (
 
   it("rejects completely malformed timestamp", async () => {
     await expect(validate("not-a-date")).rejects.toThrow();
+  });
+});
+
+// ===========================================================================
+// Iter5-Fix-2: parseJournalEntry single shared implementation (both call paths)
+// ===========================================================================
+
+describe("Iter5-Fix-2: parseJournalEntry — single shared implementation, both call paths fail identically", () => {
+  // Import from the shared source module directly.
+  async function parseFromShared(content: string, filename: string, key: string) {
+    const { parseJournalEntry } = await import("../src/audit/journalParser.js") as { parseJournalEntry: (c: string, f: string, k: string) => { confirmedAt: string } | null };
+    return parseJournalEntry(content, filename, key);
+  }
+
+  // Import via process_audit_support.mjs (which re-exports from the shared module).
+  async function parseFromSupport(content: string, filename: string, key: string) {
+    const { parseJournalEntry } = await import("../scripts/process_audit_support.mjs" as never as string) as { parseJournalEntry: (c: string, f: string, k: string) => { confirmedAt: string } | null };
+    return parseJournalEntry(content, filename, key);
+  }
+
+  const CANONICAL_AT = "2026-08-18T22:09:10.000Z";
+
+  it("both paths return null when key is absent", async () => {
+    const content = `---\nidempotency_key: "other-key"\nconfirmed_at: "${CANONICAL_AT}"\n---\n`;
+    await expect(parseFromShared(content, "entry.md", "my-key")).resolves.toBeNull();
+    await expect(parseFromSupport(content, "entry.md", "my-key")).resolves.toBeNull();
+  });
+
+  it("both paths return confirmedAt when entry is valid", async () => {
+    const content = `---\nidempotency_key: "my-key"\nconfirmed_at: "${CANONICAL_AT}"\n---\n`;
+    await expect(parseFromShared(content, "entry.md", "my-key")).resolves.toEqual({ confirmedAt: CANONICAL_AT });
+    await expect(parseFromSupport(content, "entry.md", "my-key")).resolves.toEqual({ confirmedAt: CANONICAL_AT });
+  });
+
+  it("both paths throw the same error message when confirmed_at is missing", async () => {
+    const content = `---\nidempotency_key: "my-key"\n---\n`;
+    let sharedErr: string | undefined;
+    let supportErr: string | undefined;
+    try { await parseFromShared(content, "entry.md", "my-key"); } catch (e) { sharedErr = String(e); }
+    try { await parseFromSupport(content, "entry.md", "my-key"); } catch (e) { supportErr = String(e); }
+    expect(sharedErr).toBeDefined();
+    expect(sharedErr).toBe(supportErr);
+  });
+
+  it("both paths throw the same error message when confirmed_at is non-canonical", async () => {
+    const content = `---\nidempotency_key: "my-key"\nconfirmed_at: "2026-08-18T22:09:10Z"\n---\n`;
+    let sharedErr: string | undefined;
+    let supportErr: string | undefined;
+    try { await parseFromShared(content, "entry.md", "my-key"); } catch (e) { sharedErr = String(e); }
+    try { await parseFromSupport(content, "entry.md", "my-key"); } catch (e) { supportErr = String(e); }
+    expect(sharedErr).toBeDefined();
+    expect(sharedErr).toBe(supportErr);
   });
 });
 
@@ -2548,19 +2633,73 @@ describe("Iter4-Fix-2: validateReceiverContent production function (real exporte
 });
 
 // ===========================================================================
-// Iter4-Fix-2b: preflightRunDocumentationWriter — cross-repo rejection
+// Iter5-Fix-3: preflightRunDocumentationWriter — credential-aware cross-repo check
 // ===========================================================================
 
-describe("Iter4-Fix-2b: preflightRunDocumentationWriter rejects cross-repo recorder", () => {
-  it("throws when recorder is a different repository (cross-repo GITHUB_TOKEN risk)", async () => {
+describe("Iter5-Fix-3: preflightRunDocumentationWriter — credential-aware cross-repo (production preflight)", () => {
+  // These tests call the real production preflightRunDocumentationWriter (from
+  // gh.ts, not a fake reimplementation) to verify the credential check.
+  // Cross-repo rejection happens BEFORE any GitHub API call, so no live network
+  // access is needed for the rejection case.  For the acceptance case the
+  // function proceeds past the cross-repo guard and fails on the first API
+  // call; we verify the error is NOT the cross-repo guard error.
+
+  it("real preflight: rejects cross-repo recorder when no credential role is given (default GITHUB_TOKEN)", async () => {
+    const { github } = await import("../src/github/gh.js");
+    await expect(
+      github.preflightRunDocumentationWriter("org/repo", "main", "other-org/recorder"),
+    ).rejects.toThrow(/repository-scoped.*cannot dispatch|GITHUB_TOKEN.*cannot dispatch/i);
+  });
+
+  it("real preflight: rejects cross-repo recorder when role is explicitly GITHUB_TOKEN", async () => {
+    const { github } = await import("../src/github/gh.js");
+    await expect(
+      github.preflightRunDocumentationWriter("org/repo", "main", "other-org/recorder", undefined, "GITHUB_TOKEN"),
+    ).rejects.toThrow(/repository-scoped.*cannot dispatch|GITHUB_TOKEN.*cannot dispatch/i);
+  });
+
+  it("real preflight: permits cross-repo recorder when role is GITHUB_PERSONAL_ACCESS_TOKEN (passes cross-repo guard, fails at API)", async () => {
+    const { github } = await import("../src/github/gh.js");
+    // With a PAT role, the cross-repo guard passes.  The function then
+    // attempts a live API call (which fails in the test environment).
+    // We verify it does NOT throw the cross-repo guard error.
+    const err = await github.preflightRunDocumentationWriter(
+      "org/repo", "main", "other-org/recorder", undefined, "GITHUB_PERSONAL_ACCESS_TOKEN",
+    ).catch((e: unknown) => e instanceof Error ? e : new Error(String(e)));
+    expect(err).toBeInstanceOf(Error);
+    expect((err as Error).message).not.toMatch(/repository-scoped.*cannot dispatch|GITHUB_TOKEN.*cannot dispatch/i);
+  });
+
+  it("real preflight: permits cross-repo recorder when role is GITHUB_APP_USER_AUTHORIZATION (passes cross-repo guard)", async () => {
+    const { github } = await import("../src/github/gh.js");
+    const err = await github.preflightRunDocumentationWriter(
+      "org/repo", "main", "other-org/recorder", undefined, "GITHUB_APP_USER_AUTHORIZATION",
+    ).catch((e: unknown) => e instanceof Error ? e : new Error(String(e)));
+    expect(err).toBeInstanceOf(Error);
+    expect((err as Error).message).not.toMatch(/repository-scoped.*cannot dispatch|GITHUB_TOKEN.*cannot dispatch/i);
+  });
+});
+
+// ===========================================================================
+// Iter4-Fix-2b: preflightRunDocumentationWriter — cross-repo rejection (CLI path)
+// ===========================================================================
+
+describe("Iter4-Fix-2b: preflightRunDocumentationWriter rejects cross-repo recorder (CLI path)", () => {
+  it("throws when recorder is a different repository and no access role is provided", async () => {
     const store = new MemoryStateStore(mergeReadyState());
     const gh = makeFakeGithub({
-      async preflightRunDocumentationWriter(repo, _branch, recorderRepo) {
+      async preflightRunDocumentationWriter(repo, _branch, recorderRepo, _ref, credentialAccessRole) {
         if (recorderRepo && recorderRepo !== repo) {
-          throw new Error(
-            `run-documentation-writer preflight failed: audit recorder repository '${recorderRepo}' ` +
-            `is in a different repository from '${repo}'. The repository-scoped GITHUB_TOKEN cannot dispatch events to a different repository.`,
-          );
+          const role = credentialAccessRole ?? "GITHUB_TOKEN";
+          const CROSS_REPO_ALLOWED = new Set(["GITHUB_PERSONAL_ACCESS_TOKEN", "GITHUB_APP_USER_AUTHORIZATION", "GITHUB_APP_INSTALLATION_TOKEN", "GITHUB_COPILOT_AGENT_IDENTITY"]);
+          if (!CROSS_REPO_ALLOWED.has(role)) {
+            throw new Error(
+              `run-documentation-writer preflight failed: audit recorder repository '${recorderRepo}' ` +
+              `is in a different repository from '${repo}'. ` +
+              `The configured credential role '${role}' is repository-scoped and cannot dispatch events ` +
+              `to a different repository.`,
+            );
+          }
         }
       },
     });
@@ -2572,7 +2711,33 @@ describe("Iter4-Fix-2b: preflightRunDocumentationWriter rejects cross-repo recor
       auditRecorderRepo: "other-org/other-repo",
       _githubAdapter: gh,
       _storeFactory: () => store as never,
-    })).rejects.toThrow(/different repository.*GITHUB_TOKEN|GITHUB_TOKEN.*different repository/i);
+    })).rejects.toThrow(/repository-scoped.*cannot dispatch|GITHUB_TOKEN.*cannot dispatch/i);
+  });
+
+  it("succeeds when recorder is different repo and PAT role is provided", async () => {
+    const store = new MemoryStateStore(mergeReadyState());
+    const gh = makeFakeGithub({
+      async preflightRunDocumentationWriter(repo, _branch, recorderRepo, _ref, credentialAccessRole) {
+        if (recorderRepo && recorderRepo !== repo) {
+          const role = credentialAccessRole ?? "GITHUB_TOKEN";
+          const CROSS_REPO_ALLOWED = new Set(["GITHUB_PERSONAL_ACCESS_TOKEN", "GITHUB_APP_USER_AUTHORIZATION", "GITHUB_APP_INSTALLATION_TOKEN", "GITHUB_COPILOT_AGENT_IDENTITY"]);
+          if (!CROSS_REPO_ALLOWED.has(role)) {
+            throw new Error(`cross-repo rejected: ${role}`);
+          }
+        }
+      },
+    });
+
+    // Should NOT reject at the cross-repo guard when GITHUB_PERSONAL_ACCESS_TOKEN is given.
+    await expect(cmdPersistRunDocumentation({
+      repository: "org/repo",
+      issueNumber: 56,
+      branch: "main",
+      auditRecorderRepo: "other-org/other-repo",
+      auditAccessRole: "GITHUB_PERSONAL_ACCESS_TOKEN",
+      _githubAdapter: gh,
+      _storeFactory: () => store as never,
+    })).resolves.toBeUndefined();
   });
 });
 
