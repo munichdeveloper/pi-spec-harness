@@ -46,6 +46,7 @@ import {
 } from "../src/workflows/template-catalog.js";
 import type { WriterGithubAdapter } from "../src/cli.js";
 import { cmdPersistRunDocumentation } from "../src/cli.js";
+import { CROSS_REPO_ALLOWED_ROLES } from "../src/github/gh.js";
 import type { RunState } from "../src/state/types.js";
 import type { StateStore } from "../src/state/state-store.js";
 
@@ -2691,8 +2692,7 @@ describe("Iter4-Fix-2b: preflightRunDocumentationWriter rejects cross-repo recor
       async preflightRunDocumentationWriter(repo, _branch, recorderRepo, _ref, credentialAccessRole) {
         if (recorderRepo && recorderRepo !== repo) {
           const role = credentialAccessRole ?? "GITHUB_TOKEN";
-          const CROSS_REPO_ALLOWED = new Set(["GITHUB_PERSONAL_ACCESS_TOKEN", "GITHUB_APP_USER_AUTHORIZATION", "GITHUB_APP_INSTALLATION_TOKEN", "GITHUB_COPILOT_AGENT_IDENTITY"]);
-          if (!CROSS_REPO_ALLOWED.has(role)) {
+          if (!CROSS_REPO_ALLOWED_ROLES.has(role)) {
             throw new Error(
               `run-documentation-writer preflight failed: audit recorder repository '${recorderRepo}' ` +
               `is in a different repository from '${repo}'. ` +
@@ -2720,8 +2720,7 @@ describe("Iter4-Fix-2b: preflightRunDocumentationWriter rejects cross-repo recor
       async preflightRunDocumentationWriter(repo, _branch, recorderRepo, _ref, credentialAccessRole) {
         if (recorderRepo && recorderRepo !== repo) {
           const role = credentialAccessRole ?? "GITHUB_TOKEN";
-          const CROSS_REPO_ALLOWED = new Set(["GITHUB_PERSONAL_ACCESS_TOKEN", "GITHUB_APP_USER_AUTHORIZATION", "GITHUB_APP_INSTALLATION_TOKEN", "GITHUB_COPILOT_AGENT_IDENTITY"]);
-          if (!CROSS_REPO_ALLOWED.has(role)) {
+          if (!CROSS_REPO_ALLOWED_ROLES.has(role)) {
             throw new Error(`cross-repo rejected: ${role}`);
           }
         }

@@ -99,6 +99,21 @@ export function parsePaginatedIssues(out: string): { number: number; title: stri
 const SUPPORTED_RECEIVER_MARKER_VERSIONS = ["v1"] as const;
 
 /**
+ * Access roles whose credentials can dispatch events to repositories other
+ * than the one the workflow was triggered from (cross-repository-capable).
+ *
+ * The default built-in `GITHUB_TOKEN` is repository-scoped and is NOT in
+ * this set.  Cross-repo audit dispatch requires an explicit PAT, GitHub App
+ * token, or equivalent.
+ */
+export const CROSS_REPO_ALLOWED_ROLES = new Set([
+  "GITHUB_PERSONAL_ACCESS_TOKEN",
+  "GITHUB_APP_USER_AUTHORIZATION",
+  "GITHUB_APP_INSTALLATION_TOKEN",
+  "GITHUB_COPILOT_AGENT_IDENTITY",
+]);
+
+/**
  * Validate the content of an installed process-audit receiver workflow YAML.
  *
  * Extracted as a separate exported function so that it can be tested
@@ -1126,15 +1141,6 @@ export const github = {
     const recorder = recorderRepository ?? repository;
     const { DEFAULT_PROCESS_AUDIT_RECEIVER_WORKFLOW_REF } = await import("../workflows/template-catalog.js");
     const expectedRef = expectedHarnessRef ?? DEFAULT_PROCESS_AUDIT_RECEIVER_WORKFLOW_REF;
-
-    // Access roles that can dispatch events to repositories other than the one
-    // the workflow was triggered from (i.e. cross-repository-capable credentials).
-    const CROSS_REPO_ALLOWED_ROLES = new Set([
-      "GITHUB_PERSONAL_ACCESS_TOKEN",
-      "GITHUB_APP_USER_AUTHORIZATION",
-      "GITHUB_APP_INSTALLATION_TOKEN",
-      "GITHUB_COPILOT_AGENT_IDENTITY",
-    ]);
 
     // Cross-repo check: the default repository-scoped GITHUB_TOKEN cannot
     // dispatch events to a different repository.  Permit cross-repo dispatch
