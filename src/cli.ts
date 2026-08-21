@@ -533,6 +533,14 @@ export async function cmdPersistRunDocumentation(argv: {
    * is rejected when this is the active role).
    */
   auditAccessRole?: string;
+  /**
+   * The exact immutable harness ref (e.g. `abc1234` or `v1.2.3`) that the
+   * installed process-audit receiver workflow must reference.  Passed
+   * directly to `preflightRunDocumentationWriter` so the preflight can
+   * attest the receiver is pinned to the configured ref rather than any
+   * arbitrary or mutable tag/branch.
+   */
+  auditReceiverRef?: string;
   /** For testing only: inject a fake GitHub adapter to avoid live API calls. */
   _githubAdapter?: WriterGithubAdapter;
   /** For testing only: inject a store factory to use an in-memory state store. */
@@ -552,6 +560,7 @@ export async function cmdPersistRunDocumentation(argv: {
   const auditRecorderRepo = argv.auditRecorderRepo ?? repository;
   const auditJournalPath = argv.auditJournalPath ?? "docs/process-audit/journal";
   const auditAccessRole = argv.auditAccessRole;
+  const auditReceiverRef = argv.auditReceiverRef;
 
   const store = argv._storeFactory ? argv._storeFactory(repository, issueNumber) as IssueStateStore : new IssueStateStore(repository, issueNumber);
   let state = await store.load();
@@ -613,7 +622,7 @@ export async function cmdPersistRunDocumentation(argv: {
   // configured audit recorder is reachable. Preflight runs before any state
   // is mutated; a missing capability produces a concrete error. The recorder
   // check is NOT deferred (SPEC-012 §8 / TAC-17 "fehlenden Auditvertrag").
-  await gh.preflightRunDocumentationWriter(repository, branch, auditRecorderRepo, undefined, auditAccessRole);
+  await gh.preflightRunDocumentationWriter(repository, branch, auditRecorderRepo, auditReceiverRef, auditAccessRole);
 
   const harnessVersion = argv.harnessVersion ?? "unknown";
 
@@ -2465,7 +2474,9 @@ const _harnessCli = yargs(hideBin(process.argv))
         .option("harness-version", { type: "string", describe: "Harness version string to embed in the snapshot metadata" })
         .option("audit-recorder-repo", { type: "string", describe: "owner/repo of the REQ-005 audit recorder (default: same as --repository)" })
         .option("audit-journal-path", { type: "string", describe: "Path to the audit journal directory in the recorder repo (default: docs/process-audit/journal)" })
-        .option("audit-access-role", { type: "string", describe: "Access role of the credential used for audit dispatch (e.g. GITHUB_PERSONAL_ACCESS_TOKEN); required when audit-recorder-repo is a different repository" }),
+        .option("audit-access-role", { type: "string", describe: "Access role of the credential used for audit dispatch (e.g. GITHUB_PERSONAL_ACCESS_TOKEN); required when audit-recorder-repo is a different repository" })
+        .option("audit-receiver-ref", { type: "string", describe: "Exact immutable harness ref that the installed process-audit receiver workflow must reference (e.g. a commit SHA or semver tag)" }),
+
     async (argv) =>
       cmdPersistRunDocumentation({
         repository: argv.repository as string,
@@ -2479,6 +2490,7 @@ const _harnessCli = yargs(hideBin(process.argv))
         auditRecorderRepo: argv["audit-recorder-repo"] as string | undefined,
         auditJournalPath: argv["audit-journal-path"] as string | undefined,
         auditAccessRole: argv["audit-access-role"] as string | undefined,
+        auditReceiverRef: argv["audit-receiver-ref"] as string | undefined,
       }),
   )
   .command(

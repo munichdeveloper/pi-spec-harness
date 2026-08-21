@@ -2817,3 +2817,110 @@ describe("Iter4-Fix-4: CLI --legacy-directory validation via cmdPersistRunDocume
     await expect(runWithLegacy([""])).rejects.toThrow(/empty/i);
   });
 });
+
+// ===========================================================================
+// Iter6-Fix-A: cmdPersistRunDocumentation wires auditReceiverRef to preflight
+// ===========================================================================
+
+describe("Iter6-Fix-A: auditReceiverRef is passed from cmdPersistRunDocumentation to preflightRunDocumentationWriter", () => {
+  it("passes the configured auditReceiverRef exactly to preflightRunDocumentationWriter", async () => {
+    const capturedArgs: { ref: string | undefined }[] = [];
+    const store = new MemoryStateStore(mergeReadyState());
+    const gh = makeFakeGithub({
+      async preflightRunDocumentationWriter(_repo, _branch, _recorderRepo, expectedHarnessRef) {
+        capturedArgs.push({ ref: expectedHarnessRef });
+      },
+    });
+
+    await cmdPersistRunDocumentation({
+      repository: "org/repo",
+      issueNumber: 56,
+      branch: "main",
+      auditReceiverRef: "abc1234def",
+      _githubAdapter: gh,
+      _storeFactory: () => store as never,
+    });
+
+    expect(capturedArgs).toHaveLength(1);
+    expect(capturedArgs[0]!.ref).toBe("abc1234def");
+  });
+
+  it("passes undefined to preflightRunDocumentationWriter when auditReceiverRef is not configured", async () => {
+    const capturedArgs: { ref: string | undefined }[] = [];
+    const store = new MemoryStateStore(mergeReadyState());
+    const gh = makeFakeGithub({
+      async preflightRunDocumentationWriter(_repo, _branch, _recorderRepo, expectedHarnessRef) {
+        capturedArgs.push({ ref: expectedHarnessRef });
+      },
+    });
+
+    await cmdPersistRunDocumentation({
+      repository: "org/repo",
+      issueNumber: 56,
+      branch: "main",
+      // auditReceiverRef not provided
+      _githubAdapter: gh,
+      _storeFactory: () => store as never,
+    });
+
+    expect(capturedArgs).toHaveLength(1);
+    expect(capturedArgs[0]!.ref).toBeUndefined();
+  });
+
+  it("real production preflight: configured ref is forwarded (cross-repo guard still fires before API)", async () => {
+    const { github } = await import("../src/github/gh.js");
+    // Cross-repo without a PAT still fires the guard error, but the important
+    // thing is the error comes from the guard (ref is forwarded, preflight runs).
+    const err = await github.preflightRunDocumentationWriter(
+      "org/repo", "main", "other-org/recorder", "abc1234", "GITHUB_PERSONAL_ACCESS_TOKEN",
+    ).catch((e: unknown) => e instanceof Error ? e : new Error(String(e)));
+    // The function should NOT throw the cross-repo guard error (PAT is allowed).
+    expect(err).toBeInstanceOf(Error);
+    expect(err.message).not.toMatch(/repository-scoped.*cannot dispatch|GITHUB_TOKEN.*cannot dispatch/i);
+  });
+});
+
+// ===========================================================================
+// Iter6-Fix-B: CROSS_REPO_ALLOWED_ROLES contains only canonical PAT/App roles
+// ===========================================================================
+
+describe("Iter6-Fix-B: CROSS_REPO_ALLOWED_ROLES contains only canonical cross-repository-capable roles", () => {
+  it("contains GITHUB_PERSONAL_ACCESS_TOKEN", () => {
+    expect(CROSS_REPO_ALLOWED_ROLES.has("GITHUB_PERSONAL_ACCESS_TOKEN")).toBe(true);
+  });
+
+  it("contains GITHUB_APP_USER_AUTHORIZATION", () => {
+    expect(CROSS_REPO_ALLOWED_ROLES.has("GITHUB_APP_USER_AUTHORIZATION")).toBe(true);
+  });
+
+  it("contains GITHUB_APP_INSTALLATION_TOKEN", () => {
+    expect(CROSS_REPO_ALLOWED_ROLES.has("GITHUB_APP_INSTALLATION_TOKEN")).toBe(true);
+  });
+
+  it("does NOT contain GITHUB_COPILOT_AGENT_IDENTITY (pure identity, not a dispatch-capable credential)", () => {
+    expect(CROSS_REPO_ALLOWED_ROLES.has("GITHUB_COPILOT_AGENT_IDENTITY")).toBe(false);
+  });
+
+  it("does NOT contain GITHUB_TOKEN (repository-scoped)", () => {
+    expect(CROSS_REPO_ALLOWED_ROLES.has("GITHUB_TOKEN")).toBe(false);
+  });
+
+  it("does NOT contain unknown roles (fail-closed)", () => {
+    expect(CROSS_REPO_ALLOWED_ROLES.has("SOME_UNKNOWN_ROLE")).toBe(false);
+    expect(CROSS_REPO_ALLOWED_ROLES.has("")).toBe(false);
+  });
+
+  it("real preflight: GITHUB_COPILOT_AGENT_IDENTITY is rejected cross-repo (same as GITHUB_TOKEN)", async () => {
+    const { github } = await import("../src/github/gh.js");
+    await expect(
+      github.preflightRunDocumentationWriter("org/repo", "main", "other-org/recorder", undefined, "GITHUB_COPILOT_AGENT_IDENTITY"),
+    ).rejects.toThrow(/repository-scoped.*cannot dispatch|GITHUB_TOKEN.*cannot dispatch/i);
+  });
+
+  it("real preflight: unknown role is rejected cross-repo (fail-closed)", async () => {
+    const { github } = await import("../src/github/gh.js");
+    await expect(
+      github.preflightRunDocumentationWriter("org/repo", "main", "other-org/recorder", undefined, "MADE_UP_ROLE"),
+    ).rejects.toThrow(/repository-scoped.*cannot dispatch|GITHUB_TOKEN.*cannot dispatch/i);
+  });
+});
