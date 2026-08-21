@@ -12,10 +12,14 @@
  *
  * Outputs the `confirmed_at` timestamp to stdout when found.
  * No field values are interpolated into shell arguments.
+ *
+ * Fail-closed: any file-read error or malformed/non-UTC confirmed_at exits 1
+ * immediately. Files that do not match the idempotency key marker are skipped.
  */
 
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { validateCanonicalUtcTimestamp } from "./process_audit_support.mjs";
 
 const JOURNAL_DIR = process.env["JOURNAL_DIR"] ?? "docs/process-audit/journal";
 const IDEMPOTENCY_KEY = process.env["IDEMPOTENCY_KEY"] ?? "";
@@ -34,16 +38,42 @@ if (!existsSync(JOURNAL_DIR)) {
 }
 
 const marker = `idempotency_key: "${IDEMPOTENCY_KEY}"`;
-const files = readdirSync(JOURNAL_DIR).filter((f) => f.endsWith(".md"));
+let files;
+try {
+  files = readdirSync(JOURNAL_DIR).filter((f) => f.endsWith(".md"));
+} catch (err) {
+  console.error(`::error::Cannot read journal directory '${JOURNAL_DIR}': ${err.message}`);
+  process.exit(1);
+}
 
 for (const name of files) {
-  const content = readFileSync(join(JOURNAL_DIR, name), "utf8");
+  // Fail closed: any read error is fatal (not silently skipped).
+  let content;
+  try {
+    content = readFileSync(join(JOURNAL_DIR, name), "utf8");
+  } catch (err) {
+    console.error(
+      `::error::Cannot read journal file '${JOURNAL_DIR}/${name}': ${err.message} — aborting confirmation.`,
+    );
+    process.exit(1);
+  }
+
   if (content.includes(marker)) {
     const match = content.match(/confirmed_at:\s*"([^"]+)"/);
     if (!match) {
       console.error(
         `::error::Audit journal entry for idempotency_key "${IDEMPOTENCY_KEY}" in '${JOURNAL_DIR}/${name}' ` +
         `is missing the required 'confirmed_at' field — the entry may be incomplete or corrupt.`,
+      );
+      process.exit(1);
+    }
+    // Validate that confirmed_at is a canonical UTC timestamp (SPEC-005 §external-contract).
+    try {
+      validateCanonicalUtcTimestamp(match[1], "confirmed_at");
+    } catch (validationErr) {
+      console.error(
+        `::error::Audit journal entry for idempotency_key "${IDEMPOTENCY_KEY}" in '${JOURNAL_DIR}/${name}' ` +
+        `has an invalid 'confirmed_at' timestamp: ${validationErr.message}`,
       );
       process.exit(1);
     }

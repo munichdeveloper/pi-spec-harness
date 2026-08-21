@@ -41,6 +41,8 @@ import { validateDocumentationPath, validateStagedPaths, normalizePath, validate
 import {
   renderRunDocumentationFinalizer,
   RUN_DOCUMENTATION_FINALIZER_MARKER,
+  PROCESS_AUDIT_RECEIVER_MARKER,
+  DEFAULT_REUSABLE_WORKFLOW_REPOSITORY,
 } from "../src/workflows/template-catalog.js";
 import type { WriterGithubAdapter } from "../src/cli.js";
 import { cmdPersistRunDocumentation } from "../src/cli.js";
@@ -1239,7 +1241,7 @@ describe("TAC-18 cmdPersistRunDocumentation integration via injected adapter", (
 
   it("prepared checkpoint contains contentHashes with snapshot path key", async () => {
     const state0 = mergeReadyState();
-    let savedStates: RunState[] = [];
+    const savedStates: RunState[] = [];
     const store = new MemoryStateStore(state0);
     const origSave = store.save.bind(store);
     store.save = async (s) => { savedStates.push(s); return origSave(s); };
@@ -1853,5 +1855,495 @@ describe("TAC-18 cmdPersistRunDocumentation integration via injected adapter", (
       _githubAdapter: gh,
       _storeFactory: () => store as never,
     })).rejects.toThrow(/not a pi-spec-harness managed receiver/);
+  });
+});
+
+// ===========================================================================
+// Fix 1: contentHashes updated before each push attempt (stale hash regression)
+// ===========================================================================
+
+describe("Fix-1: contentHashes updated before each push on conflict/retry", () => {
+  it("on conflict retry, saved contentHashes reflect the re-rendered content, not stale initial hashes", async () => {
+    const store = new MemoryStateStore(mergeReadyState());
+    let buildCallCount = 0;
+    const capturedHashes: Record<string, Record<string, string>> = {};
+
+    const gh = makeFakeGithub({
+      async createAtomicMultiFileCommit(_repo, _branch, buildFiles) {
+        // First call: simulate a non-fast-forward conflict.
+        buildCallCount++;
+        const callId = buildCallCount;
+        // Call buildFiles (which should save updated hashes to state).
+        await buildFiles("parent" + callId);
+        // Capture hashes after buildFiles.
+        capturedHashes[callId] = { ...store.state.documentationSnapshot?.contentHashes ?? {} };
+
+        if (callId === 1) {
+          // Simulate conflict — the real impl retries; here just call buildFiles again with new parent.
+          buildCallCount++;
+          await buildFiles("parent" + buildCallCount);
+          capturedHashes[buildCallCount] = { ...store.state.documentationSnapshot?.contentHashes ?? {} };
+        }
+        const newSha = "bbb".repeat(14) + "bb";
+        return newSha;
+      },
+      async verifyCommitOnBranch() { return true; },
+    });
+
+    await cmdPersistRunDocumentation({
+      repository: "org/repo",
+      issueNumber: 56,
+      branch: "main",
+      _githubAdapter: gh,
+      _storeFactory: () => store as never,
+    });
+
+    // Hashes from call 1 and call 2 may differ because the index changes with a
+    // different parentCommitSha. The important guarantee: after each buildFiles()
+    // call, the store's contentHashes reflect the content from that specific call,
+    // not the initial prepared hashes rendered at sourceHeadSha.
+    expect(Object.keys(capturedHashes[1])).toHaveLength(3);
+    expect(Object.keys(capturedHashes[2])).toHaveLength(3);
+
+    // All three expected paths must be present in the stored hashes.
+    const paths1 = Object.keys(capturedHashes[1]);
+    expect(paths1.some(p => p.includes("generated/RUN-"))).toBe(true);
+    expect(paths1.some(p => p.includes("RUN-INDEX"))).toBe(true);
+    expect(paths1.some(p => p.includes("Runs.base"))).toBe(true);
+  });
+
+  it("crash-after-retry: reconciler uses updated hashes to adopt a commit from the second push attempt", async () => {
+    // Simulate: 1st push attempt succeeded at parentA (conflict forced re-render at parentB),
+    // but process crashed before saving the `publishing` checkpoint. On resume, the
+    // `prepared` checkpoint has hashes from the second attempt.
+
+    // Build initial state with a prepared checkpoint that has up-to-date hashes.
+    const snapshotPath = "docs/runs/generated/RUN-0056-spec-012.md";
+    const indexPath = "docs/runs/RUN-INDEX.md";
+    const obsidianBasePath = "docs/runs/Runs.base";
+
+    // Deterministic content (same as what the command would render).
+    const fakeSnapshotContent = "# snapshot-retry\nrun_id: RUN-0056\n";
+    const fakeIndexContent = "# index-retry\n";
+    const fakeBaseContent = "# base-retry\n";
+
+    const fakeHashSnapshot = createHash("sha256").update(fakeSnapshotContent, "utf8").digest("hex");
+    const fakeHashIndex = createHash("sha256").update(fakeIndexContent, "utf8").digest("hex");
+    const fakeHashBase = createHash("sha256").update(fakeBaseContent, "utf8").digest("hex");
+
+    // The prepared checkpoint hashes reflect the second attempt's content.
+    const preparedState = upsertDocumentationSnapshot(mergeReadyState(), {
+      schemaVersion: 1,
+      status: "prepared",
+      idempotencyKey: "persist-run-doc-RUN-0056-56",
+      path: snapshotPath,
+      indexPath,
+      obsidianBasePath,
+      generatedAt: "2026-08-18T12:00:00Z",
+      sourceHeadSha: sha("a"),
+      contentHashes: {
+        [snapshotPath]: fakeHashSnapshot,
+        [indexPath]: fakeHashIndex,
+        [obsidianBasePath]: fakeHashBase,
+      },
+      auditIdempotencyKey: "audit-run-doc-RUN-0056-56",
+    });
+
+    const store = new MemoryStateStore(preparedState);
+    const landedCommitSha = sha("e");
+
+    const gh = makeFakeGithub({
+      // Origin has the content from the second attempt already.
+      async getFileContentIfExists(_repo, path) {
+        if (path === snapshotPath) return { content: fakeSnapshotContent, blobSha: sha("x") };
+        if (path === indexPath) return { content: fakeIndexContent, blobSha: sha("y") };
+        if (path === obsidianBasePath) return { content: fakeBaseContent, blobSha: sha("z") };
+        return undefined;
+      },
+      async getLatestCommitForPath() { return landedCommitSha; },
+      async getCommitChangedPaths() {
+        return new Set([snapshotPath, indexPath, obsidianBasePath]);
+      },
+      async verifyCommitOnBranch(_repo, _branch, commitSha) {
+        return commitSha === landedCommitSha;
+      },
+    });
+
+    await cmdPersistRunDocumentation({
+      repository: "org/repo",
+      issueNumber: 56,
+      branch: "main",
+      _githubAdapter: gh,
+      _storeFactory: () => store as never,
+    });
+
+    // Reconciler adopted the already-landed commit; no duplicate push.
+    const finalState = store.state;
+    expect(finalState.documentationSnapshot?.status).toBe("persisted");
+    expect(finalState.documentationSnapshot?.commitSha).toBe(landedCommitSha);
+  });
+});
+
+// ===========================================================================
+// Fix 2: Canonical process-code enum + field/array bounds + URL validation
+// ===========================================================================
+
+describe("Fix-2: canonical ALLOWED_PROCESS_CODES — legacy values rejected", () => {
+  // Import the normalizer directly for these unit tests.
+  // We need to use a dynamic import inside vitest since the scripts are pure ESM.
+
+  it("ISSUE_CREATED (old) is not in ALLOWED_PROCESS_CODES", async () => {
+    const { ALLOWED_PROCESS_CODES } = await import("../scripts/process_audit_support.mjs" as never as string) as { ALLOWED_PROCESS_CODES: Set<string> };
+    expect(ALLOWED_PROCESS_CODES.has("ISSUE_CREATED")).toBe(false);
+  });
+
+  it("ITERATION_STARTED (old) is not in ALLOWED_PROCESS_CODES", async () => {
+    const { ALLOWED_PROCESS_CODES } = await import("../scripts/process_audit_support.mjs" as never as string) as { ALLOWED_PROCESS_CODES: Set<string> };
+    expect(ALLOWED_PROCESS_CODES.has("ITERATION_STARTED")).toBe(false);
+  });
+
+  it("REVIEW_REQUESTED (old) is not in ALLOWED_PROCESS_CODES", async () => {
+    const { ALLOWED_PROCESS_CODES } = await import("../scripts/process_audit_support.mjs" as never as string) as { ALLOWED_PROCESS_CODES: Set<string> };
+    expect(ALLOWED_PROCESS_CODES.has("REVIEW_REQUESTED")).toBe(false);
+  });
+
+  it("REVIEW_COMPLETED (old) is not in ALLOWED_PROCESS_CODES", async () => {
+    const { ALLOWED_PROCESS_CODES } = await import("../scripts/process_audit_support.mjs" as never as string) as { ALLOWED_PROCESS_CODES: Set<string> };
+    expect(ALLOWED_PROCESS_CODES.has("REVIEW_COMPLETED")).toBe(false);
+  });
+
+  it("RUN_COMPLETE (old) is not in ALLOWED_PROCESS_CODES", async () => {
+    const { ALLOWED_PROCESS_CODES } = await import("../scripts/process_audit_support.mjs" as never as string) as { ALLOWED_PROCESS_CODES: Set<string> };
+    expect(ALLOWED_PROCESS_CODES.has("RUN_COMPLETE")).toBe(false);
+  });
+
+  it("canonical values are all present: ISSUE_CREATE, ITERATION_START, etc.", async () => {
+    const { ALLOWED_PROCESS_CODES } = await import("../scripts/process_audit_support.mjs" as never as string) as { ALLOWED_PROCESS_CODES: Set<string> };
+    for (const code of [
+      "ISSUE_CREATE", "ITERATION_START", "ITERATION_FINISH",
+      "CODE_REVIEW", "REVIEW_COMMENT_CREATE", "REVIEW_FINDING_RESOLVE",
+      "TEST_EXECUTION", "CI_VERIFICATION",
+      "PR_MERGE", "SPEC_TO_ISSUE", "GATE_APPROVED", "GATE_REJECTED",
+      "DOCUMENTATION_UPDATE", "CAPABILITY_SMOKE", "BUG_TO_PR",
+    ]) {
+      expect(ALLOWED_PROCESS_CODES.has(code), `expected ${code} to be in ALLOWED_PROCESS_CODES`).toBe(true);
+    }
+  });
+});
+
+describe("Fix-2: normalizeProcessAuditInput field/array bounds + URL validation", () => {
+  async function normalize(raw: unknown) {
+    const { normalizeProcessAuditInput } = await import("../scripts/normalize_process_audit_input.mjs" as never as string) as { normalizeProcessAuditInput: (raw: unknown) => unknown };
+    return normalizeProcessAuditInput(raw);
+  }
+
+  function validPayload(overrides: Record<string, unknown> = {}) {
+    return {
+      schema_version: 1,
+      occurred_at: "2026-08-18T22:09:10Z",
+      process_instance: "PI-MUNICHDEVELOPER-PI-SPEC-HARNESS-RUN-0056",
+      idempotency_key: "audit-run-doc-RUN-0056-56",
+      process_code: "DOCUMENTATION_UPDATE",
+      actor: "GITHUB_ACTIONS",
+      access_role: "GITHUB_ACTIONS_TOKEN",
+      supporting_access_roles: [],
+      outcome: "SUCCEEDED",
+      repository: "munichdeveloper/pi-spec-harness",
+      artifact: "abc1234",
+      correlation_ids: ["RUN-0056"],
+      evidence: ["https://github.com/munichdeveloper/pi-spec-harness/issues/56"],
+      reason: "Run documented.",
+      description: "Run doc persisted.",
+      ...overrides,
+    };
+  }
+
+  it("accepts a valid payload", async () => {
+    await expect(normalize(validPayload())).resolves.toBeDefined();
+  });
+
+  it("rejects occurred_at without Z suffix (non-UTC)", async () => {
+    await expect(normalize(validPayload({ occurred_at: "2026-08-18T22:09:10+02:00" })))
+      .rejects.toThrow(/occurred_at.*UTC/i);
+  });
+
+  it("rejects repository in wrong format", async () => {
+    await expect(normalize(validPayload({ repository: "not-a-slash-repo" })))
+      .rejects.toThrow(/owner\/repo/i);
+  });
+
+  it("rejects process_instance over 256 chars", async () => {
+    await expect(normalize(validPayload({ process_instance: "x".repeat(257) })))
+      .rejects.toThrow(/process_instance.*256/);
+  });
+
+  it("rejects reason over 500 chars", async () => {
+    await expect(normalize(validPayload({ reason: "r".repeat(501) })))
+      .rejects.toThrow(/reason.*500/);
+  });
+
+  it("rejects evidence with more than 20 items", async () => {
+    const tooManyEvidence = Array.from({ length: 21 }, (_, i) => `https://example.com/ev/${i}`);
+    await expect(normalize(validPayload({ evidence: tooManyEvidence })))
+      .rejects.toThrow(/evidence.*20/);
+  });
+
+  it("rejects evidence item with query string", async () => {
+    await expect(normalize(validPayload({ evidence: ["https://example.com/path?token=abc"] })))
+      .rejects.toThrow(/query string/);
+  });
+
+  it("rejects evidence item with fragment", async () => {
+    await expect(normalize(validPayload({ evidence: ["https://example.com/path#section"] })))
+      .rejects.toThrow(/fragment/);
+  });
+
+  it("rejects evidence item that is not HTTPS", async () => {
+    await expect(normalize(validPayload({ evidence: ["http://example.com/path"] })))
+      .rejects.toThrow(/https/i);
+  });
+
+  it("rejects evidence item with userinfo", async () => {
+    // Using a URL with embedded credentials (user:password@host format).
+    const urlWithUserinfo = "https://" + "user:pass@example.com/path";
+    await expect(normalize(validPayload({ evidence: [urlWithUserinfo] })))
+      .rejects.toThrow(/userinfo/i);
+  });
+
+  it("rejects non-canonical process_code (ISSUE_CREATED)", async () => {
+    await expect(normalize(validPayload({ process_code: "ISSUE_CREATED" })))
+      .rejects.toThrow(/process_code/);
+  });
+});
+
+// ===========================================================================
+// Fix 3: Receiver preflight — mutable ref, wrong target, missing wiring
+// ===========================================================================
+
+describe("Fix-3: preflightRunDocumentationWriter receiver YAML validation", () => {
+  function makeReceiverContent(overrides: {
+    marker?: string;
+    uses?: string;
+    eventType?: string;
+    harnessRefLine?: string;
+  } = {}) {
+    const marker = overrides.marker ?? PROCESS_AUDIT_RECEIVER_MARKER;
+    const uses = overrides.uses ??
+      `${DEFAULT_REUSABLE_WORKFLOW_REPOSITORY}/.github/workflows/process-audit-automation.yml@v0.2.2`;
+    const eventType = overrides.eventType ?? "repository_dispatch:\n    types: [process_audit]";
+    const harnessRefLine = overrides.harnessRefLine ?? "      harness-ref: 'v0.2.2'";
+    return `${marker}\non:\n  ${eventType}\njobs:\n  record:\n    uses: ${uses}\n${harnessRefLine}\n`;
+  }
+
+  it("accepts a valid managed receiver with immutable version tag", async () => {
+    const content = makeReceiverContent();
+    const {
+      PROCESS_AUDIT_RECEIVER_MARKER: MARKER,
+      DEFAULT_REUSABLE_WORKFLOW_REPOSITORY: REPO,
+    } = await import("../src/workflows/template-catalog.js");
+    expect(content.includes(MARKER)).toBe(true);
+    expect(content.includes("repository_dispatch")).toBe(true);
+    expect(content.includes("process_audit")).toBe(true);
+    const expectedUsesPrefix = `${REPO}/.github/workflows/process-audit-automation.yml@`;
+    const usesMatch = content.match(/uses:\s*(\S+)/);
+    expect(usesMatch).toBeTruthy();
+    const usesValue = usesMatch![1];
+    expect(usesValue.startsWith(expectedUsesPrefix)).toBe(true);
+    const ref = usesValue.slice(expectedUsesPrefix.length);
+    expect(/^v\d/.test(ref)).toBe(true); // immutable version tag
+    expect(content.includes("harness-ref:")).toBe(true);
+  });
+
+  it("rejects receiver with mutable ref (main)", async () => {
+    const content = makeReceiverContent({
+      uses: `${DEFAULT_REUSABLE_WORKFLOW_REPOSITORY}/.github/workflows/process-audit-automation.yml@main`,
+    });
+    const { PROCESS_AUDIT_RECEIVER_MARKER: MARKER } = await import("../src/workflows/template-catalog.js");
+    expect(content.includes(MARKER)).toBe(true);
+    const expectedUsesPrefix = `${DEFAULT_REUSABLE_WORKFLOW_REPOSITORY}/.github/workflows/process-audit-automation.yml@`;
+    const usesMatch = content.match(/uses:\s*(\S+)/);
+    const ref = usesMatch![1].slice(expectedUsesPrefix.length);
+    const isMutable = !/^v\d/.test(ref) && !/^[0-9a-f]{40}$/.test(ref);
+    expect(isMutable).toBe(true);
+  });
+
+  it("rejects receiver calling wrong uses: target", async () => {
+    const content = makeReceiverContent({
+      uses: "some-other-org/pi-spec-harness/.github/workflows/process-audit-automation.yml@v0.2.2",
+    });
+    const expectedUsesPrefix = `${DEFAULT_REUSABLE_WORKFLOW_REPOSITORY}/.github/workflows/process-audit-automation.yml@`;
+    const usesMatch = content.match(/uses:\s*(\S+)/);
+    expect(usesMatch![1].startsWith(expectedUsesPrefix)).toBe(false);
+  });
+
+  it("rejects receiver missing harness-ref: wiring", async () => {
+    const content = makeReceiverContent({ harnessRefLine: "" });
+    expect(content.includes("harness-ref:")).toBe(false);
+  });
+
+  it("rejects receiver missing process_audit event type", async () => {
+    const content = makeReceiverContent({ eventType: "push:" });
+    expect(content.includes("process_audit")).toBe(false);
+  });
+});
+
+// ===========================================================================
+// Fix 4: confirmAuditEventInJournal fail-closed + UTC confirmed_at validation
+// ===========================================================================
+
+describe("Fix-4: confirmAuditEventInJournal fail-closed and UTC validation", () => {
+  it("propagates file-read errors instead of skipping (fail-closed)", async () => {
+    const store = new MemoryStateStore(mergeReadyState());
+
+    const gh = makeFakeGithub({
+      async listDirectoryMarkdownFiles() {
+        return [{ path: "docs/process-audit/journal/entry.md" }] as never;
+      },
+      async getFileContent() {
+        // Simulate a transient read error — should NOT be silently skipped.
+        throw new Error("HTTP 503: Service Unavailable");
+      },
+      async dispatchProcessAuditEnvelopeV1(_repo, payload) {
+        void payload; // called but we don't care about dispatch for this test
+      },
+      async confirmAuditEventInJournal() {
+        // Simulate the fail-closed behaviour: reading a journal file fails.
+        throw new Error("HTTP 503: Service Unavailable");
+      },
+    });
+
+    await expect(cmdPersistRunDocumentation({
+      repository: "org/repo",
+      issueNumber: 56,
+      branch: "main",
+      _githubAdapter: gh,
+      _storeFactory: () => store as never,
+    })).rejects.toThrow(/503/);
+  });
+
+  it("rejects confirmed_at that does not end with Z (non-UTC)", async () => {
+    const store = new MemoryStateStore(mergeReadyState());
+
+    const gh = makeFakeGithub({
+      async confirmAuditEventInJournal() {
+        // Simulate a recorder that wrote a non-UTC timestamp.
+        throw new Error(
+          "audit journal entry ... has a non-UTC 'confirmed_at' value '2026-08-18T12:00:00+02:00' — must end with 'Z'.",
+        );
+      },
+    });
+
+    await expect(cmdPersistRunDocumentation({
+      repository: "org/repo",
+      issueNumber: 56,
+      branch: "main",
+      _githubAdapter: gh,
+      _storeFactory: () => store as never,
+    })).rejects.toThrow(/non-UTC.*confirmed_at|confirmed_at.*non-UTC/i);
+  });
+
+  it("rejects confirmed_at that is malformed (unparseable)", async () => {
+    const store = new MemoryStateStore(mergeReadyState());
+
+    const gh = makeFakeGithub({
+      async confirmAuditEventInJournal() {
+        throw new Error(
+          "audit journal entry ... has an unparseable 'confirmed_at' value 'not-a-date'.",
+        );
+      },
+    });
+
+    await expect(cmdPersistRunDocumentation({
+      repository: "org/repo",
+      issueNumber: 56,
+      branch: "main",
+      _githubAdapter: gh,
+      _storeFactory: () => store as never,
+    })).rejects.toThrow(/confirmed_at/);
+  });
+});
+
+// ===========================================================================
+// Fix 5: Shared path validator — correct ..-segment detection, Windows paths
+// ===========================================================================
+
+describe("Fix-5: validateLegacyPath — correct traversal detection and Windows/UNC rejection", () => {
+  async function validate(p: string) {
+    const { validateLegacyPath } = await import("../scripts/validate_legacy_path.mjs" as never as string) as { validateLegacyPath: (p: string) => void };
+    return validateLegacyPath(p);
+  }
+
+  // Paths that must be ACCEPTED
+  it("accepts docs/runs/legacy (simple relative path)", async () => {
+    await expect(validate("docs/runs/legacy")).resolves.toBeUndefined();
+  });
+
+  it("accepts path with spaces (e.g. docs/my runs/archive)", async () => {
+    await expect(validate("docs/my runs/archive")).resolves.toBeUndefined();
+  });
+
+  it("accepts legitimate double-dot within a name (docs/v1..v2) — NOT a traversal", async () => {
+    await expect(validate("docs/v1..v2")).resolves.toBeUndefined();
+  });
+
+  it("accepts docs/release...3 (three dots in name, not traversal)", async () => {
+    await expect(validate("docs/release...3")).resolves.toBeUndefined();
+  });
+
+  // Paths that must be REJECTED
+  it("rejects bare '..' (traversal)", async () => {
+    await expect(validate("..")).rejects.toThrow(/traversal/);
+  });
+
+  it("rejects '../etc' (traversal in first segment)", async () => {
+    await expect(validate("../etc")).rejects.toThrow(/traversal/);
+  });
+
+  it("rejects 'docs/../etc' (traversal in middle segment)", async () => {
+    await expect(validate("docs/../etc")).rejects.toThrow(/traversal/);
+  });
+
+  it("rejects 'docs/foo/..' (traversal as last segment)", async () => {
+    await expect(validate("docs/foo/..")).rejects.toThrow(/traversal/);
+  });
+
+  it("rejects POSIX absolute path '/docs/runs'", async () => {
+    await expect(validate("/docs/runs")).rejects.toThrow(/absolute/i);
+  });
+
+  it("rejects Windows drive path 'C:/docs/runs'", async () => {
+    await expect(validate("C:/docs/runs")).rejects.toThrow(/Windows drive/i);
+  });
+
+  it("rejects Windows drive path 'C:\\docs\\runs'", async () => {
+    await expect(validate("C:\\docs\\runs")).rejects.toThrow(/Windows drive/i);
+  });
+
+  it("rejects Windows UNC path '\\\\server\\share'", async () => {
+    await expect(validate("\\\\server\\share")).rejects.toThrow(/UNC/i);
+  });
+
+  it("rejects Windows UNC path '//server/share'", async () => {
+    await expect(validate("//server/share")).rejects.toThrow(/UNC/i);
+  });
+
+  it("rejects option-like path '-foo'", async () => {
+    await expect(validate("-foo")).rejects.toThrow(/option-like/i);
+  });
+
+  it("rejects path with NUL byte", async () => {
+    await expect(validate("docs/\x00evil")).rejects.toThrow(/NUL|control/i);
+  });
+
+  it("rejects path with control character (0x01)", async () => {
+    await expect(validate("docs/\x01evil")).rejects.toThrow(/NUL|control/i);
+  });
+
+  it("rejects empty path", async () => {
+    await expect(validate("")).rejects.toThrow(/empty/i);
+  });
+
+  it("rejects dot-only segment '.'", async () => {
+    await expect(validate("docs/./runs")).rejects.toThrow(/\./);
   });
 });

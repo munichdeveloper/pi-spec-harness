@@ -1008,6 +1008,33 @@ export async function cmdPersistRunDocumentation(argv: {
         const indexContent = generateRunIndex(allEntries, generatedAt);
         const obsidianContent = generateObsidianBase(allEntries, generatedAt);
 
+        // SPEC-012 Fix 1: persist updated contentHashes BEFORE each push
+        // attempt. On conflict/retry the index/base bytes may differ from the
+        // hashes saved in the `prepared` checkpoint (because buildFiles() is
+        // re-invoked with the new parentCommitSha). Without updating the
+        // checkpoint here, a crash-after-push scenario on the second+ attempt
+        // would leave the reconciler comparing origin bytes against stale
+        // prepared hashes, causing it to reject the correctly landed commit and
+        // create a duplicate.
+        const updatedHashes: Record<string, string> = {
+          [snapshotPath]: createHash("sha256").update(snapshotContent, "utf8").digest("hex"),
+          [indexPath]: createHash("sha256").update(indexContent, "utf8").digest("hex"),
+          [obsidianBasePath]: createHash("sha256").update(obsidianContent, "utf8").digest("hex"),
+        };
+        state = upsertDocumentationSnapshot(state, {
+          schemaVersion: 1,
+          status: "prepared",
+          idempotencyKey,
+          path: snapshotPath,
+          indexPath,
+          obsidianBasePath,
+          generatedAt,
+          sourceHeadSha,
+          contentHashes: updatedHashes,
+          auditIdempotencyKey,
+        });
+        await store.save(state);
+
         return [
           { path: snapshotPath, content: snapshotContent },
           { path: indexPath, content: indexContent },

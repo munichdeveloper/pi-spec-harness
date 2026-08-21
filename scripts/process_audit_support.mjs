@@ -10,15 +10,20 @@
  * SPEC-005 §external-contract / §security.
  */
 
+import { URL } from "node:url";
+
 // ---------------------------------------------------------------------------
 // Canonical enum sets (SPEC-005 §external-contract)
 // ---------------------------------------------------------------------------
 
 /**
  * Canonical set of allowed `process_code` values.
- * Each value represents a traceable step in the PI spec lifecycle.
+ *
+ * Mirrors the full docs/50-quality/process-audit/enums/process-step.md set.
+ * No legacy aliases are maintained here — callers must use the canonical form.
  */
 export const ALLOWED_PROCESS_CODES = new Set([
+  // Harness lifecycle steps
   "PR_MERGE",
   "SPEC_TO_ISSUE",
   "GATE_APPROVED",
@@ -26,11 +31,17 @@ export const ALLOWED_PROCESS_CODES = new Set([
   "DOCUMENTATION_UPDATE",
   "CAPABILITY_SMOKE",
   "BUG_TO_PR",
-  "ISSUE_CREATED",
-  "ITERATION_STARTED",
-  "REVIEW_REQUESTED",
-  "REVIEW_COMPLETED",
-  "RUN_COMPLETE",
+  // Issue / iteration lifecycle
+  "ISSUE_CREATE",
+  "ITERATION_START",
+  "ITERATION_FINISH",
+  // Review workflow
+  "CODE_REVIEW",
+  "REVIEW_COMMENT_CREATE",
+  "REVIEW_FINDING_RESOLVE",
+  // Quality / CI
+  "TEST_EXECUTION",
+  "CI_VERIFICATION",
 ]);
 
 /**
@@ -166,8 +177,80 @@ export function rejectSecretsInArray(arr, fieldName) {
 }
 
 // ---------------------------------------------------------------------------
-// Timestamp normalisation (SPEC-005 §external-contract)
+// Field and array bounds (SPEC-005 §external-contract)
 // ---------------------------------------------------------------------------
+
+/**
+ * Maximum byte length for scalar string fields.
+ * @type {Record<string, number>}
+ */
+export const FIELD_MAX_LENGTHS = {
+  process_instance: 256,
+  idempotency_key: 256,
+  actor: 128,
+  access_role: 128,
+  process_code: 64,
+  outcome: 64,
+  repository: 256,
+  artifact: 1024,
+  reason: 500,
+  description: 2000,
+};
+
+/**
+ * Maximum element counts for array fields.
+ * @type {Record<string, number>}
+ */
+export const ARRAY_MAX_LENGTHS = {
+  supporting_access_roles: 10,
+  correlation_ids: 20,
+  evidence: 20,
+};
+
+/**
+ * Maximum byte length for each element in an array field.
+ * @type {Record<string, number>}
+ */
+export const ARRAY_ELEMENT_MAX_LENGTHS = {
+  supporting_access_roles: 128,
+  correlation_ids: 256,
+  evidence: 2048,
+};
+
+// ---------------------------------------------------------------------------
+// Timestamp normalisation and validation (SPEC-005 §external-contract)
+// ---------------------------------------------------------------------------
+
+/**
+ * Validate that a string is a canonical ISO 8601 UTC timestamp (ends with `Z`,
+ * parseable by `new Date()`, and round-trips to the same ISO string).
+ *
+ * @param {string} value  The timestamp string to validate.
+ * @param {string} fieldName  Name used in error messages.
+ * @returns {string}  The canonical UTC form (`YYYY-MM-DDTHH:mm:ss.sssZ`).
+ * @throws {Error}  If the timestamp is not valid canonical UTC.
+ */
+export function validateCanonicalUtcTimestamp(value, fieldName) {
+  if (typeof value !== "string") {
+    throw new Error(
+      `SPEC-005 validation failed: '${fieldName}' must be a string, got ${typeof value}.`,
+    );
+  }
+  // Must end with Z (strict UTC; no offset notation like +00:00 accepted).
+  if (!value.endsWith("Z")) {
+    throw new Error(
+      `SPEC-005 validation failed: '${fieldName}' must be a canonical UTC timestamp ending with 'Z', ` +
+      `got '${value}'.`,
+    );
+  }
+  const d = new Date(value);
+  if (isNaN(d.getTime())) {
+    throw new Error(
+      `SPEC-005 validation failed: '${fieldName}' is not a valid ISO 8601 timestamp: '${value}'.`,
+    );
+  }
+  return d.toISOString(); // canonical form e.g. "2026-08-18T22:09:10.972Z"
+}
 
 /**
  * Normalise an ISO 8601 timestamp to the compact filename-safe form used for
@@ -179,6 +262,74 @@ export function rejectSecretsInArray(arr, fieldName) {
  */
 export function normalizeTimestampForFilename(isoTs) {
   return isoTs.replace(/[-:]/g, "").replace(/\.\d+Z$/, "Z");
+}
+
+// ---------------------------------------------------------------------------
+// Repository, artifact, and evidence URL validation (SPEC-005 §external-contract)
+// ---------------------------------------------------------------------------
+
+/**
+ * Validate a `repository` field: must match `owner/repo` with no slashes in
+ * either component, no whitespace, and no URL scheme prefix.
+ *
+ * @param {string} value  The repository string to validate.
+ * @param {string} fieldName  Name used in error messages.
+ */
+export function validateRepositoryFormat(value, fieldName) {
+  if (!/^[A-Za-z0-9._-]{1,100}\/[A-Za-z0-9._-]{1,100}$/.test(value)) {
+    throw new Error(
+      `SPEC-005 validation failed: '${fieldName}' must be in 'owner/repo' format ` +
+      `(only alphanumeric, dot, hyphen, underscore; max 100 chars per component), ` +
+      `got '${value}'.`,
+    );
+  }
+}
+
+/**
+ * Validate an evidence URL: must be HTTPS, no userinfo component, no query
+ * string, and no fragment. These restrictions prevent leaking secrets in URLs
+ * and ensure evidence remains stable references.
+ *
+ * @param {string} value  The URL to validate.
+ * @param {string} fieldName  Name used in error messages (e.g. "evidence[0]").
+ */
+export function validateEvidenceUrl(value, fieldName) {
+  // Detect userinfo (user:pass@host) before calling new URL() — newer URL
+  // parsers (Node.js ≥ 22) reject userinfo and throw "Invalid URL", which
+  // would produce a misleading "is not a valid URL" error instead.
+  if (/^https?:\/\/[^/]*@/.test(value)) {
+    throw new Error(
+      `SPEC-005 validation failed: '${fieldName}' must not contain userinfo (username/password) in the URL.`,
+    );
+  }
+  let url;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new Error(
+      `SPEC-005 validation failed: '${fieldName}' is not a valid URL: '${value}'.`,
+    );
+  }
+  if (url.protocol !== "https:") {
+    throw new Error(
+      `SPEC-005 validation failed: '${fieldName}' must use the https: scheme, got '${url.protocol}'.`,
+    );
+  }
+  if (url.username || url.password) {
+    throw new Error(
+      `SPEC-005 validation failed: '${fieldName}' must not contain userinfo (username/password): '${value}'.`,
+    );
+  }
+  if (url.search) {
+    throw new Error(
+      `SPEC-005 validation failed: '${fieldName}' must not contain a query string: '${value}'.`,
+    );
+  }
+  if (url.hash) {
+    throw new Error(
+      `SPEC-005 validation failed: '${fieldName}' must not contain a fragment: '${value}'.`,
+    );
+  }
 }
 
 // ---------------------------------------------------------------------------

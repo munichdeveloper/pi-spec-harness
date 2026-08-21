@@ -61,33 +61,14 @@ jobs:
           LEGACY_DIRS_JSON: ${{ inputs.legacy-directories }}
         run: |
           # Parse JSON array and build validated Bash array of --legacy-directory args.
-          # Rejects: absolute paths, traversal (contains ..), empty strings,
-          # control characters, and option-like values (start with -).
+          # Validation is delegated to the shared Node.js validate_legacy_path.mjs module,
+          # which correctly handles '..' traversal segments, Windows paths, spaces, and
+          # legitimate double-dot names (e.g. docs/v1..v2) that the old bash *..* glob
+          # incorrectly rejected.
           legacy_args=()
           while IFS= read -r -d $'\0' dir; do
-            # Reject empty
-            if [ -z "$dir" ]; then
-              echo "::error::legacy-directories: empty path element rejected" >&2
-              exit 1
-            fi
-            # Reject absolute paths
-            if [[ "$dir" == /* ]]; then
-              echo "::error::legacy-directories: absolute path rejected: $dir" >&2
-              exit 1
-            fi
-            # Reject traversal
-            if [[ "$dir" == *..* ]]; then
-              echo "::error::legacy-directories: path traversal rejected: $dir" >&2
-              exit 1
-            fi
-            # Reject option-like values (start with -)
-            if [[ "$dir" == -* ]]; then
-              echo "::error::legacy-directories: option-like path rejected: $dir" >&2
-              exit 1
-            fi
-            # Reject control characters (non-printable ASCII)
-            if [[ "$dir" =~ [[:cntrl:]] ]]; then
-              echo "::error::legacy-directories: control characters in path rejected" >&2
+            # Delegate to shared Node.js validator (fail-closed: exits 1 on any violation).
+            if ! node .pi-spec-harness/scripts/validate_legacy_path.mjs "$dir"; then
               exit 1
             fi
             legacy_args+=(--legacy-directory "$dir")

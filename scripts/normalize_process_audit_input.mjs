@@ -17,8 +17,14 @@ import {
   ALLOWED_OUTCOMES,
   ALLOWED_ACTORS,
   ALLOWED_ACCESS_ROLES,
+  FIELD_MAX_LENGTHS,
+  ARRAY_MAX_LENGTHS,
+  ARRAY_ELEMENT_MAX_LENGTHS,
   rejectSecrets,
   rejectSecretsInArray,
+  validateCanonicalUtcTimestamp,
+  validateRepositoryFormat,
+  validateEvidenceUrl,
 } from "./process_audit_support.mjs";
 
 // Re-export canonical enums so importers can validate/display the allowed sets
@@ -50,7 +56,7 @@ export function normalizeProcessAuditInput(raw) {
     );
   }
 
-  // --- required string fields -----------------------------------------------
+  // --- required string fields (presence + non-empty + secret scan) ----------
   const stringFields = [
     "occurred_at",
     "process_instance",
@@ -72,16 +78,20 @@ export function normalizeProcessAuditInput(raw) {
       );
     }
     rejectSecrets(val, field);
+    // Per-field maximum length
+    const maxLen = FIELD_MAX_LENGTHS[field];
+    if (maxLen !== undefined && val.length > maxLen) {
+      throw new Error(
+        `SPEC-005 validation failed: '${field}' must not exceed ${maxLen} characters (got ${val.length}).`,
+      );
+    }
   }
 
-  // --- occurred_at: must be ISO 8601 UTC -----------------------------------
-  const occurredAt = raw["occurred_at"];
-  const parsedDate = new Date(occurredAt);
-  if (isNaN(parsedDate.getTime())) {
-    throw new Error(
-      `SPEC-005 validation failed: 'occurred_at' is not a valid ISO 8601 timestamp: ${JSON.stringify(occurredAt)}.`,
-    );
-  }
+  // --- occurred_at: canonical UTC -------------------------------------------
+  validateCanonicalUtcTimestamp(raw["occurred_at"], "occurred_at");
+
+  // --- repository: must be owner/repo format --------------------------------
+  validateRepositoryFormat(raw["repository"], "repository");
 
   // --- enum fields ----------------------------------------------------------
   if (!ALLOWED_PROCESS_CODES.has(raw["process_code"])) {
@@ -119,13 +129,35 @@ export function normalizeProcessAuditInput(raw) {
   if (!Array.isArray(raw["evidence"])) {
     throw new Error("SPEC-005 validation failed: 'evidence' must be an array.");
   }
+
+  // Array length bounds
+  for (const [field, maxCount] of Object.entries(ARRAY_MAX_LENGTHS)) {
+    if (Array.isArray(raw[field]) && raw[field].length > maxCount) {
+      throw new Error(
+        `SPEC-005 validation failed: '${field}' must not have more than ${maxCount} elements (got ${raw[field].length}).`,
+      );
+    }
+  }
+
   rejectSecretsInArray(raw["supporting_access_roles"], "supporting_access_roles");
   rejectSecretsInArray(raw["correlation_ids"], "correlation_ids");
   rejectSecretsInArray(raw["evidence"], "evidence");
 
-  // Each element of supporting_access_roles must be a known access-role enum
-  // value (not just a safe string). This prevents arbitrary strings from
-  // bypassing the access-role contract. SPEC-005 §external-contract.
+  // Per-element length bounds
+  for (const field of ["supporting_access_roles", "correlation_ids", "evidence"]) {
+    const maxElemLen = ARRAY_ELEMENT_MAX_LENGTHS[field];
+    if (maxElemLen === undefined) continue;
+    for (let i = 0; i < raw[field].length; i++) {
+      const elem = raw[field][i];
+      if (typeof elem === "string" && elem.length > maxElemLen) {
+        throw new Error(
+          `SPEC-005 validation failed: '${field}[${i}]' must not exceed ${maxElemLen} characters (got ${elem.length}).`,
+        );
+      }
+    }
+  }
+
+  // Each element of supporting_access_roles must be a known access-role enum value.
   for (const role of raw["supporting_access_roles"]) {
     if (typeof role !== "string" || !ALLOWED_ACCESS_ROLES.has(role)) {
       throw new Error(
@@ -133,6 +165,26 @@ export function normalizeProcessAuditInput(raw) {
         `Each element must be one of [${[...ALLOWED_ACCESS_ROLES].join(", ")}].`,
       );
     }
+  }
+
+  // Each element of correlation_ids must be a string
+  for (let i = 0; i < raw["correlation_ids"].length; i++) {
+    if (typeof raw["correlation_ids"][i] !== "string") {
+      throw new Error(
+        `SPEC-005 validation failed: 'correlation_ids[${i}]' must be a string.`,
+      );
+    }
+  }
+
+  // Evidence items must be valid HTTPS URLs without userinfo/query/fragment.
+  for (let i = 0; i < raw["evidence"].length; i++) {
+    const item = raw["evidence"][i];
+    if (typeof item !== "string") {
+      throw new Error(
+        `SPEC-005 validation failed: 'evidence[${i}]' must be a string.`,
+      );
+    }
+    validateEvidenceUrl(item, `evidence[${i}]`);
   }
 
   // --- no extra top-level fields that could smuggle data --------------------
