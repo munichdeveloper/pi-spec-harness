@@ -6,7 +6,7 @@ status: draft
 owner: product
 risk: medium
 created: 2026-08-13
-updated: 2026-08-13
+updated: 2026-08-23
 ---
 
 # REQ-011: Deterministischer Stall-Watchdog für hängende Runs
@@ -16,16 +16,16 @@ updated: 2026-08-13
 Ein Run kann hängen bleiben, ohne dass ein Mensch es bemerkt: Ein
 `workflow_dispatch` schlägt fehl, ein Event geht verloren, ein Agent wird nie
 zugewiesen, oder eine erwartete automatische Aktion (z. B. `agent-assign`)
-wurde schlicht nie ausgelöst. Der bestehende `harness reconcile`-Befehl
-erkennt und heilt ausschließlich verpasste Gate-Label-Events
-(`needsGateReconciliation`); er prüft nicht, ob eine erwartete automatische
-Aktion für einen bereiten, nicht blockierten Run überhaupt jemals gestartet
-wurde. Ohne aktive Chat-Sitzung bleibt ein solcher Run unbemerkt liegen, bis
-ein Mensch zufällig nachschaut.
+wurde schlicht nie ausgelöst. Der bestehende `harness reconcile`-Befehl heilt
+verpasste Gate-, Merge- und Dokumentationsfortsetzungen, erkennt aber nicht,
+ob eine erwartete automatische Aktion für einen bereiten, nicht blockierten
+Run überhaupt jemals gestartet wurde. Ohne aktive Chat-Sitzung bleibt ein
+solcher Run unbemerkt liegen, bis ein Mensch zufällig nachschaut.
 
-Es existiert aktuell kein zeitgesteuerter (`schedule`-getriggerter)
-Workflow im Harness. Jede bestehende Automation reagiert ausschließlich auf
-GitHub-Events.
+Der Harness besitzt inzwischen einen vertrauenswürdigen, zeitgesteuerten
+Reconcile-Lauf. Dessen deterministischer Sweep soll um die klar getrennte
+Stall-Erkennung ergänzt werden; ein zweiter konkurrierender Scheduler ist
+nicht erforderlich.
 
 ## Nutzer-Outcome
 
@@ -44,7 +44,7 @@ Harness-Automation (REQ-005).
   periodisch ausschließlich ein deterministisches Prüfskript auf. Das
   Skript enthält keinen KI-/LLM-Aufruf und benötigt keine offene
   Chat-Sitzung.
-- AC-02: Das Prüfskript untersucht repoweit alle offenen
+- AC-02: Das Prüfskript untersucht repo-weit alle offenen
   Tracking-Issues (`harness:run`) und bestimmt für jeden Run rein
   regelbasiert, ob eine automatische Folgeaktion überfällig ist.
 - AC-03: Ein Run gilt nur dann als "hängend", wenn (a) seine Phase eine
@@ -88,8 +88,8 @@ Harness-Automation (REQ-005).
   vorhandene GitHub-Actions-`schedule`-Fähigkeit),
 - erneutes Anstoßen bereits abgeschlossener (`complete`) oder bereits
   eskalierter Runs,
-- Ersatz von `harness reconcile` (Gate-Label-Nachholung bleibt dessen
-  alleinige Zuständigkeit).
+- Ersatz oder Duplizierung von `harness reconcile`; der Watchdog ergänzt den
+  bestehenden Sweep nur um überfällige automatische Aktionen.
 
 ## Abhängigkeiten
 
@@ -97,6 +97,8 @@ Harness-Automation (REQ-005).
   einzige Quelle für "welche automatische Aktion ist als Nächstes fällig",
 - bestehende Wiederholungs-/Eskalationslogik aus REQ-001,
 - bestehender Agentenzuweisungs-Pfad (`harness agent-assign`, REQ-003),
+- aktueller, verifizierbarer GitHub-Copilot-Assignment-Vertrag und sichere
+  Reconciliation aus Issue #62,
 - installierbarer Workflow-Vorlagen-Katalog aus REQ-006/SPEC-006,
 - verlustsicherer Prozess-Audit-Mechanismus aus REQ-005.
 

@@ -9,7 +9,7 @@ requirements:
   - REQ-011
 implementation_assignee: "@github-copilot"
 created: 2026-08-13
-updated: 2026-08-13
+updated: 2026-08-23
 ---
 
 # SPEC-011: Deterministischer Stall-Watchdog für hängende Runs
@@ -18,7 +18,7 @@ updated: 2026-08-13
 
 Ein neuer, `schedule`-getriggerter Workflow ruft periodisch ausschließlich
 einen deterministischen CLI-Befehl (`harness watchdog-scan`) auf. Dieser
-Befehl enthält keinen KI-Aufruf, scannt repoweit alle offenen
+Befehl enthält keinen KI-Aufruf, scannt repo-weit alle offenen
 Tracking-Issues und erkennt rein regelbasiert, für welche Runs eine
 automatische Folgeaktion überfällig ist. Nur für tatsächlich erkannte,
 hängende Runs löst der Befehl eine bereits bestehende, begrenzte Automation
@@ -50,15 +50,18 @@ ein `StalledRunFinding`, wenn **alle** zutreffen:
 2. Es existiert kein Gate mit `type === "human"` und `result === "pending"`
    auf diesem Run (offene menschliche Gates blockieren den Watchdog
    vollständig — AC-04).
-3. `needsGateReconciliation(state)` ist `false`. Ist es `true`, gehört der
-   Run in die Zuständigkeit von `harness reconcile`, nicht des Watchdogs
-   (klare Abgrenzung, kein überlappendes Verhalten).
+3. Weder `needsGateReconciliation(state)` noch
+   `needsDeliveryMergeReconciliation(state)` ist wahr. Auch
+   `computeNextAction(state).action === "persist-run-documentation"` schließt
+   einen Watchdog-Fund aus. Diese Zustände gehören zum bestehenden
+   `harness reconcile`-Sweep.
 4. Die Phase erwartet eine bekannte, deterministisch benennbare
    automatische Aktion (initial ausschließlich: `phase === "implementation"`
-   und `agent-assign` wurde noch nicht erfolgreich verifiziert — erkennbar
-   an fehlendem `implementationPullRequest` und einem nicht
-   `passed`-Gate `agent-assign-unavailable`/`agent-assign-unverified`
-   sofern vorhanden, sonst schlicht Abwesenheit jeder Assign-Evidenz).
+   und `agent-assign` wurde noch nicht erfolgreich verifiziert. Die dafür
+   maßgebliche Assignment-Evidenz wird durch Issue #62 kanonisch definiert;
+   ein offenes `agent-assign-unavailable`- oder
+   `agent-assign-unverified`-Human-Gate schließt den Run bereits nach Regel 2
+   aus und darf niemals durch den Watchdog umgangen werden.
 5. `now - state.updatedAt >= staleAfterMinutes` (Minutenvergleich auf
    ISO-8601-Zeitstempeln).
 6. Die Anzahl bisheriger Watchdog-Anstöße für **diese konkrete Aktion**
@@ -130,8 +133,9 @@ Neuer Befehl `harness watchdog-scan --repository <owner/repo>
       - cron: "*/30 * * * *"
     workflow_dispatch: {}
   ```
-  Damit ist dies der erste `schedule`-getriggerte Eintrag im Katalog; alle
-  übrigen Einträge bleiben rein eventgetrieben.
+  Im Harness-eigenen Repository kann derselbe Befehl im bereits vorhandenen
+  vertrauenswürdigen Reconcile-Schedule laufen. Zielrepositories erhalten den
+  Schedule ausschließlich über diese explizit installierte Vorlage.
 - Berechtigungen minimal: `issues: write` (State- und Gate-Updates),
   `contents: read` (Checkout). Kein `contents: write`, kein
   `secrets: inherit` (Lehre aus PR #31, siehe Betriebshinweis unten).
@@ -144,9 +148,11 @@ Neuer Befehl `harness watchdog-scan --repository <owner/repo>
 Nur ein tatsächlicher Anstoß (nicht jeder Scan-Lauf ohne Befund) erzeugt
 ein Audit-Ereignis, um Spam zu vermeiden:
 
-- Akteur: `harness-watchdog`,
-- Rolle: `system-scheduled`,
-- Prozesskennung: Run-ID,
+- Prozesskennung: `PROCESS_RECONCILIATION` für Erkennung/Eskalation und
+  `AGENT_ASSIGNMENT` für den tatsächlichen Anstoß,
+- Akteur: `GITHUB_ACTIONS`,
+- Zugriffsrolle: `GITHUB_ACTIONS_TOKEN`,
+- Prozessinstanz: qualifizierte Run-ID,
 - Begründung: konkreter überschrittener Schwellwert (Phase, Minuten seit
   `updatedAt`, `actionKey`),
 - Ergebnis: `dispatched` / `already-in-progress` / `failed`,
@@ -157,12 +163,11 @@ Audit-Ereignis mit Ergebnis `escalated`.
 
 ### 6. Abgrenzung zu `harness reconcile`
 
-`reconcile` bleibt ausschließlich für `needsGateReconciliation` (verpasste
-Gate-Label-Events) zuständig. `watchdog-scan` prüft Runs mit
-`needsGateReconciliation(state) === false` — beide Befehle schließen sich
-pro Run gegenseitig aus, es gibt keinen Run, den beide gleichzeitig als
-zuständig behandeln. Das wird durch einen gemeinsamen Contract-Test
-sichergestellt (Abschnitt Verifikation).
+`reconcile` bleibt für verpasste Gate-Label-Events, bestätigte aber noch nicht
+persistierte Delivery-Merges und ausstehende Run-Dokumentation zuständig.
+`watchdog-scan` prüft ausschließlich Runs, für die keine dieser
+Reconcile-Aktionen fällig ist. Beide Pfade schließen sich pro Run gegenseitig
+aus; das wird durch einen gemeinsamen Contract-Test abgesichert.
 
 ### 7. Betriebshinweis
 
@@ -180,8 +185,9 @@ selbst.
   `staleAfterMinutes` und `nudges.length < maxNudges` genau einen Fund.
 - TAC-02: Derselbe Zustand mit einem offenen `type: "human"`-Gate liefert
   keinen Fund (AC-04).
-- TAC-03: Derselbe Zustand mit `needsGateReconciliation() === true` liefert
-  keinen Fund (Abgrenzung zu `reconcile`, Abschnitt 6).
+- TAC-03: Derselbe Zustand mit Gate-Reconciliation, Delivery-Merge-
+  Reconciliation oder fälliger Run-Dokumentation liefert keinen Fund
+  (Abgrenzung zu `reconcile`, Abschnitt 6).
 - TAC-04: Derselbe Zustand mit `updatedAt` innerhalb des Schwellwerts
   liefert keinen Fund.
 - TAC-05: Derselbe Zustand mit `nudges.length === maxNudges` liefert keinen
@@ -215,8 +221,8 @@ selbst.
 - `npm run check`,
 - Unit-Tests für `detectStalledRuns()` mit den Fixtures aus TAC-01 bis
   TAC-06,
-- Unit-/Contract-Test für die Trennschärfe zu `needsGateReconciliation`
-  (TAC-13),
+- Unit-/Contract-Test für die Trennschärfe zu allen vom bestehenden
+  `reconcile`-Sweep behandelten Zuständen (TAC-13),
 - Contract-Test für `watchdog-scan --dry-run` vs. Normalmodus (TAC-07,
   TAC-08),
 - Contract-Test für Cool-down/Idempotenz bei wiederholtem Scan (TAC-09),
@@ -229,13 +235,15 @@ selbst.
 ## Rollout
 
 1. SPEC-011 und REQ-011 nach menschlicher Freigabe mergen.
-2. `detectStalledRuns()`, `watchdog`-Zustandsfeld und `watchdog-scan`
+2. Issue #62 abschließen, damit Assignment-Evidenz und Retry-Vertrag
+   kanonisch feststehen.
+3. `detectStalledRuns()`, `watchdog`-Zustandsfeld und `watchdog-scan`
    implementieren, inklusive Tests.
-3. Reusable Workflow und Katalogeintrag ergänzen.
-4. Vorlage zunächst nur im Harness-eigenen Repository installieren
+4. Reusable Workflow und Katalogeintrag ergänzen.
+5. Vorlage zunächst nur im Harness-eigenen Repository installieren
    (Self-Hosting, siehe REQ-009) und mit einem synthetisch gealterten Run
    beobachten.
-5. Nach nachgewiesener Stabilität optionale Installation in weiteren
+6. Nach nachgewiesener Stabilität optionale Installation in weiteren
    Zielrepositories (z. B. Immogent) als separater, bewusster Schritt.
 
 ## Rollback
