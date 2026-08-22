@@ -49,17 +49,26 @@ Harness-Ausführung werden strikt getrennt:
   Requirements/Specs und die Erstellung der zugehörigen GitHub-Issues.
 - Der **Harness-Ausführungsagent** arbeitet ausschließlich an bereits
   definierten und freigegebenen Harness-Tickets beziehungsweise aktiven
-  Harness-Runs. Er erstellt keine Tickets, definiert keine neuen Slices und
-  erweitert den Scope nicht eigenständig.
+  Harness-Runs. Er definiert keine neuen Slices, entscheidet nicht selbst über
+  neuen Ticketbedarf und erweitert den Scope nicht eigenständig. Ein vom
+  externen Planungsagenten vollständig definierter und freigegebener Auftrag
+  darf über die vorhandenen `spec-to-issue`-/`issue-create`-Pfade technisch und
+  idempotent als GitHub-Issue materialisiert werden; die fachliche Urheberschaft
+  und Scope-Verantwortung verbleiben beim externen Planungsagenten.
 - **Implementierungs- und Reviewagenten** bearbeiten nur den explizit
   delegierten Scope. Findings führen zurück in den bestehenden Run; sie
   erzeugen nicht stillschweigend einen neuen Slice.
 
-Jede Übergabe muss im kanonischen Run-State und Process Audit sichtbar sein.
-Mindestens festzuhalten sind auslösender Akteur, ausführender Akteur,
-Zugriffsrolle, Artefakt beziehungsweise gebundene SHA, Begründung, Ergebnis und
-der nächste verantwortliche Akteur. Automatische Fortsetzungen nach einer
-Freigabe dürfen diese Rollengrenzen nicht aufweichen.
+Jede Übergabe muss im kanonischen Run-State und gemäß dem vollständigen
+REQ-005-/SPEC-005-Vertrag im Process Audit sichtbar sein. Verpflichtend sind
+insbesondere Zeitpunkt, Prozessinstanz und standardisierte Prozesskennung,
+auslösender und ausführender Akteur, verwendete Zugriffsrolle, Artefakt
+beziehungsweise gebundene SHA, Begründung, Beschreibung, Ergebnis,
+Korrelationskennungen, Evidence und der nächste verantwortliche Akteur. Die
+kanonischen Schema-, Enum-, Idempotenz- und Persistenzregeln aus
+`docs/specifications/SPEC-005-loss-safe-process-audit-delivery.md` gelten
+vollständig; diese Liste reduziert den Vertrag nicht. Automatische
+Fortsetzungen nach einer Freigabe dürfen die Rollengrenzen nicht aufweichen.
 
 Übergeordnetes Automatisierungsziel: Nach einer menschlichen PR- und
 Harness-Gate-Freigabe übernimmt der Harness Merge, Polling, Post-Merge-
