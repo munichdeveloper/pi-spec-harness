@@ -141,3 +141,12 @@ Kommentare dienen als Kontext. Formal zählen nur die beiden Gate-Labels.
 - Keine Workflow-Auswahl verwendet `tail -1`, `sort -V`, `--limit 1` oder
   eine Suche nach dem „most recent“ Objekt.
 
+### Vertrauenswürdige Post-Merge-Dokumentationsübergabe
+
+Der periodische Reconciler verarbeitet alle offenen `harness:run`-Issues. Nach
+gesichertem Merge-Effekt meldet er `persist-run-documentation` und dispatcht
+den auf dem Default Branch installierten
+`.github/workflows/harness-run-documentation-finalizer.yml` mit der exakten
+Tracking-Issue-Nummer. Der Dispatch ist wiederholbar; Snapshot-Checkpoints und
+Idempotenz verhindern doppelte Wirkung. Fehlt der Finalizer, schlägt der
+Reconcile-Job sichtbar fehl, damit keine Dokumentationspflicht verloren geht.

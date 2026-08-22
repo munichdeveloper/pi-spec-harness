@@ -567,6 +567,13 @@ describe("TAC-16 run-documentation-finalizer workflow template", () => {
     expect(result).toContain("cancel-in-progress: false");
   });
 
+  it("supports trusted reconciliation dispatch with an explicit issue number", () => {
+    const result = renderRunDocumentationFinalizer();
+    expect(result).toContain("workflow_dispatch:");
+    expect(result).toContain("issue-number:");
+    expect(result).toContain("inputs.issue-number || github.event.issue.number");
+  });
+
   it("respects the harnessRef option", () => {
     const result = renderRunDocumentationFinalizer({ harnessRef: "v0.3.0" });
     expect(result).toContain("v0.3.0");
@@ -587,6 +594,7 @@ describe("TAC-16 run-documentation-finalizer workflow template", () => {
     expect(() => readFileSync(workflowPath)).not.toThrow();
     const content = readFileSync(workflowPath, "utf8");
     expect(content).toContain("workflow_call");
+    expect(content).toContain("issue-number:");
   });
 });
 

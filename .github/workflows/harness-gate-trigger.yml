@@ -145,6 +145,11 @@ jobs:
   reconcile:
     if: github.event_name == 'workflow_dispatch' || github.event_name == 'push' || github.event_name == 'schedule'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: read
+      actions: write
     steps:
       - uses: actions/checkout@v4
 
@@ -158,11 +163,32 @@ jobs:
       # Processes every recoverable gate and approved-but-unpersisted delivery
       # merge without selecting the "newest" issue.
       - name: Reconcile all recoverable harness runs
+        id: reconcile
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
-          npm run harness -- reconcile --repository "${{ github.repository }}"
+          npm run --silent harness -- reconcile --repository "${{ github.repository }}" | tee "$RUNNER_TEMP/reconcile.json"
+
+      - name: Dispatch pending run-documentation finalizers
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        shell: bash
+        run: |
+          workflow_path=".github/workflows/harness-run-documentation-finalizer.yml"
+          if ! gh api "repos/${GITHUB_REPOSITORY}/contents/${workflow_path}?ref=${DEFAULT_BRANCH}" >/dev/null 2>&1; then
+            pending=$(jq '[.result.reconciled[] | select(.action == "persist-run-documentation")] | length' "$RUNNER_TEMP/reconcile.json")
+            if [ "$pending" -gt 0 ]; then
+              echo "::error::${pending} run(s) require documentation, but ${workflow_path} is not installed on ${DEFAULT_BRANCH}."
+              exit 1
+            fi
+            exit 0
+          fi
+          jq -r '.result.reconciled[] | select(.action == "persist-run-documentation") | .issueNumber' "$RUNNER_TEMP/reconcile.json" |
+          while read -r issue_number; do
+            gh workflow run "$workflow_path" --ref "$DEFAULT_BRANCH" -f "issue-number=$issue_number"
+          done
 
   review-fix:
     # SPEC-009 TAC-04/TAC-09: Start a review-fix iteration when a trusted reviewer

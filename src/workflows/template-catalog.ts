@@ -251,6 +251,12 @@ export function renderRunDocumentationFinalizer(options: RunDocumentationFinaliz
 name: Harness Run Documentation Finalizer
 
 on:
+  workflow_dispatch:
+    inputs:
+      issue-number:
+        description: Tracking issue number selected by trusted reconciliation
+        required: true
+        type: string
   issues:
     types: [labeled]
   pull_request:
@@ -259,7 +265,7 @@ on:
 # Non-cancelling concurrency: a waiting run must not be dropped.
 # TAC-16: cancel-in-progress must be false.
 concurrency:
-  group: harness-run-documentation-finalizer-\${{ github.repository }}-\${{ github.event.issue.number || github.event.pull_request.number }}
+  group: harness-run-documentation-finalizer-\${{ github.repository }}-\${{ inputs.issue-number || github.event.issue.number || github.event.pull_request.number }}
   cancel-in-progress: false
 
 # TAC-16: minimal permissions only; no secrets: inherit.
@@ -278,6 +284,7 @@ jobs:
       generated-directory: '${generatedDirectory}'
       index-path: '${indexPath}'
       obsidian-base-path: '${obsidianBasePath}'${legacyDirsJson.length > 0 ? `\n      legacy-directories: '${legacyDirsJson}'` : ""}
+      issue-number: \${{ inputs.issue-number || github.event.issue.number || github.event.pull_request.number }}
 `;
 }
 
