@@ -8,6 +8,7 @@ import {
   computeNextAction,
   finishIteration,
   hasOpenHumanGate,
+  isMergeApprovalGate,
   recordDeliveryMergeEffect,
   initRunState,
   reconcileInit,
@@ -28,6 +29,71 @@ function baseRun() {
 }
 
 describe("state-machine", () => {
+  it("classifies canonical and legacy delivery merge approval gates consistently", () => {
+    const gate = (id: string, type: "human" | "merge" = "human") => ({
+      id,
+      type,
+      result: "passed" as const,
+      createdAt: "2026-08-22T16:29:30Z",
+      updatedAt: "2026-08-22T16:29:30Z",
+    });
+
+    expect(isMergeApprovalGate(gate("delivery-merge-approval"))).toBe(true);
+    expect(isMergeApprovalGate(gate("delivery-merge-approval-pr60"))).toBe(true);
+    expect(isMergeApprovalGate(gate("merge-approval"))).toBe(true);
+    expect(isMergeApprovalGate(gate("merge-approval-pr60"))).toBe(true);
+    expect(isMergeApprovalGate(gate("technical-verification", "merge"))).toBe(true);
+    expect(isMergeApprovalGate(gate("delivery-approval"))).toBe(false);
+  });
+
+  it("accepts a passed canonical delivery merge approval for the exact bound head", () => {
+    const approvedHeadSha = "a".repeat(40);
+    let state = {
+      ...baseRun(),
+      phase: "merge" as const,
+      deliveryPullRequest: 60,
+      deliveryHeadSha: approvedHeadSha,
+    };
+    state = upsertGate(state, {
+      id: "delivery-merge-approval",
+      type: "human",
+      question: `Merge PR #60 at ${approvedHeadSha}?`,
+    });
+    state = resolveGate(state, "delivery-merge-approval", {
+      result: "passed",
+      decision: { approved: true, by: "munichdeveloper", at: "2026-08-22T16:29:30Z" },
+    });
+
+    state = recordDeliveryMergeEffect(state, {
+      pullRequest: 60,
+      approvedHeadSha,
+      mergeCommitSha: "b".repeat(40),
+      mergedAt: "2026-08-22T16:31:56Z",
+    });
+
+    expect(state.deliveryMergeCommitSha).toBe("b".repeat(40));
+    expect(state.deliveryMergedAt).toBe("2026-08-22T16:31:56Z");
+  });
+
+  it("invalidates a canonical delivery merge approval when the bound head changes", () => {
+    let state = bindDeliveryPullRequest(baseRun(), 60, "a".repeat(40));
+    state = upsertGate(state, { id: "delivery-merge-approval", type: "human", question: "Merge?" });
+    state = resolveGate(state, "delivery-merge-approval", {
+      result: "passed",
+      decision: { approved: true, by: "munichdeveloper", at: "2026-08-22T16:29:30Z" },
+    });
+
+    state = bindDeliveryPullRequest(state, 60, "b".repeat(40));
+
+    expect(state.gates.some((gate) => gate.id === "delivery-merge-approval")).toBe(false);
+    expect(() => recordDeliveryMergeEffect(state, {
+      pullRequest: 60,
+      approvedHeadSha: "b".repeat(40),
+      mergeCommitSha: "c".repeat(40),
+      mergedAt: "2026-08-22T16:31:56Z",
+    })).toThrow(/passed merge approval gate/);
+  });
+
   it("initializes a run in phase 'requirement' with no gates", () => {
     const state = baseRun();
     expect(state.phase).toBe("requirement");
