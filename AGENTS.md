@@ -38,6 +38,35 @@ siehe [`skills/pi-spec-harness/SKILL.md`](skills/pi-spec-harness/SKILL.md).
   Harness-CLI als auch ohne sie (direkter Merge im Ziel-Repo) bearbeitet
   wird.
 
+## Verantwortungsmodell der Software Factory
+
+Die Verantwortlichkeiten zwischen Produktsteuerung, externer Planung und
+Harness-Ausführung werden strikt getrennt:
+
+- Der **Product Owner** trifft fachliche Entscheidungen und erteilt Human-Gate-
+  sowie Merge-Freigaben.
+- Ein **externer Planungsagent** verantwortet Zielzerlegung, Slice-Definition,
+  Requirements/Specs und die Erstellung der zugehörigen GitHub-Issues.
+- Der **Harness-Ausführungsagent** arbeitet ausschließlich an bereits
+  definierten und freigegebenen Harness-Tickets beziehungsweise aktiven
+  Harness-Runs. Er erstellt keine Tickets, definiert keine neuen Slices und
+  erweitert den Scope nicht eigenständig.
+- **Implementierungs- und Reviewagenten** bearbeiten nur den explizit
+  delegierten Scope. Findings führen zurück in den bestehenden Run; sie
+  erzeugen nicht stillschweigend einen neuen Slice.
+
+Jede Übergabe muss im kanonischen Run-State und Process Audit sichtbar sein.
+Mindestens festzuhalten sind auslösender Akteur, ausführender Akteur,
+Zugriffsrolle, Artefakt beziehungsweise gebundene SHA, Begründung, Ergebnis und
+der nächste verantwortliche Akteur. Automatische Fortsetzungen nach einer
+Freigabe dürfen diese Rollengrenzen nicht aufweichen.
+
+Übergeordnetes Automatisierungsziel: Nach einer menschlichen PR- und
+Harness-Gate-Freigabe übernimmt der Harness Merge, Polling, Post-Merge-
+Verifikation, Audit-/Dokumentationspersistenz und Run-Fortsetzung vollständig
+ereignisgesteuert und idempotent. Nur echte fachliche Entscheidungen oder
+nicht automatisch behebbare Blockaden dürfen wieder einen Menschen anfordern.
+
 ## Definition of Done für Änderungen an diesem Repo
 
 - `npm run check` (typecheck + lint + test) ist grün.
