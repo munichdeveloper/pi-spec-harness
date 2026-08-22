@@ -52,6 +52,17 @@ describe("GitHub workflow contracts", () => {
     expect(workflow).toContain("harness-gate-trigger.yml");
   });
 
+  it("sweeps approved delivery merges from trusted default-branch code", async () => {
+    const workflow = await readFile(".github/workflows/harness-gate-trigger.yml", "utf8");
+    const reconcileJob = workflow.slice(workflow.indexOf("  reconcile:"), workflow.indexOf("\n  review-fix:"));
+
+    expect(workflow).toContain("schedule:");
+    expect(workflow).toContain("*/10 * * * *");
+    expect(reconcileJob).toContain("github.event_name == 'schedule'");
+    expect(reconcileJob).toContain("npm run harness -- reconcile");
+    expect(reconcileJob).not.toContain("github.event.pull_request.head");
+  });
+
   // TAC-10: repo-wide concurrency, no newest-issue selection
   it("serialises gate processing repo-wide and does not select by newest issue (TAC-10)", async () => {
     const workflow = await readFile(".github/workflows/harness-gate-trigger.yml", "utf8");

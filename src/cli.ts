@@ -44,6 +44,7 @@ import {
   formatCanonicalRunId,
   initRunState,
   needsGateReconciliation,
+  needsDeliveryMergeReconciliation,
   recordDeliveryMergeEffect,
   reconcileInit,
   resolveGate,
@@ -1333,7 +1334,8 @@ async function cmdSpecToIssue(argv: { repository: string; specPath: string }): P
 /**
  * TAC-08: Reconcile all recoverable human-gate work in a repository. Finds
  * every open `harness:run` tracking issue, then uses the canonical state to
- * select only pending publication, open decisions, or pending cleanup.
+ * select pending gate work or an approved delivery merge whose persisted
+ * GitHub effect is still missing.
  * This handles label events that arrived while the trigger workflow was not
  * yet active or had transiently failed (missed-event recovery).
  */
@@ -1347,7 +1349,7 @@ async function cmdReconcile(argv: { repository: string }): Promise<void> {
   for (const issue of issues) {
     try {
       const runState = parseStateFromBody(issue.body);
-      if (!needsGateReconciliation(runState)) continue;
+      if (!needsGateReconciliation(runState) && !needsDeliveryMergeReconciliation(runState)) continue;
       const store = new IssueStateStore(argv.repository, issue.number);
       let state = await retryPendingGatePublication(store, runState);
       state = await retryPendingGateCleanup(store, state);
@@ -1367,8 +1369,44 @@ async function cmdReconcile(argv: { repository: string }): Promise<void> {
             runId: runState.runId,
             action: `gate '${gateId}' resolved: ${decision.approved ? "approved" : "rejected"}`,
           });
+        }
+      }
+
+      if (needsDeliveryMergeReconciliation(state)) {
+        const deliveryPr = state.deliveryPullRequest!;
+        const prData = await github.viewPullRequest(argv.repository, deliveryPr) as {
+          state?: string;
+          headRefOid?: string;
+          mergedAt?: string | null;
+          mergeCommit?: { oid?: string } | null;
+        };
+
+        if (prData.state === "MERGED") {
+          if (!prData.headRefOid || !prData.mergedAt || !prData.mergeCommit?.oid) {
+            throw new Error(`merged delivery PR #${deliveryPr} exposes incomplete merge evidence`);
+          }
+          state = recordDeliveryMergeEffect(state, {
+            pullRequest: deliveryPr,
+            approvedHeadSha: prData.headRefOid,
+            mergeCommitSha: prData.mergeCommit.oid,
+            mergedAt: prData.mergedAt,
+          });
+          await store.save(state);
+          const orchestration = await orchestrate(store);
+          results.push({
+            issueNumber: issue.number,
+            runId: runState.runId,
+            action: `delivery PR #${deliveryPr} merge effect persisted; ${orchestration.stopReason}`,
+          });
           continue;
         }
+
+        results.push({
+          issueNumber: issue.number,
+          runId: runState.runId,
+          action: `awaiting delivery PR #${deliveryPr} merge`,
+        });
+        continue;
       }
 
       results.push({

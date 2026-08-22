@@ -10,6 +10,9 @@ on:
   check_suite:
     types: [completed]
   workflow_dispatch: {}
+  schedule:
+    # Trusted default-branch fallback for suppressed/failed PR event workflows.
+    - cron: '*/10 * * * *'
   push:
     branches: [main]
     paths:
@@ -140,7 +143,7 @@ jobs:
             --run-id "${{ steps.run.outputs.run_id }}"
 
   reconcile:
-    if: github.event_name == 'workflow_dispatch' || github.event_name == 'push'
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'push' || github.event_name == 'schedule'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -152,9 +155,9 @@ jobs:
 
       - run: npm ci
 
-      # TAC-09/TAC-10: Bootstrap reconciliation on workflow installation or manual dispatch.
-      # Processes all open harness gates in the repository without selecting by "newest" issue.
-      - name: Reconcile all open harness gates
+      # Processes every recoverable gate and approved-but-unpersisted delivery
+      # merge without selecting the "newest" issue.
+      - name: Reconcile all recoverable harness runs
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash

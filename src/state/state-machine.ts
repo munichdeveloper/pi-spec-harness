@@ -194,6 +194,20 @@ export function findPassedMergeApprovalGate(state: RunState): GateRecord | undef
   return state.gates.find((gate) => gate.result === "passed" && isMergeApprovalGate(gate));
 }
 
+/**
+ * A trusted reconciler must revisit an approved delivery merge until GitHub's
+ * persisted merge effect has been recorded. This covers suppressed or failed
+ * pull_request.closed workflows without weakening the SHA-bound gate.
+ */
+export function needsDeliveryMergeReconciliation(state: RunState): boolean {
+  return Boolean(
+    state.deliveryPullRequest !== undefined &&
+    state.deliveryHeadSha &&
+    !state.deliveryMergeCommitSha &&
+    findPassedMergeApprovalGate(state),
+  );
+}
+
 function expectedDeliveryHeadSha(state: RunState): string | undefined {
   return (state.deliveryHeadSha ?? state.pullRequestHeadSha)?.toLowerCase();
 }
