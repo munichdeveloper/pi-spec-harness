@@ -22,7 +22,6 @@ permissions:
   contents: read
   issues: write
   pull-requests: read
-  actions: write
 
 # TAC-10: serialise all gate processing repo-wide to avoid concurrent writes
 # to the same canonical issue-state.
@@ -146,6 +145,11 @@ jobs:
   reconcile:
     if: github.event_name == 'workflow_dispatch' || github.event_name == 'push' || github.event_name == 'schedule'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: read
+      actions: write
     steps:
       - uses: actions/checkout@v4
 
@@ -164,25 +168,26 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
-          npm run harness -- reconcile --repository "${{ github.repository }}" | tee "$RUNNER_TEMP/reconcile.json"
+          npm run --silent harness -- reconcile --repository "${{ github.repository }}" | tee "$RUNNER_TEMP/reconcile.json"
 
       - name: Dispatch pending run-documentation finalizers
         env:
           GH_TOKEN: ${{ github.token }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         shell: bash
         run: |
           workflow_path=".github/workflows/harness-run-documentation-finalizer.yml"
-          if ! gh api "repos/${GITHUB_REPOSITORY}/contents/${workflow_path}?ref=${GITHUB_DEFAULT_BRANCH}" >/dev/null 2>&1; then
+          if ! gh api "repos/${GITHUB_REPOSITORY}/contents/${workflow_path}?ref=${DEFAULT_BRANCH}" >/dev/null 2>&1; then
             pending=$(jq '[.result.reconciled[] | select(.action == "persist-run-documentation")] | length' "$RUNNER_TEMP/reconcile.json")
             if [ "$pending" -gt 0 ]; then
-              echo "::error::${pending} run(s) require documentation, but ${workflow_path} is not installed on ${GITHUB_DEFAULT_BRANCH}."
+              echo "::error::${pending} run(s) require documentation, but ${workflow_path} is not installed on ${DEFAULT_BRANCH}."
               exit 1
             fi
             exit 0
           fi
           jq -r '.result.reconciled[] | select(.action == "persist-run-documentation") | .issueNumber' "$RUNNER_TEMP/reconcile.json" |
           while read -r issue_number; do
-            gh workflow run "$workflow_path" --ref "$GITHUB_DEFAULT_BRANCH" -f "issue-number=$issue_number"
+            gh workflow run "$workflow_path" --ref "$DEFAULT_BRANCH" -f "issue-number=$issue_number"
           done
 
   review-fix:

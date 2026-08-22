@@ -63,10 +63,14 @@ describe("GitHub workflow contracts", () => {
     expect(workflow).toContain("schedule:");
     expect(workflow).toContain("*/10 * * * *");
     expect(reconcileJob).toContain("github.event_name == 'schedule'");
-    expect(reconcileJob).toContain("npm run harness -- reconcile");
+    expect(reconcileJob).toContain("npm run --silent harness -- reconcile");
     expect(reconcileJob).toContain("persist-run-documentation");
     expect(reconcileJob).toContain("gh workflow run");
     expect(reconcileJob).toContain("issue-number=$issue_number");
+    expect(reconcileJob).toContain("DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}");
+    expect(reconcileJob).toContain("actions: write");
+    const topLevelPermissions = workflow.slice(workflow.indexOf("permissions:"), workflow.indexOf("\n# TAC-10"));
+    expect(topLevelPermissions).not.toContain("actions: write");
     expect(reconcileJob).not.toContain("github.event.pull_request.head");
   });
 
