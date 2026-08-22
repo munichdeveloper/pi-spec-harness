@@ -99,6 +99,15 @@ SHA-spezifisches Merge-Gate aus dem kanonischen State verwenden. Ist der
 exakte PR bereits gemergt, ist die Wiederholung ein erfolgreicher No-op; ist
 er offen, werden Head-SHA, Checks und Review-Threads erneut live geprüft.
 
+Zusätzlich läuft der Reconciler alle zehn Minuten aus dem vertrauenswürdigen
+Default-Branch. Er durchsucht alle offenen `harness:run`-Issues, nicht nur den
+neuesten Run. Bei bestandenem Merge-Gate und noch fehlendem Merge-Effekt liest
+er PR, Head-SHA, Merge-Commit und Merge-Zeitpunkt erneut direkt von GitHub,
+persistiert den Effekt idempotent und setzt die Orchestrierung fort. Damit
+bleibt der Abschluss auch dann selbstheilend, wenn GitHub den ursprünglichen
+`pull_request.closed`-Workflow vor Jobstart mit `action_required` blockiert
+oder der Event-Run ausfällt. Ungeprüfter PR-Code wird dabei nicht ausgeführt.
+
 ### Fehler und Recovery
 
 Bei fehlgeschlagenen Checks:

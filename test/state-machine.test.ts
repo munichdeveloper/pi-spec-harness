@@ -9,6 +9,7 @@ import {
   finishIteration,
   hasOpenHumanGate,
   isMergeApprovalGate,
+  needsDeliveryMergeReconciliation,
   recordDeliveryMergeEffect,
   initRunState,
   reconcileInit,
@@ -73,6 +74,39 @@ describe("state-machine", () => {
 
     expect(state.deliveryMergeCommitSha).toBe("b".repeat(40));
     expect(state.deliveryMergedAt).toBe("2026-08-22T16:31:56Z");
+  });
+
+  it("marks an approved delivery merge without persisted effect for reconciliation", () => {
+    let state = bindDeliveryPullRequest(baseRun(), 60, "a".repeat(40));
+    state = upsertGate(state, { id: "delivery-merge-approval", type: "human", question: "Merge?" });
+    expect(needsDeliveryMergeReconciliation(state)).toBe(false);
+
+    state = resolveGate(state, "delivery-merge-approval", {
+      result: "passed",
+      decision: { approved: true, by: "munichdeveloper", at: "2026-08-22T16:29:30Z" },
+    });
+    expect(needsDeliveryMergeReconciliation(state)).toBe(true);
+
+    state = recordDeliveryMergeEffect(state, {
+      pullRequest: 60,
+      approvedHeadSha: "a".repeat(40),
+      mergeCommitSha: "b".repeat(40),
+      mergedAt: "2026-08-22T16:31:56Z",
+    });
+    expect(needsDeliveryMergeReconciliation(state)).toBe(false);
+  });
+
+  it("reconciles legacy pull request bindings from existing run states", () => {
+    let state = bindPullRequest(baseRun(), 60, "a".repeat(40));
+    state = upsertGate(state, { id: "merge-approval", type: "human", question: "Merge?" });
+    state = resolveGate(state, "merge-approval", {
+      result: "passed",
+      decision: { approved: true, by: "munichdeveloper", at: "2026-08-22T16:29:30Z" },
+    });
+
+    expect(state.deliveryPullRequest).toBeUndefined();
+    expect(state.deliveryHeadSha).toBeUndefined();
+    expect(needsDeliveryMergeReconciliation(state)).toBe(true);
   });
 
   it("invalidates a canonical delivery merge approval when the bound head changes", () => {
