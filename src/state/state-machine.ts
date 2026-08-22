@@ -200,9 +200,11 @@ export function findPassedMergeApprovalGate(state: RunState): GateRecord | undef
  * pull_request.closed workflows without weakening the SHA-bound gate.
  */
 export function needsDeliveryMergeReconciliation(state: RunState): boolean {
+  const deliveryPullRequest = state.deliveryPullRequest ?? state.pullRequest;
+  const deliveryHeadSha = state.deliveryHeadSha ?? state.pullRequestHeadSha;
   return Boolean(
-    state.deliveryPullRequest !== undefined &&
-    state.deliveryHeadSha &&
+    deliveryPullRequest !== undefined &&
+    deliveryHeadSha &&
     !state.deliveryMergeCommitSha &&
     findPassedMergeApprovalGate(state),
   );

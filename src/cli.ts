@@ -1373,7 +1373,10 @@ async function cmdReconcile(argv: { repository: string }): Promise<void> {
       }
 
       if (needsDeliveryMergeReconciliation(state)) {
-        const deliveryPr = state.deliveryPullRequest!;
+        const deliveryPr = state.deliveryPullRequest ?? state.pullRequest;
+        if (deliveryPr === undefined) {
+          throw new Error(`run '${state.runId}' has no delivery pull request binding`);
+        }
         const prData = await github.viewPullRequest(argv.repository, deliveryPr) as {
           state?: string;
           headRefOid?: string;

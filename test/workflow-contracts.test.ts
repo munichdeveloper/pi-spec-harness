@@ -54,7 +54,11 @@ describe("GitHub workflow contracts", () => {
 
   it("sweeps approved delivery merges from trusted default-branch code", async () => {
     const workflow = await readFile(".github/workflows/harness-gate-trigger.yml", "utf8");
-    const reconcileJob = workflow.slice(workflow.indexOf("  reconcile:"), workflow.indexOf("\n  review-fix:"));
+    const reconcileStart = workflow.indexOf("  reconcile:");
+    const reviewFixStart = workflow.indexOf("\n  review-fix:");
+    expect(reconcileStart).toBeGreaterThanOrEqual(0);
+    expect(reviewFixStart).toBeGreaterThan(reconcileStart);
+    const reconcileJob = workflow.slice(reconcileStart, reviewFixStart);
 
     expect(workflow).toContain("schedule:");
     expect(workflow).toContain("*/10 * * * *");

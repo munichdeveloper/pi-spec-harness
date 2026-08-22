@@ -96,6 +96,19 @@ describe("state-machine", () => {
     expect(needsDeliveryMergeReconciliation(state)).toBe(false);
   });
 
+  it("reconciles legacy pull request bindings from existing run states", () => {
+    let state = bindPullRequest(baseRun(), 60, "a".repeat(40));
+    state = upsertGate(state, { id: "merge-approval", type: "human", question: "Merge?" });
+    state = resolveGate(state, "merge-approval", {
+      result: "passed",
+      decision: { approved: true, by: "munichdeveloper", at: "2026-08-22T16:29:30Z" },
+    });
+
+    expect(state.deliveryPullRequest).toBeUndefined();
+    expect(state.deliveryHeadSha).toBeUndefined();
+    expect(needsDeliveryMergeReconciliation(state)).toBe(true);
+  });
+
   it("invalidates a canonical delivery merge approval when the bound head changes", () => {
     let state = bindDeliveryPullRequest(baseRun(), 60, "a".repeat(40));
     state = upsertGate(state, { id: "delivery-merge-approval", type: "human", question: "Merge?" });
