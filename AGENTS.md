@@ -38,6 +38,44 @@ siehe [`skills/pi-spec-harness/SKILL.md`](skills/pi-spec-harness/SKILL.md).
   Harness-CLI als auch ohne sie (direkter Merge im Ziel-Repo) bearbeitet
   wird.
 
+## Verantwortungsmodell der Software Factory
+
+Die Verantwortlichkeiten zwischen Produktsteuerung, externer Planung und
+Harness-Ausführung werden strikt getrennt:
+
+- Der **Product Owner** trifft fachliche Entscheidungen und erteilt Human-Gate-
+  sowie Merge-Freigaben.
+- Ein **externer Planungsagent** verantwortet Zielzerlegung, Slice-Definition,
+  Requirements/Specs und die Erstellung der zugehörigen GitHub-Issues.
+- Der **Harness-Ausführungsagent** arbeitet ausschließlich an bereits
+  definierten und freigegebenen Harness-Tickets beziehungsweise aktiven
+  Harness-Runs. Er definiert keine neuen Slices, entscheidet nicht selbst über
+  neuen Ticketbedarf und erweitert den Scope nicht eigenständig. Ein vom
+  externen Planungsagenten vollständig definierter und freigegebener Auftrag
+  darf über die vorhandenen `spec-to-issue`-/`issue-create`-Pfade technisch und
+  idempotent als GitHub-Issue materialisiert werden; die fachliche Urheberschaft
+  und Scope-Verantwortung verbleiben beim externen Planungsagenten.
+- **Implementierungs- und Reviewagenten** bearbeiten nur den explizit
+  delegierten Scope. Findings führen zurück in den bestehenden Run; sie
+  erzeugen nicht stillschweigend einen neuen Slice.
+
+Jede Übergabe muss im kanonischen Run-State und gemäß dem vollständigen
+REQ-005-/SPEC-005-Vertrag im Process Audit sichtbar sein. Verpflichtend sind
+insbesondere Zeitpunkt, Prozessinstanz und standardisierte Prozesskennung,
+auslösender und ausführender Akteur, verwendete Zugriffsrolle, Artefakt
+beziehungsweise gebundene SHA, Begründung, Beschreibung, Ergebnis,
+Korrelationskennungen, Evidence und der nächste verantwortliche Akteur. Die
+kanonischen Schema-, Enum-, Idempotenz- und Persistenzregeln aus
+`docs/specifications/SPEC-005-loss-safe-process-audit-delivery.md` gelten
+vollständig; diese Liste reduziert den Vertrag nicht. Automatische
+Fortsetzungen nach einer Freigabe dürfen die Rollengrenzen nicht aufweichen.
+
+Übergeordnetes Automatisierungsziel: Nach einer menschlichen PR- und
+Harness-Gate-Freigabe übernimmt der Harness Merge, Polling, Post-Merge-
+Verifikation, Audit-/Dokumentationspersistenz und Run-Fortsetzung vollständig
+ereignisgesteuert und idempotent. Nur echte fachliche Entscheidungen oder
+nicht automatisch behebbare Blockaden dürfen wieder einen Menschen anfordern.
+
 ## Definition of Done für Änderungen an diesem Repo
 
 - `npm run check` (typecheck + lint + test) ist grün.
