@@ -1349,11 +1349,25 @@ async function cmdReconcile(argv: { repository: string }): Promise<void> {
   for (const issue of issues) {
     try {
       const runState = parseStateFromBody(issue.body);
-      if (!needsGateReconciliation(runState) && !needsDeliveryMergeReconciliation(runState)) continue;
+      const initialNext = computeNextAction(runState);
+      if (
+        !needsGateReconciliation(runState) &&
+        !needsDeliveryMergeReconciliation(runState) &&
+        initialNext.action !== "persist-run-documentation"
+      ) continue;
       const store = new IssueStateStore(argv.repository, issue.number);
       let state = await retryPendingGatePublication(store, runState);
       state = await retryPendingGateCleanup(store, state);
       const next = computeNextAction(state);
+
+      if (next.action === "persist-run-documentation") {
+        results.push({
+          issueNumber: issue.number,
+          runId: runState.runId,
+          action: "persist-run-documentation",
+        });
+        continue;
+      }
 
       if (next.action === "await-human-gate" && next.gate?.issue) {
         const gateId = next.gate.id;

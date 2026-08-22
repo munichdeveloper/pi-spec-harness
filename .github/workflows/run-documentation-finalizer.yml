@@ -17,6 +17,7 @@ on:
       audit-recorder-repo: { required: false, type: string, default: "" }
       # Path to the audit journal directory in the recorder repository.
       audit-journal-path: { required: false, type: string, default: "docs/process-audit/journal" }
+      issue-number: { required: false, type: string, default: "" }
 
 # TAC-16: minimal permissions; no secrets: inherit.
 permissions:
@@ -29,7 +30,7 @@ jobs:
   finalize:
     runs-on: ubuntu-latest
     concurrency:
-      group: harness-run-documentation-finalizer-${{ github.repository }}-${{ github.event.issue.number || github.event.pull_request.number }}
+      group: harness-run-documentation-finalizer-${{ github.repository }}-${{ inputs.issue-number || github.event.issue.number || github.event.pull_request.number }}
       cancel-in-progress: false
     steps:
       - name: Checkout target repository
@@ -115,7 +116,7 @@ jobs:
 
           npm run harness -- persist-run-documentation \
             --repository "${{ github.repository }}" \
-            --issue-number "${{ github.event.issue.number || github.event.pull_request.number }}" \
+            --issue-number "${{ inputs.issue-number || github.event.issue.number || github.event.pull_request.number }}" \
             --generated-directory "${{ inputs.generated-directory }}" \
             --index-path "${{ inputs.index-path }}" \
             --obsidian-base-path "${{ inputs.obsidian-base-path }}" \

@@ -64,6 +64,9 @@ describe("GitHub workflow contracts", () => {
     expect(workflow).toContain("*/10 * * * *");
     expect(reconcileJob).toContain("github.event_name == 'schedule'");
     expect(reconcileJob).toContain("npm run harness -- reconcile");
+    expect(reconcileJob).toContain("persist-run-documentation");
+    expect(reconcileJob).toContain("gh workflow run");
+    expect(reconcileJob).toContain("issue-number=$issue_number");
     expect(reconcileJob).not.toContain("github.event.pull_request.head");
   });
 
