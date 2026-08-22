@@ -122,7 +122,11 @@ npm run harness -- init \
 4. Der PR verlinkt das Implementierungs-Issue; dieses verweist zurück auf den
    Run.
 5. Verification benötigt nicht-draft PR, gebundenen Head-SHA, grüne
-   abgeschlossene Checks und keine offenen Review-Threads.
+   abgeschlossene Checks und keine offenen Review-Threads. Im Repository
+   `munichdeveloper/pi-spec-harness` ist GitHub Copilot über die
+   Repository-Einstellungen automatisch als Reviewer konfiguriert; der Harness-
+   Agent fordert ihn nicht zusätzlich per API oder UI an, sondern pollt das
+   automatisch entstehende Review und verarbeitet dessen Findings.
 6. Merge verwendet ausschließlich PR und SHA aus dem Run-State und ein
    SHA-spezifisches Human-Gate.
 7. Ein bestandenes Merge-Gate schaltet noch nicht nach `complete`; erst der
