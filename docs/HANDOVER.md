@@ -13,6 +13,20 @@ Der kanonische Zustand liegt in genau einem persistenten GitHub-Issue pro
 Run. Chatverläufe, lokale Dateien und „neueste Ressource“-Suchen sind keine
 Quelle der Wahrheit.
 
+## Reaktiver Coding-Agent-Vertrag
+
+- Kanonischer Assignee ist `copilot-swe-agent[bot]`.
+- Der Assignment-Request nutzt `agent_assignment.target_repo` und
+  `agent_assignment.base_branch`.
+- Die Verifikation ist begrenzt und retry-sicher; Erfolg wird in
+  `RunState.agentAssignment` gespeichert.
+- Der Approval-Label-Einstieg führt bis `implementation` und ruft
+  `agent-assign` auf; er darf den Run nicht in `requirement` liegen lassen.
+- Agenten-PRs werden über Run-Marker oder Implementierungs-Issue automatisch
+  gebunden und erhalten `<!-- harness:<run-id> -->` im Body.
+- Offene actionable Review-Threads sind eine harte State-Machine-Barriere.
+  Hinter einem Human-Gate zurückgestellte Review-Events bleiben retrybar.
+
 ## Repositories
 
 - `munichdeveloper/pi-spec-harness`: State Machine, CLI, Skill und

@@ -33,6 +33,22 @@ async function runGhWithJson(args: string[], jsonBody: unknown): Promise<string>
 
 export class GhError extends Error {}
 
+export function buildAgentAssignmentArgs(
+  repository: string,
+  issueNumber: number,
+  assignee: string,
+  baseRef: string,
+): string[] {
+  return [
+    "api",
+    `repos/${repository}/issues/${issueNumber}/assignees`,
+    "--method", "POST",
+    "-f", `assignees[]=${assignee}`,
+    "-f", `agent_assignment[target_repo]=${repository}`,
+    "-f", `agent_assignment[base_branch]=${baseRef}`,
+  ];
+}
+
 async function runGh(args: string[]): Promise<string> {
   try {
     const { stdout } = await execFile("gh", args, { maxBuffer: 20 * 1024 * 1024 });
@@ -546,13 +562,11 @@ export const github = {
     assignee: string,
     baseRef: string,
   ): Promise<void> {
-    await runGh([
-      "api",
-      `repos/${repository}/issues/${issueNumber}/assignees`,
-      "--method", "POST",
-      "-f", `assignees[]=${assignee}`,
-      "-f", `base_ref=${baseRef}`,
-    ]);
+    await runGh(buildAgentAssignmentArgs(repository, issueNumber, assignee, baseRef));
+  },
+
+  async updatePullRequestBody(repository: string, number: number, body: string): Promise<void> {
+    await runGh(["pr", "edit", String(number), "--repo", repository, "--body", body]);
   },
 
   /**

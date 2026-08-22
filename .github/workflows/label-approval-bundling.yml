@@ -97,4 +97,15 @@ jobs:
             --requirement '${{ steps.refs.outputs.requirement }}' \
             --spec '${{ steps.refs.outputs.spec }}' \
             --issue '${{ steps.bundle.outputs.issue }}' \
+            --branch '${{ github.event.repository.default_branch }}' \
             || echo "::notice::harness init for run '$run_id' left an existing, differently-parameterised run untouched."
+
+          npm run harness -- orchestrate \
+            --repository '${{ github.repository }}' \
+            --run-id "$run_id" \
+            --stop-at-phase implementation
+
+          npm run harness -- agent-assign \
+            --repository '${{ github.repository }}' \
+            --run-id "$run_id" \
+            --base-ref '${{ github.event.repository.default_branch }}'

@@ -377,6 +377,19 @@ describe("TAC-12 idempotency / duplicate delivery", () => {
 // ---------------------------------------------------------------------------
 
 describe("TAC-04 orchestrator", () => {
+  it("stops deterministically at the requested implementation handoff phase", async () => {
+    const states: RunState[] = [baseRun()];
+    const store = {
+      issueRef: undefined,
+      async load() { return states[states.length - 1]; },
+      async save(state: RunState) { states.push(state); },
+    };
+
+    const result = await orchestrate(store, 10, "implementation");
+    expect(result.stopReason).toBe("target-phase");
+    expect(states.at(-1)?.phase).toBe("implementation");
+  });
+
   it("advances gate-free phases up to maxSteps and stops", async () => {
     // Use a minimal in-memory store to test the orchestrator
     const state = baseRun();

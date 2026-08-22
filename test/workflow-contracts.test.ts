@@ -29,13 +29,14 @@ describe("GitHub workflow contracts", () => {
     expect(resumeJob).toContain(".result.nextAction.action");
   });
 
-  it("triggers on pull_request closed events for implementation PR orchestration (TAC-12)", async () => {
+  it("binds implementation PRs on lifecycle events and orchestrates their close (TAC-12)", async () => {
     const workflow = await readFile(".github/workflows/harness-gate-trigger.yml", "utf8");
     const prJob = workflow.slice(workflow.indexOf("  orchestrate-on-pr-event:"), workflow.indexOf("\n  reconcile:"));
     const permissions = workflow.slice(workflow.indexOf("permissions:"), workflow.indexOf("\n# TAC-10"));
 
     expect(workflow).toContain("pull_request:");
-    expect(workflow).toContain("types: [closed]");
+    expect(workflow).toContain("types: [opened, edited, synchronize, closed]");
+    expect(workflow).toContain("impl-pr-auto-bind");
     expect(permissions).toContain("pull-requests: read");
     // Serialises across concurrent runs
     expect(workflow).toContain("cancel-in-progress: false");
@@ -176,6 +177,9 @@ describe("GitHub workflow contracts", () => {
     expect(workflow).toContain("github.event.label.name == inputs.trigger-label");
     expect(workflow).toContain("gh issue edit");
     expect(workflow).toContain("harness init");
+    expect(workflow).toContain("--stop-at-phase implementation");
+    expect(workflow).toContain("agent-assign");
+    expect(workflow).toContain("--branch '${{ github.event.repository.default_branch }}'");
     expect(workflow).toContain("issue-${{");
     expect(workflow).toContain("issues: write");
     expect(workflow).not.toContain("contents: write");

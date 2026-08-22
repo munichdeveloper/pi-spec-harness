@@ -254,6 +254,27 @@ describe("state-machine", () => {
     expect(transitionPhase(state, "spec").phase).toBe("spec");
   });
 
+  it("does not advance while an implementation review thread remains actionable", () => {
+    let state = bindImplementationPullRequest(baseRun(), 62, "a".repeat(40));
+    state = {
+      ...state,
+      reviewThreads: [{
+        idempotencyKey: "owner/repo:pr62:review1:threadT1:sha" + "a".repeat(40),
+        repository: state.repository,
+        pullRequest: 62,
+        reviewId: 1,
+        threadId: "T1",
+        reviewedHeadSha: "a".repeat(40),
+        reviewer: "copilot-pull-request-reviewer[bot]",
+        reviewerType: "Bot",
+        status: "actionable",
+        auditedAt: "2026-08-23T12:00:00Z",
+      }],
+    };
+    expect(computeNextAction(state).action).toBe("await-technical-gate");
+    expect(() => transitionPhase(state, "spec")).toThrow(/unresolved actionable review threads/i);
+  });
+
   it("allows only an idempotent or single-step phase transition", () => {
     const state = baseRun();
     expect(transitionPhase(state, "requirement")).toBe(state);

@@ -154,6 +154,16 @@ export function hasOpenHumanGate(state: RunState): GateRecord | undefined {
   return state.gates.find((g) => g.type === "human" && (g.result === "pending" || g.result === "needs-human"));
 }
 
+/** Open review findings for the bound implementation HEAD block phase advance. */
+export function hasBlockingReviewThreads(state: RunState): boolean {
+  return (state.reviewThreads ?? []).some((thread) =>
+    thread.status === "actionable" ||
+    thread.status === "implementing" ||
+    thread.status === "conflicting" ||
+    thread.status === "needs-human"
+  );
+}
+
 /**
  * The most recently resolved human gate whose result was "failed" (rejected)
  * and that has not yet been acknowledged (see acknowledgeRejectedGate).
@@ -358,6 +368,10 @@ export function transitionPhase(state: RunState, phase: PhaseId): RunState {
     throw new Error(
       `cannot advance phase while technical gate '${blockingTechnicalGate.id}' is ${blockingTechnicalGate.result}`,
     );
+  }
+
+  if (state.implementationPullRequest !== undefined && hasBlockingReviewThreads(state)) {
+    throw new Error(`cannot advance phase while implementation PR #${state.implementationPullRequest} has unresolved actionable review threads`);
   }
   if (iterationCapReached(state) && !iterationCapEscalationResolved(state) && phase !== "complete") {
     throw new Error("cannot advance phase after the automatic iteration cap was reached");
@@ -641,6 +655,13 @@ export function computeNextAction(state: RunState): NextAction {
       action: "await-technical-gate",
       detail: `Technical gate '${blockingTechnicalGate.id}' is ${blockingTechnicalGate.result}; evidence is required before advancing.`,
       gate: blockingTechnicalGate,
+    };
+  }
+
+  if (state.implementationPullRequest !== undefined && hasBlockingReviewThreads(state)) {
+    return {
+      action: "await-technical-gate",
+      detail: `Implementation PR #${state.implementationPullRequest} has unresolved actionable review threads; remediation and thread resolution are required before phase advance.`,
     };
   }
 

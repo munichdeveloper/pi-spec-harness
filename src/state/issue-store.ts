@@ -171,6 +171,22 @@ export async function findRunIssueByPullRequest(
   return match ? new IssueStateStore(repository, match.number) : undefined;
 }
 
+/** Find the single open harness run bound to an implementation issue. */
+export async function findRunIssueByImplementationIssue(
+  repository: string,
+  implementationIssue: number,
+): Promise<IssueStateStore | undefined> {
+  const issues = await github.findIssuesWithLabels(repository, [RUN_ISSUE_LABEL]);
+  const matches = issues.filter((issue) => {
+    try { return parseStateFromBody(issue.body).issue === implementationIssue; }
+    catch { return false; }
+  });
+  if (matches.length > 1) {
+    throw new Error(`multiple open harness runs are bound to implementation issue #${implementationIssue} in ${repository}`);
+  }
+  return matches[0] ? new IssueStateStore(repository, matches[0].number) : undefined;
+}
+
 /**
  * Find-or-create the persistent tracking issue for a run. Creating it also
  * writes the initial state into its body immediately.

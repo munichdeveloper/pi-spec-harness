@@ -278,6 +278,13 @@ export interface RunState {
    * SPEC-009, decision 3.
    */
   reviewThreads?: ReviewThreadRecord[];
+  /** Verified GitHub coding-agent assignment; optional for legacy states. */
+  agentAssignment?: {
+    assignee: string;
+    baseRef: string;
+    issueUrl: string;
+    verifiedAt: string;
+  };
   /**
    * Counter of failed automatic review-fix iterations for this run.
    * Separate from the general iteration counter so the cap can be applied

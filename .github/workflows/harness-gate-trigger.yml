@@ -4,7 +4,7 @@ on:
   issues:
     types: [labeled]
   pull_request:
-    types: [closed]
+    types: [opened, edited, synchronize, closed]
   pull_request_review:
     types: [submitted]
   check_suite:
@@ -30,6 +30,30 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  bind-implementation-pr:
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.event.action != 'closed'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20.9"
+          cache: npm
+      - run: npm ci
+      - name: Bind agent PR to its canonical run
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          npm run harness -- impl-pr-auto-bind \
+            --repository "${{ github.repository }}" \
+            --pull-request "${{ github.event.pull_request.number }}"
+
   resume:
     # Gate decision on the tracking issue (label-based human gate)
     if: >-

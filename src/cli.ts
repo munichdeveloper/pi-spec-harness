@@ -25,7 +25,8 @@ import { decideWorkflowInstall } from "./workflows/install-decision.js";
 import { upsertManagedBlock, renderHarnessContextBlock, AGENTS_MD_PATH } from "./agents-context/managed-block.js";
 import { buildIssueFromSpec } from "./spec/issue-from-spec.js";
 import { runSpecToIssuePipeline } from "./spec/spec-to-issue-pipeline.js";
-import { IssueStateStore, RUN_ISSUE_LABEL, ensureRunIssue, findRunIssue, findRunIssueByPullRequest, parseStateFromBody } from "./state/issue-store.js";
+import { IssueStateStore, RUN_ISSUE_LABEL, ensureRunIssue, findRunIssue, findRunIssueByImplementationIssue, findRunIssueByPullRequest, parseStateFromBody } from "./state/issue-store.js";
+import { DEFAULT_CODING_AGENT, extractReferencedIssueNumbers, normalizeAgentLogin, pollForAgentAssignment, recordVerifiedAgentAssignment } from "./agent/assignment.js";
 import { processReviewEvent, validateSelfHostingRef } from "./review/review-fix.js";
 import type { StateStore } from "./state/state-store.js";
 import { FileStateStore } from "./state/store.js";
@@ -1496,6 +1497,39 @@ async function cmdImplPrBind(
   printResult("impl-pr-bind", { state, nextAction: next }, next.detail);
 }
 
+async function cmdImplPrAutoBind(argv: { repository: string; pullRequest: number }): Promise<void> {
+  const pr = await github.viewPullRequest(argv.repository, argv.pullRequest) as {
+    body?: string; headRefOid?: string; baseRefName?: string; url?: string;
+  };
+  if (!pr.headRefOid || !pr.baseRefName) throw new Error(`PR #${argv.pullRequest} exposes incomplete binding evidence`);
+  const body = pr.body ?? "";
+  const markerMatch = body.match(/harness:([a-z0-9_-]+)/i);
+  let store = markerMatch ? await findRunIssue(argv.repository, markerMatch[1]) : undefined;
+  if (!store) {
+    const referencedIssues = extractReferencedIssueNumbers(body);
+    const matches = (await Promise.all(
+      [...new Set(referencedIssues)].map((issue) => findRunIssueByImplementationIssue(argv.repository, issue)),
+    )).filter((candidate): candidate is IssueStateStore => candidate !== undefined);
+    if (matches.length > 1) throw new Error(`PR #${argv.pullRequest} references multiple harness implementation issues`);
+    store = matches[0];
+  }
+  if (!store) {
+    printResult("impl-pr-auto-bind", { bound: false, skipped: "unmanaged-pull-request" }, `No harness run could be resolved for PR #${argv.pullRequest}.`);
+    return;
+  }
+  let state = await store.load();
+  if (state.branch && state.branch !== pr.baseRefName) {
+    throw new Error(`Implementation PR #${argv.pullRequest} has base '${pr.baseRefName}', expected '${state.branch}'`);
+  }
+  state = bindImplementationPullRequest(state, argv.pullRequest, pr.headRefOid);
+  const marker = `harness:${state.runId}`;
+  if (!body.includes(marker)) {
+    await github.updatePullRequestBody(argv.repository, argv.pullRequest, `${body.trimEnd()}\n\n<!-- ${marker} -->\n`);
+  }
+  await store.save(state);
+  printResult("impl-pr-auto-bind", { bound: true, runId: state.runId, pullRequest: argv.pullRequest, headSha: pr.headRefOid, marker }, computeNextAction(state).detail);
+}
+
 /**
  * Approve the spec on the delivery branch:
  * 1. Validates the spec-approval gate was passed by a human.
@@ -1714,7 +1748,7 @@ async function cmdAgentAssign(
     throw new Error("--repository is required for agent-assign");
   }
 
-  const assignee = (argv.assignee ?? "copilot").replace(/^@/, "");
+  const assignee = normalizeAgentLogin(argv.assignee ?? DEFAULT_CODING_AGENT);
   const baseRef = argv.baseRef ?? state.branch;
   if (!baseRef) {
     throw new Error("delivery branch not bound; provide --base-ref or set branch at init time");
@@ -1722,7 +1756,7 @@ async function cmdAgentAssign(
 
   // TAC-09: Check Copilot availability via suggestedActors
   const suggested = await github.checkSuggestedActors(argv.repository, state.issue);
-  const available = suggested.length === 0 || suggested.some((a) => a.toLowerCase() === assignee.toLowerCase());
+  const available = suggested.length === 0 || suggested.some((a) => normalizeAgentLogin(a) === assignee);
 
   if (!available) {
     // TAC-09: Open a human gate rather than claiming success
@@ -1750,13 +1784,27 @@ async function cmdAgentAssign(
     return;
   }
 
+  const issueBeforeAssignment = await github.viewIssue(argv.repository, state.issue);
+  const marker = `harness:${state.runId}`;
+  if (!issueBeforeAssignment.body.includes(marker)) {
+    await github.updateIssueBody(
+      argv.repository,
+      state.issue,
+      `${issueBeforeAssignment.body.trimEnd()}\n\n<!-- ${marker} -->\n`,
+    );
+  }
+
   // TAC-07: Assign via the official Agent Assignment API
   await github.assignCodingAgent(argv.repository, state.issue, assignee, baseRef);
 
-  // TAC-07: Re-read to verify the assignment actually took effect
-  const issue = await github.viewIssue(argv.repository, state.issue);
+  // TAC-07: bounded retry for GitHub's eventually-consistent assignee view.
+  const verification = await pollForAgentAssignment(
+    () => github.viewIssue(argv.repository!, state.issue!),
+    assignee,
+  );
+  const issue = verification.issue;
   const assigneeLogins = issue.assignees.map((a: { login: string }) => a.login.toLowerCase());
-  const assigned = assigneeLogins.includes(assignee.toLowerCase());
+  const assigned = verification.assigned;
 
   if (!assigned) {
     const gateId = "agent-assign-unverified";
@@ -1784,11 +1832,27 @@ async function cmdAgentAssign(
     return;
   }
 
+  const reconciled = recordVerifiedAgentAssignment(state, {
+    assignee, baseRef, issueUrl: issue.url, verifiedAt: new Date().toISOString(),
+  });
+  state = reconciled.state;
+  for (const gateId of reconciled.supersededGateIds) {
+    if (store.issueRef) {
+      await github.commentIssue(
+        store.issueRef.repository,
+        store.issueRef.number,
+        `Harness: Gate \`${gateId}\` wurde ohne menschliche Entscheidung als False Positive superseded, nachdem GitHub die Zuweisung an \`${assignee}\` verifiziert hat.`,
+      );
+    }
+  }
+  if (store.issueRef && !state.gates.some((gate) => gate.type === "human" && (gate.result === "pending" || gate.result === "needs-human"))) {
+    await github.removeLabels(store.issueRef.repository, store.issueRef.number, ["status:needs-human", "harness:gate-open"]);
+  }
   await store.save(state);
   const next = computeNextAction(state);
   printResult(
     "agent-assign",
-    { available: true, assigned: true, assignee, baseRef, issueNumber: state.issue },
+    { available: true, assigned: true, assignee, baseRef, issueNumber: state.issue, verificationAttempts: verification.attempts },
     next.detail,
   );
 }
@@ -1988,9 +2052,9 @@ async function cmdDeliveryPrMergeEffect(
  * error, or completion. Outputs the full step log and stop reason.
  * TAC-04.
  */
-async function cmdOrchestrate(argv: StoreArgs & { maxSteps?: number }): Promise<void> {
+async function cmdOrchestrate(argv: StoreArgs & { maxSteps?: number; stopAtPhase?: PhaseId }): Promise<void> {
   const store = await resolveExistingStore(argv);
-  const result = await orchestrate(store, argv.maxSteps);
+  const result = await orchestrate(store, argv.maxSteps, argv.stopAtPhase);
   printResult(
     "orchestrate",
     result,
@@ -2021,6 +2085,17 @@ async function cmdReviewFix(argv: {
     return;
   }
   const state = await store.load();
+  const preExistingHumanGate = state.gates.some(
+    (gate) => gate.type === "human" && (gate.result === "pending" || gate.result === "needs-human"),
+  );
+  if (preExistingHumanGate) {
+    printResult(
+      "review-fix",
+      { hasActionable: false, gateOpened: false, classifiedKeys: [], dispatched: false, deferred: "open-human-gate" },
+      "Remediation is deferred by an open human gate; review and thread idempotency remain unconsumed for retry.",
+    );
+    return;
+  }
   const threads = await github.listPullRequestReviewThreads(argv.repository, argv.pullRequest);
   const result = processReviewEvent(
     state,
@@ -2442,6 +2517,12 @@ const _harnessCli = yargs(hideBin(process.argv))
       }),
   )
   .command(
+    "impl-pr-auto-bind",
+    "Resolve an agent PR from its linked implementation issue, bind it, and persist the harness marker",
+    (y) => y.option("repository", { type: "string", demandOption: true }).option("pull-request", { type: "number", demandOption: true }),
+    async (argv) => cmdImplPrAutoBind({ repository: argv.repository, pullRequest: argv.pullRequest }),
+  )
+  .command(
     "spec-approve",
     "Commit spec-approval status on the delivery branch and bind the new delivery checkpoint",
     (y) =>
@@ -2584,13 +2665,15 @@ const _harnessCli = yargs(hideBin(process.argv))
     "Run the bounded, idempotent orchestrator (advance gate-free phases until a gate, error, or completion)",
     (y) =>
       storeOptions(y)
-        .option("max-steps", { type: "number", default: 10, describe: "Maximum number of phase-advance steps" }),
+        .option("max-steps", { type: "number", default: 10, describe: "Maximum number of phase-advance steps" })
+        .option("stop-at-phase", { type: "string", choices: PHASE_ORDER, describe: "Stop successfully once this phase is reached" }),
     async (argv) =>
       cmdOrchestrate({
         state: argv.state,
         repository: argv.repository,
         runId: argv.runId,
         maxSteps: argv.maxSteps,
+        stopAtPhase: argv["stop-at-phase"] as PhaseId | undefined,
       }),
   )
   .command(

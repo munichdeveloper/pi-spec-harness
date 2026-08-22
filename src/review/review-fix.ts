@@ -136,9 +136,9 @@ export function processReviewEvent(
     return { state: updated, hasActionable: false, gateOpened: false, classifiedKeys: [] };
   }
 
-  // SPEC-009 TAC-09: duplicate event for same reviewId is a no-op (already recorded above).
-  const alreadyRecorded = (state.reviews ?? []).some((r) => r.reviewId === event.reviewId);
-  if (alreadyRecorded) return { state: updated, hasActionable: false, gateOpened: false, classifiedKeys: [] };
+  // A repeated review event may contain threads that an earlier blocked
+  // attempt never classified. Per-thread idempotency below is authoritative;
+  // the review record alone must not poison retries.
 
   // SPEC-009 decision 6: active iteration → defer; cap reached → no further action.
   if (isReviewIterationActive(updated)) return { state: updated, hasActionable: false, gateOpened: false, classifiedKeys: [] };
