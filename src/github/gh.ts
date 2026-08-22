@@ -1,7 +1,35 @@
-import { execFile as execFileCb } from "node:child_process";
+import { execFile as execFileCb, spawn } from "node:child_process";
 import { promisify } from "node:util";
+import { validateStagedPaths } from "../documentation/path-validator.js";
+import {
+  DEFAULT_REUSABLE_WORKFLOW_REPOSITORY,
+  PROCESS_AUDIT_RECEIVER_MARKER,
+  PROCESS_AUDIT_RECEIVER_PATH,
+} from "../workflows/template-catalog.js";
+import { parseJournalEntry } from "../audit/journalParser.js";
 
 const execFile = promisify(execFileCb);
+
+/**
+ * Run a `gh` command and pipe `jsonBody` to its stdin (for APIs that require
+ * a JSON request body, e.g. `gh api --input -`).
+ */
+async function runGhWithJson(args: string[], jsonBody: unknown): Promise<string> {
+  return new Promise<string>((resolve, reject) => {
+    const proc = spawn("gh", args, { stdio: ["pipe", "pipe", "pipe"] });
+    let stdout = "";
+    let stderr = "";
+    proc.stdout.on("data", (d: Buffer) => { stdout += d.toString("utf-8"); });
+    proc.stderr.on("data", (d: Buffer) => { stderr += d.toString("utf-8"); });
+    proc.on("error", reject);
+    proc.on("close", (code: number | null) => {
+      if (code === 0) resolve(stdout);
+      else reject(new GhError(`gh ${args.join(" ")} failed: ${stderr.trim()}`));
+    });
+    proc.stdin.write(JSON.stringify(jsonBody), "utf-8");
+    proc.stdin.end();
+  });
+}
 
 export class GhError extends Error {}
 
@@ -62,6 +90,158 @@ export function parsePaginatedIssues(out: string): { number: number; title: stri
     .flat()
     .filter((issue) => !issue.pull_request)
     .map((issue) => ({ number: issue.number, title: issue.title, body: issue.body ?? "" }));
+}
+
+/**
+ * Supported marker versions for the process-audit receiver workflow.
+ * The receiver YAML must contain the managed marker with one of these versions.
+ */
+const SUPPORTED_RECEIVER_MARKER_VERSIONS = ["v1"] as const;
+
+/**
+ * Access roles whose credentials can dispatch events to repositories other
+ * than the one the workflow was triggered from (cross-repository-capable).
+ *
+ * The default built-in `GITHUB_TOKEN` is repository-scoped and is NOT in
+ * this set.  Cross-repo audit dispatch requires an explicit PAT, GitHub App
+ * token, or equivalent.
+ */
+export const CROSS_REPO_ALLOWED_ROLES = new Set([
+  "GITHUB_PERSONAL_ACCESS_TOKEN",
+  "GITHUB_APP_USER_AUTHORIZATION",
+]);
+
+/**
+ * Validate the content of an installed process-audit receiver workflow YAML.
+ *
+ * Extracted as a separate exported function so that it can be tested
+ * independently of the live `preflightRunDocumentationWriter` (which requires
+ * GitHub API access).  The production preflight calls this function with the
+ * content fetched from the recorder's default branch.
+ *
+ * Checks (in order):
+ * 1. Managed marker is present with a supported version.
+ * 2. `repository_dispatch` event with type `process_audit` is configured.
+ * 3. `uses:` delegates to the canonical remote reusable workflow.
+ * 4. The `uses:` ref is immutable (version tag or 40-char SHA).
+ * 5. The `uses:` ref matches the expected configured harness ref.
+ * 6. The `harness-ref:` input is wired and its value matches the `uses:` ref.
+ *
+ * @param content      Raw YAML content of the receiver workflow file.
+ * @param expectedRef  The harness ref the caller expects the receiver to use
+ *                     (e.g. `"v0.2.2"` from `DEFAULT_PROCESS_AUDIT_RECEIVER_WORKFLOW_REF`).
+ * @param receiverPath Path used in error messages (e.g. `PROCESS_AUDIT_RECEIVER_PATH`).
+ * @param recorder     Repository name used in error messages.
+ * @throws {Error}  When any check fails, with a descriptive human-readable message.
+ */
+export function validateReceiverContent(
+  content: string,
+  expectedRef: string,
+  receiverPath: string,
+  recorder: string,
+): void {
+  // Check 1: Managed marker with supported version.
+  // Extract the marker base (without the version suffix) and the version separately
+  // so that the version check reads from the content, not from the constant.
+  const markerBase = PROCESS_AUDIT_RECEIVER_MARKER.replace(/\s+\S+$/, ""); // strip trailing token
+  const markerInContentMatch = content.match(
+    new RegExp(`${markerBase.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s+(\\S+)`),
+  );
+  if (!markerInContentMatch) {
+    throw new Error(
+      `run-documentation-writer preflight failed: the process-audit receiver at ` +
+      `'${receiverPath}' in '${recorder}' is not a pi-spec-harness managed receiver ` +
+      `(expected marker '${PROCESS_AUDIT_RECEIVER_MARKER}' not found). ` +
+      `Run \`harness install process-audit-receiver\` in '${recorder}' to install a compatible receiver.`,
+    );
+  }
+  // The version is whatever the content declares after the marker base — it
+  // may differ from the constant when a newer receiver format is installed.
+  const markerVersion = markerInContentMatch[1];
+  if (!(SUPPORTED_RECEIVER_MARKER_VERSIONS as ReadonlyArray<string>).includes(markerVersion)) {
+    throw new Error(
+      `run-documentation-writer preflight failed: the process-audit receiver at ` +
+      `'${receiverPath}' in '${recorder}' uses unsupported marker version '${markerVersion}'. ` +
+      `Supported versions: ${SUPPORTED_RECEIVER_MARKER_VERSIONS.join(", ")}. ` +
+      `Re-install with \`harness install process-audit-receiver\`.`,
+    );
+  }
+
+  // Check 2: event trigger.
+  if (!content.includes("repository_dispatch") || !content.includes("process_audit")) {
+    throw new Error(
+      `run-documentation-writer preflight failed: the process-audit receiver at ` +
+      `'${receiverPath}' in '${recorder}' does not appear to handle ` +
+      `'repository_dispatch' events of type 'process_audit'. ` +
+      `Re-install with \`harness install process-audit-receiver\`.`,
+    );
+  }
+
+  // Check 3: uses: calls canonical remote reusable workflow.
+  const expectedUsesPrefix = `${DEFAULT_REUSABLE_WORKFLOW_REPOSITORY}/.github/workflows/process-audit-automation.yml@`;
+  const usesLineMatch = content.match(/uses:\s*(\S+)/);
+  if (!usesLineMatch) {
+    throw new Error(
+      `run-documentation-writer preflight failed: the process-audit receiver at ` +
+      `'${receiverPath}' in '${recorder}' has no 'uses:' directive. ` +
+      `Re-install with \`harness install process-audit-receiver\`.`,
+    );
+  }
+  const usesValue = usesLineMatch[1];
+  if (!usesValue.startsWith(expectedUsesPrefix)) {
+    throw new Error(
+      `run-documentation-writer preflight failed: the process-audit receiver at ` +
+      `'${receiverPath}' in '${recorder}' delegates to '${usesValue}' ` +
+      `instead of the canonical '${expectedUsesPrefix}<ref>'. ` +
+      `Re-install with \`harness install process-audit-receiver\`.`,
+    );
+  }
+
+  // Check 4: ref must be immutable.
+  const harnessRef = usesValue.slice(expectedUsesPrefix.length);
+  const isMutableRef =
+    !/^v\d/.test(harnessRef) &&           // not a version tag
+    !/^[0-9a-f]{40}$/.test(harnessRef);   // not a full SHA
+  if (isMutableRef) {
+    throw new Error(
+      `run-documentation-writer preflight failed: the process-audit receiver at ` +
+      `'${receiverPath}' in '${recorder}' pins to mutable ref '${harnessRef}'. ` +
+      `Use an immutable version tag (e.g. 'v0.2.2') or a full commit SHA. ` +
+      `Re-install with \`harness install process-audit-receiver --harness-ref <immutable-ref>\`.`,
+    );
+  }
+
+  // Check 5: uses: ref must match the expected configured harness ref.
+  if (harnessRef !== expectedRef) {
+    throw new Error(
+      `run-documentation-writer preflight failed: the process-audit receiver at ` +
+      `'${receiverPath}' in '${recorder}' uses ref '${harnessRef}' but the ` +
+      `configured expected ref is '${expectedRef}'. ` +
+      `Re-install with \`harness install process-audit-receiver --harness-ref ${expectedRef}\`.`,
+    );
+  }
+
+  // Check 6: harness-ref: input must be present and match the uses: ref.
+  if (!content.includes("harness-ref:")) {
+    throw new Error(
+      `run-documentation-writer preflight failed: the process-audit receiver at ` +
+      `'${receiverPath}' in '${recorder}' is missing the required ` +
+      `'harness-ref:' input. Re-install with \`harness install process-audit-receiver\`.`,
+    );
+  }
+  // Extract the harness-ref: value and verify it matches the uses: ref.
+  const harnessRefInputMatch = content.match(/harness-ref:\s*['"]?([^\s'"]+)['"]?/);
+  if (harnessRefInputMatch) {
+    const harnessRefInput = harnessRefInputMatch[1];
+    if (harnessRefInput !== harnessRef) {
+      throw new Error(
+        `run-documentation-writer preflight failed: the process-audit receiver at ` +
+        `'${receiverPath}' in '${recorder}' has mismatched refs: ` +
+        `uses: '${harnessRef}' but harness-ref input is '${harnessRefInput}'. ` +
+        `Re-install with \`harness install process-audit-receiver --harness-ref ${expectedRef}\`.`,
+      );
+    }
+  }
 }
 
 /**
@@ -629,5 +809,442 @@ export const github = {
       "-f", `query=${mutation}`,
       "-f", `threadId=${threadId}`,
     ]);
+  },
+
+  // ---------------------------------------------------------------------------
+  // SPEC-012: Run-documentation writer helpers
+  // ---------------------------------------------------------------------------
+
+  /**
+   * List .md files in a directory on a given ref via the Contents API.
+   * Returns an empty array when the directory does not exist.
+   * SPEC-012, TAC-09 (preserves existing generated snapshots in the index).
+   */
+  async listDirectoryMarkdownFiles(
+    repository: string,
+    dirPath: string,
+    ref: string,
+  ): Promise<Array<{ name: string; path: string }>> {
+    try {
+      const out = await runGh([
+        "api",
+        `repos/${repository}/contents/${dirPath}?ref=${encodeURIComponent(ref)}`,
+      ]);
+      const entries = JSON.parse(out) as Array<{ type: string; name: string; path: string }>;
+      return entries
+        .filter((e) => e.type === "file" && e.name.endsWith(".md"))
+        .map((e) => ({ name: e.name, path: e.path }));
+    } catch (err) {
+      if (err instanceof GhError && /404|not found/i.test(err.message)) return [];
+      throw err;
+    }
+  },
+
+  /**
+   * Create a single atomic commit for multiple files on a branch using the
+   * Git Data API (blob → tree → commit → ref update). On a non-fast-forward
+   * conflict, calls `buildFiles(newHeadSha)` to regenerate content against the
+   * updated branch and retries up to `maxRetries` times total (default 3).
+   * When `expectedPaths` is provided, `validateStagedPaths()` is called on the
+   * resolved file list before any blob is created, so staging an unexpected
+   * path is caught before the first external write. Returns the new commit SHA.
+   * SPEC-012, TAC-10–13 (transactional write, conflict retry, origin confirmation).
+   */
+  async createAtomicMultiFileCommit(
+    repository: string,
+    branch: string,
+    buildFiles: (parentCommitSha: string) => Promise<Array<{ path: string; content: string }>>,
+    commitMessage: string,
+    maxRetries = 3,
+    expectedPaths?: [string, string, string],
+  ): Promise<string> {
+    for (let attempt = 0; attempt < maxRetries; attempt++) {
+      // Resolve current branch HEAD.
+      const headShaRaw = await runGh([
+        "api",
+        `repos/${repository}/git/refs/heads/${encodeURIComponent(branch)}`,
+        "--jq", ".object.sha",
+      ]);
+      const parentCommitSha = headShaRaw.trim();
+
+      // Fetch the tree SHA for the parent commit.
+      const commitDataRaw = await runGh([
+        "api",
+        `repos/${repository}/git/commits/${parentCommitSha}`,
+        "--jq", ".tree.sha",
+      ]);
+      const baseTreeSha = commitDataRaw.trim();
+
+      // Build (or re-build on retry) the files to commit.
+      const files = await buildFiles(parentCommitSha);
+
+      // Validate that exactly the expected paths are staged before any write.
+      if (expectedPaths) {
+        validateStagedPaths(files.map((f) => f.path), expectedPaths);
+      }
+
+      // Create blobs for each file.
+      const treeEntries: Array<{ path: string; mode: string; type: string; sha: string }> = [];
+      for (const file of files) {
+        const blobShaRaw = await runGhWithJson(
+          ["api", `repos/${repository}/git/blobs`, "--method", "POST", "--input", "-", "--jq", ".sha"],
+          { content: Buffer.from(file.content).toString("base64"), encoding: "base64" },
+        );
+        treeEntries.push({
+          path: file.path,
+          mode: "100644",
+          type: "blob",
+          sha: blobShaRaw.trim(),
+        });
+      }
+
+      // Create the new tree on top of the base tree.
+      const newTreeShaRaw = await runGhWithJson(
+        ["api", `repos/${repository}/git/trees`, "--method", "POST", "--input", "-", "--jq", ".sha"],
+        { base_tree: baseTreeSha, tree: treeEntries },
+      );
+      const newTreeSha = newTreeShaRaw.trim();
+
+      // Create the commit.
+      const newCommitShaRaw = await runGhWithJson(
+        ["api", `repos/${repository}/git/commits`, "--method", "POST", "--input", "-", "--jq", ".sha"],
+        { message: commitMessage, tree: newTreeSha, parents: [parentCommitSha] },
+      );
+      const newCommitSha = newCommitShaRaw.trim();
+
+      // Update the ref (fast-forward only). Retry on conflict.
+      try {
+        await runGhWithJson(
+          ["api", `repos/${repository}/git/refs/heads/${encodeURIComponent(branch)}`, "--method", "PATCH", "--input", "-"],
+          { sha: newCommitSha, force: false },
+        );
+        return newCommitSha;
+      } catch (err) {
+        const isConflict =
+          err instanceof GhError && /not a fast forward|422/i.test(err.message);
+        if (!isConflict || attempt === maxRetries - 1) throw err;
+        // On conflict, loop again with the updated branch HEAD.
+      }
+    }
+    // Unreachable but satisfies TypeScript.
+    throw new Error("createAtomicMultiFileCommit: exceeded maximum retries");
+  },
+
+  /**
+   * Returns the SHA of the most recent commit on `branch` that touched the
+   * given `filePath`, or `undefined` if the file has never been committed on
+   * that branch. Used by the crash-after-push reconciler to adopt an already-
+   * landed documentation commit without creating a duplicate. SPEC-012, TAC-11.
+   */
+  async getLatestCommitForPath(
+    repository: string,
+    branch: string,
+    filePath: string,
+  ): Promise<string | undefined> {
+    try {
+      const out = await runGh([
+        "api",
+        `repos/${repository}/commits?sha=${encodeURIComponent(branch)}&path=${encodeURIComponent(filePath)}&per_page=1`,
+        "--jq", ".[0].sha // empty",
+      ]);
+      const sha = out.trim();
+      return sha.length > 0 ? sha : undefined;
+    } catch {
+      return undefined;
+    }
+  },
+
+  /**
+   * Returns the set of file paths changed by a specific commit.
+   * Used to verify that an adopted crash-after-push commit atomically contains
+   * all three expected documentation paths. SPEC-012, TAC-11.
+   *
+   * Uses the GitHub Commits API (`GET /repos/{owner}/{repo}/commits/{sha}`).
+   * Returns an empty set on any error so the caller can treat it as "unknown"
+   * and fall through to a fresh commit.
+   */
+  async getCommitChangedPaths(repository: string, commitSha: string): Promise<Set<string>> {
+    try {
+      const out = await runGh([
+        "api",
+        `repos/${repository}/commits/${encodeURIComponent(commitSha)}`,
+        "--jq", "[.files[].filename] | join(\"\\n\")",
+      ]);
+      const paths = out.trim().split("\n").filter((p) => p.length > 0);
+      return new Set(paths);
+    } catch {
+      return new Set();
+    }
+  },
+
+  /**
+   * Verify that a commit SHA is the current HEAD of the given branch or is
+   * reachable (an ancestor) from it. Uses the GitHub compare API to check
+   * ancestry so that a subsequent legitimate commit on the branch does not
+   * produce a false negative. Returns true when status is "identical" (same
+   * commit) or "behind" (HEAD has moved ahead, so expectedCommitSha is an
+   * ancestor). SPEC-012, TAC-13.
+   *
+   * Note on `behind`: in GitHub's compare semantics, comparing
+   * `expectedCommitSha...HEAD` where HEAD has advanced means the result
+   * is `ahead` (HEAD is ahead of base). We therefore compare
+   * `HEAD...expectedCommitSha`; if HEAD is behind the expected SHA that
+   * means the expected SHA is NOT reachable, so we reject it. We accept
+   * "identical" (same commit) and "behind" (HEAD has moved ahead of the
+   * expected SHA, meaning the expected SHA is reachable from HEAD).
+   *
+   * Practically: after an atomic push that returned `expectedCommitSha`, the
+   * branch ref IS the expected SHA. Any later legitimate commit on the branch
+   * makes HEAD an ancestor of nothing but a descendant of `expectedCommitSha`,
+   * so comparing `expectedCommitSha...HEAD` yields "ahead" — which we also
+   * accept.
+   */
+  async verifyCommitOnBranch(
+    repository: string,
+    branch: string,
+    expectedCommitSha: string,
+  ): Promise<boolean> {
+    try {
+      // Compare base=expectedCommitSha with head=branch.
+      // "ahead" → HEAD is ahead of the expected commit → expected is an ancestor ✓
+      // "identical" → same commit ✓
+      // "behind" | "diverged" → expected commit is NOT in HEAD's history ✗
+      const out = await runGh([
+        "api",
+        `repos/${repository}/compare/${expectedCommitSha}...${encodeURIComponent(branch)}`,
+        "--jq", ".status",
+      ]);
+      const status = out.trim();
+      return status === "ahead" || status === "identical";
+    } catch {
+      return false;
+    }
+  },
+
+  /**
+   * Dispatch a SPEC-005 envelope-v1 `process_audit` event to the configured
+   * recorder repository. The event is delivered via `repository_dispatch` with
+   * `event_type: "process_audit"` and the full payload nested under
+   * `client_payload.audit` (envelope-v1 contract: exactly one top-level field,
+   * exactly 15 canonical fields as defined in SPEC-005).
+   *
+   * This is the producer side of the REQ-005 audit contract. Delivery is
+   * confirmed only after `confirmAuditEventInJournal()` finds the idempotency
+   * key on the recorder's default branch; an HTTP 204 response is only accepted
+   * as enqueued, not as persisted (SPEC-005 §4 / SPEC-012 §8).
+   */
+  async dispatchProcessAuditEnvelopeV1(
+    recorderRepository: string,
+    payload: {
+      schema_version: 1;
+      occurred_at: string;
+      process_instance: string;
+      idempotency_key: string;
+      process_code: "DOCUMENTATION_UPDATE";
+      actor: string;
+      access_role: string;
+      supporting_access_roles: string[];
+      outcome: string;
+      repository: string;
+      artifact: string;
+      correlation_ids: string[];
+      evidence: string[];
+      reason: string;
+      description: string;
+    },
+  ): Promise<void> {
+    await runGhWithJson(
+      ["api", `repos/${recorderRepository}/dispatches`, "--method", "POST", "--input", "-"],
+      { event_type: "process_audit", client_payload: { audit: payload } },
+    );
+  },
+
+  /**
+   * Poll the recorder repository's journal directory for a file that contains
+   * the given idempotency key on its default branch.  Returns the
+   * `confirmed_at` value extracted from the journal entry.
+   *
+   * This implements the producer-side confirmation step from SPEC-005 §4:
+   * an event is considered durably delivered only when its `idempotency_key`
+   * appears in a persisted file on the recorder's default branch — not merely
+   * when the `repository_dispatch` HTTP 204 is received.
+   *
+   * Fail-closed: if the polling loop exhausts all attempts, an Error is
+   * thrown (never silently falls through). Callers must treat an unconfirmed
+   * delivery as a failure and increment the delivery-failure counter.
+   *
+   * @param recorderRepository  owner/repo of the audit recorder
+   * @param journalDirectory    path to the journal directory (e.g. "docs/process-audit/journal")
+   * @param idempotencyKey      key to search for in journal files
+   * @param branch              default branch to read from (e.g. "main")
+   * @param maxAttempts         maximum number of polling attempts (default 6)
+   * @param retryDelayMs        milliseconds to wait between attempts (default 10000)
+   */
+  async confirmAuditEventInJournal(
+    recorderRepository: string,
+    journalDirectory: string,
+    idempotencyKey: string,
+    branch: string,
+    maxAttempts = 6,
+    retryDelayMs = 10_000,
+  ): Promise<string> {
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      if (attempt > 0) {
+        await new Promise<void>((resolve) => setTimeout(resolve, retryDelayMs));
+      }
+      // List all .md files in the journal directory.  An empty or missing
+      // directory is not an error here — the workflow may not have run yet.
+      const files = await this.listDirectoryMarkdownFiles(recorderRepository, journalDirectory, branch);
+      for (const file of files) {
+        // Fail closed: any file-read error propagates immediately; unreadable
+        // journal files are NOT silently skipped (SPEC-005 §external-contract).
+        const { content } = await this.getFileContent(recorderRepository, file.path, branch);
+        // parseJournalEntry is the single shared implementation from
+        // src/audit/journalParser.js — no inline duplication.
+        const result = parseJournalEntry(content, file.path, idempotencyKey);
+        if (result === null) {
+          continue; // idempotency key not in this file
+        }
+        return result.confirmedAt;
+      }
+    }
+    throw new Error(
+      `audit event with idempotency_key "${idempotencyKey}" not found in journal ` +
+      `"${journalDirectory}" of "${recorderRepository}" after ${maxAttempts} attempt(s). ` +
+      `Ensure the process-audit-receiver workflow is installed in the recorder repository.`,
+    );
+  },
+
+  /**
+   * Preflight capability check for the run-documentation writer (SPEC-012 §11 / TAC-17).
+   *
+   * Verifies before any productive write that:
+   * 1. The default branch exists and is readable.
+   * 2. The authenticated token has `push` (= `contents: write`) permission on
+   *    the documentation repository.
+   * 3. The configured audit recorder repository is reachable (SPEC-012 §8 /
+   *    TAC-17 "fehlenden Auditvertrag"). Missing or unreachable recorder blocks
+   *    execution; this check is NOT deferred.
+   *
+   * @throws {Error} with a human-readable message describing the missing capability.
+   */
+  async preflightRunDocumentationWriter(
+    repository: string,
+    branch: string,
+    recorderRepository?: string,
+    expectedHarnessRef?: string,
+    credentialAccessRole?: string,
+  ): Promise<void> {
+    // Resolve defaults.
+    const recorder = recorderRepository ?? repository;
+    const { DEFAULT_PROCESS_AUDIT_RECEIVER_WORKFLOW_REF } = await import("../workflows/template-catalog.js");
+    const expectedRef = expectedHarnessRef ?? DEFAULT_PROCESS_AUDIT_RECEIVER_WORKFLOW_REF;
+
+    // Cross-repo check: the default repository-scoped GITHUB_TOKEN cannot
+    // dispatch events to a different repository.  Permit cross-repo dispatch
+    // only when an explicit cross-repo-capable access role is provided
+    // (e.g. a PAT or a GitHub App installation token).
+    if (recorder !== repository) {
+      const role = credentialAccessRole ?? "GITHUB_TOKEN";
+      if (!CROSS_REPO_ALLOWED_ROLES.has(role)) {
+        throw new Error(
+          `run-documentation-writer preflight failed: audit recorder repository '${recorder}' ` +
+          `is in a different repository from '${repository}'. ` +
+          `The configured credential role '${role}' is repository-scoped and cannot dispatch events ` +
+          `to a different repository. ` +
+          `Set --audit-access-role to GITHUB_PERSONAL_ACCESS_TOKEN or GITHUB_APP_USER_AUTHORIZATION ` +
+          `and provide the corresponding token, or configure the recorder to be the same repository ` +
+          `as the documentation target.`,
+        );
+      }
+    }
+
+    // Check 1: branch exists and is readable.
+    try {
+      await runGh([
+        "api",
+        `repos/${repository}/git/refs/heads/${encodeURIComponent(branch)}`,
+        "--jq", ".object.sha",
+      ]);
+    } catch (err) {
+      const msg = err instanceof GhError ? err.message : String(err);
+      if (/404|not found/i.test(msg)) {
+        throw new Error(
+          `run-documentation-writer preflight failed: branch '${branch}' not found in '${repository}'. ` +
+          `Ensure the repository and branch name are correct.`,
+        );
+      }
+      throw new Error(
+        `run-documentation-writer preflight failed: cannot read branch '${branch}' in '${repository}': ${msg}. ` +
+        `Ensure the workflow has 'contents: read' at minimum.`,
+      );
+    }
+
+    // Check 2: token has push (contents: write) permission.
+    try {
+      const permsRaw = await runGh([
+        "api",
+        `repos/${repository}`,
+        "--jq", ".permissions.push",
+      ]);
+      const hasPush = permsRaw.trim() === "true";
+      if (!hasPush) {
+        throw new Error(
+          `run-documentation-writer preflight failed: the authenticated token does not have 'push' ` +
+          `(contents: write) permission on '${repository}'. ` +
+          `Enable 'contents: write' in the workflow's 'permissions' block.`,
+        );
+      }
+    } catch (err) {
+      if (err instanceof Error && err.message.startsWith("run-documentation-writer preflight")) throw err;
+      const msg = err instanceof GhError ? err.message : String(err);
+      throw new Error(
+        `run-documentation-writer preflight failed: cannot determine permissions for '${repository}': ${msg}. ` +
+        `Enable 'contents: write' in the workflow's 'permissions' block.`,
+      );
+    }
+
+    // Check 3: audit recorder is reachable (SPEC-012 §8 / TAC-17).
+    //
+    // The recorder defaults to the tracking-issue repository (same token, same
+    // permissions). This check is not deferred: a missing or unreachable
+    // recorder blocks the writer before any state is mutated.
+    try {
+      await runGh([
+        "api",
+        `repos/${recorder}`,
+        "--jq", ".full_name",
+      ]);
+    } catch (err) {
+      const msg = err instanceof GhError ? err.message : String(err);
+      throw new Error(
+        `run-documentation-writer preflight failed: audit recorder repository '${recorder}' is not reachable: ${msg}. ` +
+        `Ensure the process-audit-receiver workflow is installed and the token has access to '${recorder}'.`,
+      );
+    }
+
+    // Check 4: the process-audit receiver workflow is installed, compatible,
+    // and pinned to the expected configured harness ref (SPEC-012 §11 / TAC-17).
+    //
+    // Uses validateReceiverContent() which verifies: managed marker + version,
+    // event/trigger wiring, canonical uses: target, immutable ref, ref matches
+    // expectedRef, and harness-ref: input matches uses: ref.
+    let receiverFile: { content: string } | undefined;
+    try {
+      receiverFile = await this.getFileContentIfExists(recorder, PROCESS_AUDIT_RECEIVER_PATH);
+    } catch (err) {
+      const msg = err instanceof GhError ? err.message : String(err);
+      throw new Error(
+        `run-documentation-writer preflight failed: cannot verify process-audit receiver in '${recorder}': ${msg}.`,
+      );
+    }
+    if (!receiverFile) {
+      throw new Error(
+        `run-documentation-writer preflight failed: process-audit receiver workflow ` +
+        `'${PROCESS_AUDIT_RECEIVER_PATH}' not found in '${recorder}'. ` +
+        `Run \`harness install process-audit-receiver\` in '${recorder}' to install it.`,
+      );
+    }
+    validateReceiverContent(receiverFile.content, expectedRef, PROCESS_AUDIT_RECEIVER_PATH, recorder);
   },
 };

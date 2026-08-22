@@ -8,11 +8,15 @@ import {
 import {
   LABEL_APPROVAL_BUNDLING_REFERENCE_MARKER,
   LABEL_APPROVAL_BUNDLING_REFERENCE_PATH,
+  PROCESS_AUDIT_RECEIVER_MARKER,
+  PROCESS_AUDIT_RECEIVER_PATH,
+  DEFAULT_PROCESS_AUDIT_RECEIVER_WORKFLOW_REF,
   SPEC_TO_ISSUE_REFERENCE_MARKER,
   SPEC_TO_ISSUE_REFERENCE_PATH,
   WORKFLOW_TEMPLATE_CATALOG,
   findWorkflowTemplate,
   renderLabelApprovalBundlingReference,
+  renderProcessAuditReceiver,
   renderReviewFixReference,
   renderSpecToIssueReference,
   resolveWorkflowInstallPlan,
@@ -152,5 +156,54 @@ describe("resolveWorkflowInstallPlan (TAC-04/TAC-07)", () => {
   it("SPEC-010: capability-smoke is a valid installable template", () => {
     expect(() => resolveWorkflowInstallPlan({ installWorkflows: "capability-smoke" })).not.toThrow();
     expect(resolveWorkflowInstallPlan({ installWorkflows: "capability-smoke" })).toEqual(["capability-smoke"]);
+  });
+
+  it("SPEC-005/Finding-1: process-audit-receiver is a valid installable template", () => {
+    expect(() => resolveWorkflowInstallPlan({ installWorkflows: "process-audit-receiver" })).not.toThrow();
+    expect(resolveWorkflowInstallPlan({ installWorkflows: "process-audit-receiver" })).toEqual(["process-audit-receiver"]);
+  });
+});
+
+describe("SPEC-005: process-audit-receiver catalog entry (Finding 1)", () => {
+  it("is registered in the catalog with the correct path, marker and reusable workflow path", () => {
+    const entry = findWorkflowTemplate("process-audit-receiver");
+    expect(entry).toBeDefined();
+    expect(entry!.targetPath).toBe(PROCESS_AUDIT_RECEIVER_PATH);
+    expect(entry!.marker).toBe(PROCESS_AUDIT_RECEIVER_MARKER);
+    expect(entry!.reusableWorkflowRepoPath).toBe(".github/workflows/process-audit-automation.yml");
+    expect(entry!.defaultRef).toBe(DEFAULT_PROCESS_AUDIT_RECEIVER_WORKFLOW_REF);
+  });
+
+  it("renderProcessAuditReceiver uses the remote reusable workflow at a pinned ref (not local path, not mutable 'main')", () => {
+    const rendered = renderProcessAuditReceiver({ harnessRef: "v0.2.2" });
+    expect(rendered).toContain(PROCESS_AUDIT_RECEIVER_MARKER);
+    expect(rendered).toContain("repository_dispatch");
+    expect(rendered).toContain("process_audit");
+    // Must call the remote reusable workflow
+    expect(rendered).toContain("uses: munichdeveloper/pi-spec-harness/.github/workflows/process-audit-automation.yml@v0.2.2");
+    // Must pass harness-ref so the recorder scripts use the same immutable ref
+    expect(rendered).toContain("harness-ref: 'v0.2.2'");
+    // Must NOT use the local path (./) — that only works in the harness repo itself
+    expect(rendered).not.toContain("uses: ./.github/workflows/process-audit-automation.yml");
+    // Must NOT hard-code mutable 'main'
+    expect(rendered).not.toContain("harness-ref: main");
+  });
+
+  it("renderProcessAuditReceiver defaults to the pinned release ref (not mutable 'main')", () => {
+    const rendered = renderProcessAuditReceiver();
+    expect(rendered).toContain(`process-audit-automation.yml@${DEFAULT_PROCESS_AUDIT_RECEIVER_WORKFLOW_REF}`);
+    expect(rendered).toContain(`harness-ref: '${DEFAULT_PROCESS_AUDIT_RECEIVER_WORKFLOW_REF}'`);
+    expect(rendered).not.toContain("harness-ref: main");
+  });
+
+  it("renderProcessAuditReceiver accepts a custom journal directory", () => {
+    const rendered = renderProcessAuditReceiver({ journalDir: "audit/journal" });
+    expect(rendered).toContain("journal-dir: 'audit/journal'");
+  });
+
+  it("rendered receiver is parseable by decideWorkflowInstall and treated as managed", () => {
+    const rendered = renderProcessAuditReceiver();
+    expect(decideWorkflowInstall(undefined, rendered, PROCESS_AUDIT_RECEIVER_MARKER)).toBe("create");
+    expect(decideWorkflowInstall(rendered, rendered, PROCESS_AUDIT_RECEIVER_MARKER)).toBe("noop");
   });
 });

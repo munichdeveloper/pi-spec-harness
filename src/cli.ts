@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { readFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import yargs, { type Argv } from "yargs";
 import { hideBin } from "yargs/helpers";
 import {
@@ -40,6 +41,7 @@ import {
   findPendingGatePublication,
   finishIteration,
   findPassedMergeApprovalGate,
+  formatCanonicalRunId,
   initRunState,
   needsGateReconciliation,
   recordDeliveryMergeEffect,
@@ -47,10 +49,74 @@ import {
   resolveGate,
   startIteration,
   transitionPhase,
+  upsertDocumentationSnapshot,
   upsertGate,
 } from "./state/state-machine.js";
-import type { GateDecisionContext, GateType, PhaseId, RunState } from "./state/types.js";
+import type { GateDecisionContext, GateType, HumanGateIssueRef, PhaseId, RunState } from "./state/types.js";
 import { SCHEMA_VERSION } from "./state/types.js";
+import { renderRunSnapshot, buildSnapshotFilename } from "./documentation/run-snapshot.js";
+import { generateRunIndex, generateObsidianBase, parseFrontmatter, parseRunIndexEntry } from "./documentation/run-index.js";
+import { validateDocumentationPath, validateLegacyDirectoryPath, validateSnapshotContent } from "./documentation/path-validator.js";
+import { DEFAULT_RUN_DOCUMENTATION_CONFIG } from "./documentation/run-documentation-config.js";
+
+/**
+ * Minimal subset of `github` functions required by `cmdPersistRunDocumentation`.
+ * Exported to allow integration tests to inject a stub adapter.
+ */
+export interface WriterGithubAdapter {
+  preflightRunDocumentationWriter(repository: string, branch: string, recorderRepository?: string, expectedHarnessRef?: string, credentialAccessRole?: string): Promise<void>;
+  getBranchSha(repository: string, branch: string): Promise<string>;
+  verifyCommitOnBranch(repository: string, branch: string, expectedCommitSha: string): Promise<boolean>;
+  createAtomicMultiFileCommit(
+    repository: string,
+    branch: string,
+    buildFiles: (parentCommitSha: string) => Promise<Array<{ path: string; content: string }>>,
+    commitMessage: string,
+    maxRetries?: number,
+    expectedPaths?: [string, string, string],
+  ): Promise<string>;
+  listDirectoryMarkdownFiles(repository: string, dirPath: string, ref: string): Promise<Array<{ name: string; path: string }>>;
+  getFileContent(repository: string, path: string, ref: string): Promise<{ content: string; blobSha: string }>;
+  getFileContentIfExists(repository: string, path: string, ref?: string): Promise<{ content: string; blobSha: string } | undefined>;
+  /** Returns the SHA of the most recent commit on `branch` that touched `filePath`, or undefined if not found. */
+  getLatestCommitForPath(repository: string, branch: string, filePath: string): Promise<string | undefined>;
+  /**
+   * Returns the set of file paths changed by a specific commit.
+   * Used to verify that an adopted crash-after-push commit atomically contains
+   * all three expected documentation paths. SPEC-012, TAC-11.
+   */
+  getCommitChangedPaths(repository: string, commitSha: string): Promise<Set<string>>;
+  dispatchProcessAuditEnvelopeV1(recorderRepository: string, payload: {
+    schema_version: 1;
+    occurred_at: string;
+    process_instance: string;
+    idempotency_key: string;
+    process_code: "DOCUMENTATION_UPDATE";
+    actor: string;
+    access_role: string;
+    supporting_access_roles: string[];
+    outcome: string;
+    repository: string;
+    artifact: string;
+    correlation_ids: string[];
+    evidence: string[];
+    reason: string;
+    description: string;
+  }): Promise<void>;
+  confirmAuditEventInJournal(
+    recorderRepository: string,
+    journalDirectory: string,
+    idempotencyKey: string,
+    branch: string,
+    maxAttempts?: number,
+    retryDelayMs?: number,
+  ): Promise<string>;
+  createIssue(repository: string, opts: { title: string; body: string; labels?: string[] }): Promise<{ number: number; url: string }>;
+  removeLabels(repository: string, issueNumber: number, labels: string[]): Promise<void>;
+  addLabels(repository: string, issueNumber: number, labels: string[]): Promise<void>;
+  closeIssue(repository: string, issueNumber: number): Promise<void>;
+  ensureLabel(repository: string, name: string, opts?: { color?: string; description?: string }): Promise<void>;
+}
 
 interface StoreArgs {
   state?: string;
@@ -439,6 +505,580 @@ async function cmdResume(argv: StoreArgs): Promise<void> {
   }
 
   printResult("resume", { state, nextAction: next }, next.detail);
+}
+
+/**
+ * Persist the run documentation snapshot as Markdown in the target repository.
+ * Writes the snapshot, run index, and Obsidian base to the configured paths,
+ * then records the persisted checkpoint in the run state.
+ * SPEC-012, decision 4–7.
+ */
+export async function cmdPersistRunDocumentation(argv: {
+  repository: string;
+  issueNumber: number;
+  generatedDirectory?: string;
+  legacyDirectories?: string[];
+  indexPath?: string;
+  obsidianBasePath?: string;
+  branch?: string;
+  harnessVersion?: string;
+  auditRecorderRepo?: string;
+  auditJournalPath?: string;
+  /**
+   * The access role of the credential that will be used to dispatch the
+   * process-audit event.  When the audit recorder is in a different repository,
+   * this must be a cross-repository-capable role such as
+   * `GITHUB_PERSONAL_ACCESS_TOKEN` or `GITHUB_APP_USER_AUTHORIZATION`.
+   * Defaults to `GITHUB_TOKEN` (repository-scoped; cross-repo dispatch
+   * is rejected when this is the active role).
+   */
+  auditAccessRole?: string;
+  /**
+   * The exact immutable harness ref (e.g. `abc1234` or `v1.2.3`) that the
+   * installed process-audit receiver workflow must reference.  Passed
+   * directly to `preflightRunDocumentationWriter` so the preflight can
+   * attest the receiver is pinned to the configured ref rather than any
+   * arbitrary or mutable tag/branch.
+   */
+  auditReceiverRef?: string;
+  /** For testing only: inject a fake GitHub adapter to avoid live API calls. */
+  _githubAdapter?: WriterGithubAdapter;
+  /** For testing only: inject a store factory to use an in-memory state store. */
+  _storeFactory?: (repository: string, issueNumber: number) => import("./state/state-store.js").StateStore & { issueRef?: { repository: string; number: number; url: string } };
+}): Promise<void> {
+  const { repository, issueNumber, branch = "main" } = argv;
+  const gh: WriterGithubAdapter = argv._githubAdapter ?? github;
+  const generatedDirectory = argv.generatedDirectory ?? DEFAULT_RUN_DOCUMENTATION_CONFIG.generatedDirectory;
+  const legacyDirectories = argv.legacyDirectories ?? DEFAULT_RUN_DOCUMENTATION_CONFIG.legacyDirectories;
+  // Validate each legacy directory path before any I/O (SPEC-012 Fix-4).
+  for (const legacyDir of legacyDirectories) {
+    validateLegacyDirectoryPath(legacyDir);
+  }
+  const indexPath = argv.indexPath ?? DEFAULT_RUN_DOCUMENTATION_CONFIG.indexPath;
+  const obsidianBasePath = argv.obsidianBasePath ?? DEFAULT_RUN_DOCUMENTATION_CONFIG.obsidianBasePath;
+  // Audit recorder defaults to the same repository as the tracking issue.
+  const auditRecorderRepo = argv.auditRecorderRepo ?? repository;
+  const auditJournalPath = argv.auditJournalPath ?? "docs/process-audit/journal";
+  const auditAccessRole = argv.auditAccessRole;
+  const auditReceiverRef = argv.auditReceiverRef;
+
+  const store = argv._storeFactory ? argv._storeFactory(repository, issueNumber) as IssueStateStore : new IssueStateStore(repository, issueNumber);
+  let state = await store.load();
+
+  // ---- Idempotent no-op guard (SPEC-012 TAC-11) ----
+  //
+  // If the checkpoint says "persisted" with both a commitSha and an
+  // auditConfirmedAt, re-confirm against origin and the audit journal before
+  // accepting the no-op. This prevents a commit-success/state-save-failure
+  // from permanently hiding a missing origin effect or an audit gap
+  // (SPEC-012 §3 item 3 & 4 / finding #2).
+  if (
+    state.documentationSnapshot?.status === "persisted" &&
+    state.documentationSnapshot.commitSha &&
+    state.documentationSnapshot.auditConfirmedAt
+  ) {
+    const snap = state.documentationSnapshot;
+    const commitOnOrigin = await gh.verifyCommitOnBranch(repository, branch, snap.commitSha!);
+    let auditInJournal = false;
+    if (commitOnOrigin) {
+      // Only bother checking the journal if the commit is confirmed; a failed
+      // origin check means we must re-run regardless.
+      try {
+        // Attempt a single quick confirmation (1 attempt, 0 delay).
+        await gh.confirmAuditEventInJournal(
+          auditRecorderRepo,
+          auditJournalPath,
+          snap.auditIdempotencyKey,
+          branch,
+          1,
+          0,
+        );
+        auditInJournal = true;
+      } catch {
+        // Audit not confirmed in journal — fall through to re-deliver.
+      }
+    }
+    if (commitOnOrigin && auditInJournal) {
+      const next = computeNextAction(state);
+      printResult(
+        "persist-run-documentation",
+        { skipped: "already-persisted", documentationSnapshot: snap, nextAction: next },
+        next.detail,
+      );
+      return;
+    }
+    // At least one of commit-on-origin or audit-in-journal failed; fall through
+    // to re-execute the publishing / audit phases from the persisted keys.
+  }
+
+  const next = computeNextAction(state);
+  if (next.action !== "persist-run-documentation") {
+    throw new Error(`run '${state.runId}' is not ready for documentation persistence: ${next.detail}`);
+  }
+
+  // ---- Capability preflight (SPEC-012 §11 / TAC-17) ----
+  //
+  // Verify branch accessibility, contents-write permission, and that the
+  // configured audit recorder is reachable. Preflight runs before any state
+  // is mutated; a missing capability produces a concrete error. The recorder
+  // check is NOT deferred (SPEC-012 §8 / TAC-17 "fehlenden Auditvertrag").
+  await gh.preflightRunDocumentationWriter(repository, branch, auditRecorderRepo, auditReceiverRef, auditAccessRole);
+
+  const harnessVersion = argv.harnessVersion ?? "unknown";
+
+  const trackingIssue: HumanGateIssueRef = {
+    repository,
+    number: issueNumber,
+    url: `https://github.com/${repository}/issues/${issueNumber}`,
+  };
+
+  // ---- Phase 1: Build or reuse the prepared checkpoint ----
+  //
+  // `generatedAt`, paths, and idempotency keys must be persisted in state
+  // BEFORE the first external write so that every retry produces byte-identical
+  // content. If a `prepared` or `publishing` checkpoint already exists, reuse
+  // its keys and timestamps rather than generating new ones.
+
+  const existing = state.documentationSnapshot;
+  // Also treat a `persisted` checkpoint that failed re-confirmation as resumable.
+  const isResuming = existing &&
+    (existing.status === "prepared" || existing.status === "publishing" || existing.status === "persisted");
+
+  const generatedAt = isResuming ? existing.generatedAt : new Date().toISOString();
+  const idempotencyKey = isResuming
+    ? existing.idempotencyKey
+    : `persist-run-doc-${state.runId}-${issueNumber}`;
+  const auditIdempotencyKey = isResuming
+    ? existing.auditIdempotencyKey
+    : `audit-run-doc-${state.runId}-${issueNumber}`;
+  const snapshotFilename = buildSnapshotFilename(state.runId, state.spec);
+  const snapshotPath = isResuming ? existing.path : `${generatedDirectory}/${snapshotFilename}`;
+
+  // Validate all three destination paths before touching any state.
+  validateDocumentationPath(snapshotPath);
+  validateDocumentationPath(indexPath);
+  validateDocumentationPath(obsidianBasePath);
+
+  // Resolve HEAD SHA of the default branch as the source reference.
+  const sourceHeadSha = isResuming ? existing.sourceHeadSha : await gh.getBranchSha(repository, branch);
+
+  if (!isResuming) {
+    // Pre-compute all three output file contents (deterministic: snapshot
+    // depends only on state; index/base depend on existing origin entries at
+    // sourceHeadSha). Hashing all three and persisting them enables
+    // crash-after-push reconciliation that can verify the ATOMIC three-file
+    // commit landed — not just that the snapshot path was touched by some
+    // partial or concurrent commit. SPEC-012, TAC-11.
+    const preparedSnapshotContent = renderRunSnapshot({
+      state,
+      trackingIssue,
+      repositoryDefaultBranch: branch,
+      harnessVersion: argv.harnessVersion ?? "unknown",
+      generatedAt,
+    });
+
+    // Read existing entries from origin at sourceHeadSha so the index/base
+    // hashes are deterministic for the same parent state. readAllRunEntries is
+    // a hoisted function declaration defined later in this function body.
+    const preparedExistingEntries = await readAllRunEntries(sourceHeadSha, snapshotPath);
+    const preparedNewEntry = parseRunIndexEntry(snapshotPath, preparedSnapshotContent);
+    if (preparedNewEntry) preparedExistingEntries.push(preparedNewEntry);
+    const preparedIndexContent = generateRunIndex(preparedExistingEntries, generatedAt);
+    const preparedObsidianContent = generateObsidianBase(preparedExistingEntries, generatedAt);
+
+    const preparedContentHashes: Record<string, string> = {
+      [snapshotPath]: createHash("sha256").update(preparedSnapshotContent, "utf8").digest("hex"),
+      [indexPath]: createHash("sha256").update(preparedIndexContent, "utf8").digest("hex"),
+      [obsidianBasePath]: createHash("sha256").update(preparedObsidianContent, "utf8").digest("hex"),
+    };
+
+    // Persist the `prepared` checkpoint BEFORE the first external write.
+    state = upsertDocumentationSnapshot(state, {
+      schemaVersion: 1,
+      status: "prepared",
+      idempotencyKey,
+      path: snapshotPath,
+      indexPath,
+      obsidianBasePath,
+      generatedAt,
+      sourceHeadSha,
+      contentHashes: preparedContentHashes,
+      auditIdempotencyKey,
+    });
+    await store.save(state);
+  }
+
+  // Constants used in the delivery failure handler below (TAC-13).
+  const MAX_DOC_DELIVERY_FAILURES = 3;
+  const DELIVERY_FAILED_GATE_ID = "run-documentation-delivery-failed";
+
+  // ---- Phases 2 & 3: Atomic commit + REQ-005 audit delivery ----
+  //
+  // Both phases are wrapped in a single try-catch so that ANY failure —
+  // conflict exhaustion, origin-verification failure, dispatch error, or
+  // journal confirmation timeout — increments the delivery failure counter
+  // and opens exactly one Human Gate after three consecutive failures
+  // (SPEC-012 §9 / TAC-13, finding #3).
+
+  let commitSha: string;
+  let auditConfirmedAt: string;
+
+  try {
+    // ---- Phase 2: Atomic three-file commit ----
+    //
+    // If resuming a `publishing` checkpoint with a commit already confirmed
+    // on origin, skip the write phase and go straight to audit.
+    if (
+      (state.documentationSnapshot?.status === "publishing" ||
+        state.documentationSnapshot?.status === "persisted") &&
+      state.documentationSnapshot.commitSha
+    ) {
+      // Resume: verify the commit is still reachable from origin. If not,
+      // the branch may have been force-pushed; re-commit to recover.
+      const onOrigin = await gh.verifyCommitOnBranch(
+        repository,
+        branch,
+        state.documentationSnapshot.commitSha,
+      );
+      commitSha = onOrigin
+        ? state.documentationSnapshot.commitSha
+        : await performAtomicDocCommit();
+    } else if (
+      state.documentationSnapshot?.status === "prepared" &&
+      state.documentationSnapshot.contentHashes?.[snapshotPath]
+    ) {
+      // Crash-after-push reconciliation (SPEC-012, TAC-11): the `prepared`
+      // checkpoint has no commitSha, but a prior attempt may have already
+      // landed the three-file atomic commit. To safely adopt it we must
+      // verify ALL THREE expected output files match their stored hashes —
+      // not just the snapshot. This prevents a concurrent or partial commit
+      // that touches only the snapshot path from being falsely adopted.
+      const hashes = state.documentationSnapshot.contentHashes;
+      const expectedSnapshotHash = hashes[snapshotPath];
+      const expectedIndexHash = hashes[indexPath];
+      const expectedBaseHash = hashes[obsidianBasePath];
+
+      const [originSnapshot, originIndex, originBase] = await Promise.all([
+        gh.getFileContentIfExists(repository, snapshotPath),
+        expectedIndexHash ? gh.getFileContentIfExists(repository, indexPath) : Promise.resolve(undefined),
+        expectedBaseHash ? gh.getFileContentIfExists(repository, obsidianBasePath) : Promise.resolve(undefined),
+      ]);
+
+      const snapshotHashMatches = originSnapshot &&
+        createHash("sha256").update(originSnapshot.content, "utf8").digest("hex") === expectedSnapshotHash;
+      const indexHashMatches = !expectedIndexHash ||
+        (originIndex &&
+          createHash("sha256").update(originIndex.content, "utf8").digest("hex") === expectedIndexHash);
+      const baseHashMatches = !expectedBaseHash ||
+        (originBase &&
+          createHash("sha256").update(originBase.content, "utf8").digest("hex") === expectedBaseHash);
+
+      if (snapshotHashMatches && indexHashMatches && baseHashMatches) {
+        // All three origin files match the prepared hashes. Find the latest
+        // commit that touched the snapshot path and verify it also contains
+        // the index and base paths (confirming the three-file atomicity).
+        const candidateSha = await gh.getLatestCommitForPath(repository, branch, snapshotPath);
+        if (candidateSha) {
+          const commitPaths = await gh.getCommitChangedPaths(repository, candidateSha);
+          const hasAllThree =
+            commitPaths.has(snapshotPath) &&
+            commitPaths.has(indexPath) &&
+            commitPaths.has(obsidianBasePath);
+          const isReachable = await gh.verifyCommitOnBranch(repository, branch, candidateSha);
+          if (hasAllThree && isReachable) {
+            commitSha = candidateSha;
+          } else {
+            // Commit does not contain all three paths or is not reachable.
+            commitSha = await performAtomicDocCommit();
+          }
+        } else {
+          commitSha = await performAtomicDocCommit();
+        }
+      } else {
+        commitSha = await performAtomicDocCommit();
+      }
+    } else {
+      commitSha = await performAtomicDocCommit();
+    }
+
+    // Save `publishing` checkpoint (commit confirmed on origin) before audit.
+    state = upsertDocumentationSnapshot(state, {
+      schemaVersion: 1,
+      status: "publishing",
+      idempotencyKey,
+      path: snapshotPath,
+      indexPath,
+      obsidianBasePath,
+      generatedAt,
+      sourceHeadSha,
+      contentHashes: state.documentationSnapshot?.contentHashes,
+      commitSha,
+      auditIdempotencyKey,
+    });
+    await store.save(state);
+
+    // ---- Phase 3: Audit delivery via REQ-005 envelope-v1 (SPEC-012 §8) ----
+    //
+    // Deliver a DOCUMENTATION_UPDATE event to the configured recorder via
+    // `repository_dispatch` with the SPEC-005 envelope-v1 payload. Only after
+    // the idempotency key is confirmed in the recorder's default-branch journal
+    // is `auditConfirmedAt` recorded in run state. A mutable issue comment is
+    // NOT an acceptable substitute for the durable journal entry (finding #1).
+    await gh.dispatchProcessAuditEnvelopeV1(
+      auditRecorderRepo,
+      {
+        schema_version: 1,
+        occurred_at: generatedAt,
+        process_instance: formatCanonicalRunId(repository, issueNumber).processInstance,
+        idempotency_key: auditIdempotencyKey,
+        process_code: "DOCUMENTATION_UPDATE",
+        actor: "GITHUB_ACTIONS",
+        access_role: "GITHUB_ACTIONS_TOKEN",
+        supporting_access_roles: [],
+        outcome: "SUCCEEDED",
+        repository,
+        artifact: commitSha,
+        correlation_ids: [state.runId, `${repository}#${issueNumber}`],
+        evidence: [
+          `https://github.com/${repository}/issues/${issueNumber}`,
+          `https://github.com/${repository}/commit/${commitSha}`,
+        ],
+        reason: `Run documentation persisted for run ${state.runId}.`,
+        description: `The harness run-documentation-finalizer committed the structured run snapshot at ${snapshotPath}.`,
+      },
+    );
+
+    // Poll the recorder's journal until the idempotency key appears on the
+    // default branch. This is the "confirmed delivery" step from SPEC-005 §4.
+    auditConfirmedAt = await gh.confirmAuditEventInJournal(
+      auditRecorderRepo,
+      auditJournalPath,
+      auditIdempotencyKey,
+      branch,
+    );
+  } catch (deliveryErr) {
+    // Any write-or-audit failure: increment the delivery failure counter and
+    // open exactly one Human Gate after reaching the configured threshold.
+    const prevCount = state.documentationSnapshot?.deliveryFailureCount ?? 0;
+    const newCount = prevCount + 1;
+    // Preserve all existing checkpoint fields; only update status + counter.
+    state = upsertDocumentationSnapshot(state, {
+      schemaVersion: 1,
+      status: state.documentationSnapshot?.status ?? "prepared",
+      idempotencyKey,
+      path: snapshotPath,
+      indexPath,
+      obsidianBasePath,
+      generatedAt,
+      sourceHeadSha,
+      ...(state.documentationSnapshot?.commitSha
+        ? { commitSha: state.documentationSnapshot.commitSha }
+        : {}),
+      auditIdempotencyKey,
+      deliveryFailureCount: newCount,
+    });
+    await store.save(state);
+
+    if (newCount >= MAX_DOC_DELIVERY_FAILURES && !findGate(state, DELIVERY_FAILED_GATE_ID) && store.issueRef) {
+      const gateQuestion =
+        "The run documentation could not be persisted or audited after three attempts. Please review and retry or close manually.";
+      state = upsertGate(state, {
+        id: DELIVERY_FAILED_GATE_ID,
+        type: "human",
+        question: gateQuestion,
+      });
+      state = prepareHumanGateIssue({
+        runState: state,
+        gateId: DELIVERY_FAILED_GATE_ID,
+        title: `[Harness] Run documentation delivery failed after ${newCount} attempts`,
+        question: gateQuestion,
+        context: [
+          `runId: ${state.runId}`,
+          `repository: ${repository}`,
+          `snapshotPath: ${snapshotPath}`,
+          `auditRecorderRepo: ${auditRecorderRepo}`,
+          `auditJournalPath: ${auditJournalPath}`,
+          `failureError: ${deliveryErr instanceof Error ? deliveryErr.message : String(deliveryErr)}`,
+        ],
+        decisionContext: undefined,
+        runIssue: store.issueRef,
+      });
+      await store.save(state);
+      // Best-effort: attempt to publish the gate as a GitHub issue; if this fails the
+      // gate is still persisted in state and can be published on the next invocation.
+      try {
+        state = await publishHumanGateIssue(state, DELIVERY_FAILED_GATE_ID, (checkpoint) => store.save(checkpoint));
+        await store.save(state);
+      } catch {
+        // Gate state is already saved; delivery failure is the primary error.
+      }
+    }
+    throw deliveryErr;
+  }
+
+  // Transition to `persisted` only after the audit event is confirmed in the
+  // recorder's default-branch journal.
+  state = upsertDocumentationSnapshot(state, {
+    schemaVersion: 1,
+    status: "persisted",
+    idempotencyKey,
+    path: snapshotPath,
+    indexPath,
+    obsidianBasePath,
+    generatedAt,
+    sourceHeadSha,
+    commitSha,
+    auditIdempotencyKey,
+    auditConfirmedAt,
+  });
+  await store.save(state);
+
+  const following = computeNextAction(state);
+  printResult(
+    "persist-run-documentation",
+    {
+      snapshotPath,
+      indexPath,
+      obsidianBasePath,
+      commitSha,
+      sourceHeadSha,
+      auditConfirmedAt,
+      documentationSnapshot: state.documentationSnapshot,
+      nextAction: following,
+    },
+    following.detail,
+  );
+
+  // --------------------------------------------------------------------------
+  // Inner helper: read all existing run index entries from generatedDirectory
+  // and all configured legacyDirectories, deduplicated by path. Files with an
+  // unknown schema_version cause a hard failure (fail-closed, SPEC-012 §10).
+  // --------------------------------------------------------------------------
+  async function readAllRunEntries(
+    parentCommitSha: string,
+    skipPath: string,
+  ): Promise<Array<import("./documentation/run-index.js").RunIndexEntry>> {
+    const allEntries: Array<import("./documentation/run-index.js").RunIndexEntry> = [];
+
+    const dirsToScan = [generatedDirectory, ...legacyDirectories];
+    const seenPaths = new Set<string>();
+
+    for (const dir of dirsToScan) {
+      const files = await gh.listDirectoryMarkdownFiles(repository, dir, parentCommitSha);
+      for (const file of files) {
+        if (file.path === skipPath) continue;           // will be replaced by new content
+        if (file.path.endsWith("-notes.md")) continue; // human-managed notes, not run docs
+        if (seenPaths.has(file.path)) continue;
+        seenPaths.add(file.path);
+
+        // Network reads propagate; only swallow "not found" for entire directories
+        // (handled by listDirectoryMarkdownFiles returning []).
+        const { content } = await gh.getFileContent(repository, file.path, parentCommitSha);
+
+        // Fail closed on unknown schema version: SPEC-012 §10 / TAC-10.
+        const fm = parseFrontmatter(content);
+        if (fm && "schema_version" in fm && fm["schema_version"] !== 1) {
+          throw new Error(
+            `run documentation file '${file.path}' has unknown schema_version '${fm["schema_version"]}'; ` +
+            `aborting to avoid silently dropping it from regenerated views`,
+          );
+        }
+
+        const entry = parseRunIndexEntry(file.path, content);
+        if (entry) allEntries.push(entry);
+        // Files without a run_id (e.g. non-run markdown) are silently skipped.
+      }
+    }
+    return allEntries;
+  }
+
+  // --------------------------------------------------------------------------
+  // Inner helper: perform one transactional three-file documentation commit
+  // using the Git Data API (SPEC-012 §7 / TAC-10–12). Retries up to 3 times
+  // on non-fast-forward conflicts; verifies the commit is on origin after push.
+  // --------------------------------------------------------------------------
+  async function performAtomicDocCommit(): Promise<string> {
+    const commitMessage = `docs(harness): persist run documentation snapshot for ${state.runId}`;
+
+    const expectedPaths: [string, string, string] = [snapshotPath, indexPath, obsidianBasePath];
+
+    const sha = await gh.createAtomicMultiFileCommit(
+      repository,
+      branch,
+      async (parentCommitSha) => {
+        // Re-render snapshot content (deterministic; same state + generatedAt
+        // always produces byte-identical output per SPEC-012 TAC-06).
+        const snapshotContent = renderRunSnapshot({
+          state,
+          trackingIssue,
+          repositoryDefaultBranch: branch,
+          harnessVersion,
+          generatedAt,
+        });
+
+        // Validate snapshot content for PII / secrets / evidence URLs.
+        validateSnapshotContent(snapshotContent);
+
+        // Read existing run entries from generatedDirectory AND all configured
+        // legacyDirectories so the index is always complete and cumulative.
+        // Files with unknown schema versions cause a hard failure (fail-closed).
+        const allEntries = await readAllRunEntries(parentCommitSha, snapshotPath);
+
+        // Add the new/updated snapshot entry.
+        const newEntry = parseRunIndexEntry(snapshotPath, snapshotContent);
+        if (newEntry) allEntries.push(newEntry);
+
+        const indexContent = generateRunIndex(allEntries, generatedAt);
+        const obsidianContent = generateObsidianBase(allEntries, generatedAt);
+
+        // SPEC-012 Fix 1: persist updated contentHashes BEFORE each push
+        // attempt. On conflict/retry the index/base bytes may differ from the
+        // hashes saved in the `prepared` checkpoint (because buildFiles() is
+        // re-invoked with the new parentCommitSha). Without updating the
+        // checkpoint here, a crash-after-push scenario on the second+ attempt
+        // would leave the reconciler comparing origin bytes against stale
+        // prepared hashes, causing it to reject the correctly landed commit and
+        // create a duplicate.
+        const updatedHashes: Record<string, string> = {
+          [snapshotPath]: createHash("sha256").update(snapshotContent, "utf8").digest("hex"),
+          [indexPath]: createHash("sha256").update(indexContent, "utf8").digest("hex"),
+          [obsidianBasePath]: createHash("sha256").update(obsidianContent, "utf8").digest("hex"),
+        };
+        state = upsertDocumentationSnapshot(state, {
+          schemaVersion: 1,
+          status: "prepared",
+          idempotencyKey,
+          path: snapshotPath,
+          indexPath,
+          obsidianBasePath,
+          generatedAt,
+          sourceHeadSha,
+          contentHashes: updatedHashes,
+          auditIdempotencyKey,
+        });
+        await store.save(state);
+
+        return [
+          { path: snapshotPath, content: snapshotContent },
+          { path: indexPath, content: indexContent },
+          { path: obsidianBasePath, content: obsidianContent },
+        ];
+      },
+      commitMessage,
+      3,
+      expectedPaths,
+    );
+
+    // Verify the commit landed on origin/<branch> (exact or as ancestor).
+    const confirmed = await gh.verifyCommitOnBranch(repository, branch, sha);
+    if (!confirmed) {
+      throw new Error(
+        `documentation commit ${sha} was not confirmed on origin/${branch}; aborting`,
+      );
+    }
+
+    return sha;
+  }
 }
 
 async function cmdAdvance(argv: StoreArgs): Promise<void> {
@@ -1406,7 +2046,7 @@ async function cmdIterationFinish(
   printResult("iteration-finish", { state, nextAction: next }, next.detail);
 }
 
-await yargs(hideBin(process.argv))
+const _harnessCli = yargs(hideBin(process.argv))
   .scriptName("harness")
   .command(
     "pr-bind",
@@ -1820,6 +2460,40 @@ await yargs(hideBin(process.argv))
       }),
   )
   .command(
+    "persist-run-documentation",
+    "Persist the run documentation snapshot to the repository and record the checkpoint in run state (SPEC-012)",
+    (y) =>
+      y
+        .option("repository", { type: "string", demandOption: true, describe: "owner/repo of the target repository" })
+        .option("issue-number", { type: "number", demandOption: true, describe: "Tracking issue number (harness:run issue)" })
+        .option("generated-directory", { type: "string", describe: "Directory for generated snapshots (default: docs/runs/generated)" })
+        .option("legacy-directory", { type: "array", string: true, describe: "Legacy directory/directories to scan for existing run documents (may be specified multiple times; default: docs/runs)" })
+        .option("index-path", { type: "string", describe: "Path for the run index document (default: docs/runs/RUN-INDEX.md)" })
+        .option("obsidian-base-path", { type: "string", describe: "Path for the Obsidian base document (default: docs/runs/Runs.base)" })
+        .option("branch", { type: "string", describe: "Default branch to write to (default: main)" })
+        .option("harness-version", { type: "string", describe: "Harness version string to embed in the snapshot metadata" })
+        .option("audit-recorder-repo", { type: "string", describe: "owner/repo of the REQ-005 audit recorder (default: same as --repository)" })
+        .option("audit-journal-path", { type: "string", describe: "Path to the audit journal directory in the recorder repo (default: docs/process-audit/journal)" })
+        .option("audit-access-role", { type: "string", describe: "Access role of the credential used for audit dispatch (e.g. GITHUB_PERSONAL_ACCESS_TOKEN); required when audit-recorder-repo is a different repository" })
+        .option("audit-receiver-ref", { type: "string", describe: "Exact immutable harness ref that the installed process-audit receiver workflow must reference (e.g. a commit SHA or semver tag)" }),
+
+    async (argv) =>
+      cmdPersistRunDocumentation({
+        repository: argv.repository as string,
+        issueNumber: argv["issue-number"] as number,
+        generatedDirectory: argv["generated-directory"] as string | undefined,
+        legacyDirectories: argv["legacy-directory"] as string[] | undefined,
+        indexPath: argv["index-path"] as string | undefined,
+        obsidianBasePath: argv["obsidian-base-path"] as string | undefined,
+        branch: argv.branch as string | undefined,
+        harnessVersion: argv["harness-version"] as string | undefined,
+        auditRecorderRepo: argv["audit-recorder-repo"] as string | undefined,
+        auditJournalPath: argv["audit-journal-path"] as string | undefined,
+        auditAccessRole: argv["audit-access-role"] as string | undefined,
+        auditReceiverRef: argv["audit-receiver-ref"] as string | undefined,
+      }),
+  )
+  .command(
     "review-fix",
     "Persist and classify a submitted review for the exactly bound PR and SHA",
     (y) =>
@@ -1871,5 +2545,10 @@ await yargs(hideBin(process.argv))
     async (argv) => cmdReconcile({ repository: argv.repository as string }),
   )
   .demandCommand(1)
-  .strict()
-  .parse();
+  .strict();
+
+// Guard: only execute the CLI when this module is the entry point, not when
+// imported by tests or other modules. `VITEST` is set to "true" by vitest.
+if (!process.env["VITEST"]) {
+  await _harnessCli.parse();
+}

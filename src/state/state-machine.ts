@@ -1,5 +1,5 @@
 import { nowIso } from "./store.js";
-import type { GateDecisionContext, GateRecord, GateResult, GateType, IterationRecord, PhaseId, ReviewRecord, ReviewThreadRecord, ReviewThreadStatus, RunState } from "./types.js";
+import type { CanonicalRunId, GateDecisionContext, GateRecord, GateResult, GateType, IterationRecord, PhaseId, ReviewRecord, ReviewThreadRecord, ReviewThreadStatus, RunState } from "./types.js";
 import { SCHEMA_VERSION } from "./types.js";
 
 export const PHASE_ORDER: PhaseId[] = [
@@ -13,6 +13,21 @@ export const PHASE_ORDER: PhaseId[] = [
   "merge",
   "complete",
 ];
+
+/**
+ * Build the canonical run identity from the persistent tracking-issue number.
+ * The decimal representation is zero-padded to at least four digits and never
+ * truncated for larger issue numbers. SPEC-012, decision 1 / TAC-01.
+ */
+export function formatCanonicalRunId(repository: string, trackingIssueNumber: number): CanonicalRunId {
+  const padded = String(trackingIssueNumber).padStart(4, "0");
+  const runId = `RUN-${padded}`;
+  const qualifiedRunId = `${repository}#${runId}`;
+  // Normalize: upper-case, slashes and hyphens become hyphens, dots removed.
+  const normalized = repository.toUpperCase().replace(/\//g, "-").replace(/\./g, "");
+  const processInstance = `PI-${normalized}-${runId}`;
+  return { runId, qualifiedRunId, processInstance };
+}
 
 export interface InitRunOptions {
   runId: string;
@@ -283,6 +298,20 @@ export function acknowledgeRejectedGate(state: RunState, gateId: string, note: s
   });
 }
 
+/**
+ * Upsert the documentation snapshot checkpoint.
+ * Merges the provided partial update into the existing checkpoint (or creates
+ * a new one) and stamps updatedAt. Pure; no I/O. SPEC-012, decision 2.
+ */
+export function upsertDocumentationSnapshot(
+  state: RunState,
+  update: Partial<import("./types.js").DocumentationSnapshotCheckpoint> &
+    Pick<import("./types.js").DocumentationSnapshotCheckpoint, "schemaVersion" | "status" | "idempotencyKey" | "path" | "indexPath" | "obsidianBasePath" | "generatedAt" | "sourceHeadSha" | "auditIdempotencyKey">,
+): RunState {
+  const merged = { ...(state.documentationSnapshot ?? {}), ...update } as import("./types.js").DocumentationSnapshotCheckpoint;
+  return { ...state, documentationSnapshot: merged, updatedAt: nowIso() };
+}
+
 export function transitionPhase(state: RunState, phase: PhaseId): RunState {
   if (phase === state.phase) return state;
 
@@ -316,6 +345,16 @@ export function transitionPhase(state: RunState, phase: PhaseId): RunState {
     !hasPersistedDeliveryMergeEvidence(state)
   ) {
     throw new Error("cannot complete a run without persisted delivery merge evidence");
+  }
+
+  // SPEC-012 TAC-05: completing a run also requires a persisted, audited
+  // documentation snapshot. This mirrors the computeNextAction guard so that
+  // callers that call transitionPhase directly are also protected.
+  if (phase === "complete") {
+    const snap = state.documentationSnapshot;
+    if (!snap || snap.status !== "persisted" || !snap.commitSha || !snap.auditConfirmedAt) {
+      throw new Error("cannot complete a run without a persisted and audited documentation snapshot");
+    }
   }
 
   return { ...state, phase, updatedAt: nowIso() };
@@ -515,7 +554,8 @@ export interface NextAction {
     | "run-complete"
     | "resolve-gate"
     | "cleanup-human-gate"
-    | "publish-human-gate";
+    | "publish-human-gate"
+    | "persist-run-documentation";
   detail: string;
   gate?: GateRecord;
 }
@@ -602,6 +642,20 @@ export function computeNextAction(state: RunState): NextAction {
         : "Delivery PR merge approval and persisted merge effect are both required before completing the run.",
       gate: mergeGate,
     };
+  }
+
+  // SPEC-012 TAC-04/TAC-05: Once merge evidence is confirmed, require a
+  // persisted and audited documentation snapshot before completing the run.
+  if (state.phase === "merge" && hasPersistedDeliveryMergeEvidence(state)) {
+    const snap = state.documentationSnapshot;
+    if (!snap || snap.status !== "persisted" || !snap.commitSha || !snap.auditConfirmedAt) {
+      return {
+        action: "persist-run-documentation",
+        detail: snap
+          ? `Documentation snapshot is in status '${snap.status}' (commitSha: ${snap.commitSha ?? "missing"}, auditConfirmedAt: ${snap.auditConfirmedAt ?? "missing"}); resume or complete the documentation write and audit.`
+          : "Delivery merge is confirmed; a documentation snapshot must be persisted and audited before the run can complete.",
+      };
+    }
   }
 
   if (state.phase === "complete") {

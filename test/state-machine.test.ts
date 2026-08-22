@@ -14,6 +14,7 @@ import {
   resolveGate,
   startIteration,
   transitionPhase,
+  upsertDocumentationSnapshot,
   upsertGate,
 } from "../src/state/state-machine.js";
 
@@ -195,6 +196,26 @@ describe("state-machine", () => {
     })).toBe(state);
     expect(state.deliveryMergeCommitSha).toBe(mergeCommitSha);
     expect(state.deliveryMergedAt).toBe("2026-08-18T13:19:11Z");
+
+    // SPEC-012 TAC-04: after merge evidence, computeNextAction requests documentation
+    expect(computeNextAction(state).action).toBe("persist-run-documentation");
+    // SPEC-012 TAC-05: transitionPhase to complete requires a persisted, audited snapshot
+    expect(() => transitionPhase(state, "complete")).toThrow(/persisted and audited documentation snapshot/);
+
+    state = upsertDocumentationSnapshot(state, {
+      schemaVersion: 1,
+      status: "persisted",
+      idempotencyKey: "test-idem-key",
+      path: "docs/runs/generated/RUN-0047-test.md",
+      indexPath: "docs/runs/RUN-INDEX.md",
+      obsidianBasePath: "docs/runs/Runs.base",
+      generatedAt: "2026-08-18T14:00:00Z",
+      sourceHeadSha: mergeCommitSha,
+      commitSha: "f".repeat(40),
+      auditIdempotencyKey: "test-audit-key",
+      auditConfirmedAt: "2026-08-18T14:01:00Z",
+    });
+    expect(computeNextAction(state).action).toBe("advance-phase");
     expect(transitionPhase(state, "complete").phase).toBe("complete");
   });
 

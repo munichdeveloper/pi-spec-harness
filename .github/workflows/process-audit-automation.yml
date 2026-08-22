@@ -1,0 +1,80 @@
+name: Process Audit Automation
+
+# SPEC-005 reusable workflow for recording process audit events.
+#
+# Called by harness-process-audit-receiver.yml in any repository that has
+# the harness process-audit receiver installed.  Validates the SPEC-005
+# envelope-v1 payload via Node.js (no shell interpolation of payload values),
+# derives a collision-safe chronological filename from `occurred_at`, enforces
+# idempotency, and commits the journal entry with a bounded push retry.
+#
+# The Node.js recorder scripts are fetched from the harness at `harness-ref`
+# via sparse checkout so that the scripts live in the harness and are not
+# duplicated in each target repository.
+#
+# Caller requirements:
+#   - `permissions: contents: write` in the calling workflow
+#   - The `audit-payload-json` input must be the JSON-serialised value of
+#     `github.event.client_payload.audit` from the `repository_dispatch` event.
+
+on:
+  workflow_call:
+    inputs:
+      audit-payload-json:
+        description: >
+          JSON string of `client_payload.audit` from the repository_dispatch
+          event (SPEC-005 envelope-v1 format).  Passed by the receiver workflow
+          via `toJson(github.event.client_payload.audit)`.
+        type: string
+        required: true
+      journal-dir:
+        description: >
+          Relative path to the journal directory in the caller repository.
+        type: string
+        default: docs/process-audit/journal
+      harness-ref:
+        description: >
+          Git ref of pi-spec-harness to use for the recorder scripts.
+          Defaults to main; pin to a release tag for stable behaviour.
+        type: string
+        default: main
+
+# No global concurrency group: parallel writers are allowed and resolve
+# conflicts via the bounded push-retry in record_process_audit.mjs
+# (SPEC-005 decision 3: burst strategy, no cancel-in-progress).
+
+permissions:
+  contents: write
+
+jobs:
+  record-audit-event:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout caller repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Sparse-checkout harness recorder scripts
+        uses: actions/checkout@v4
+        with:
+          repository: munichdeveloper/pi-spec-harness
+          ref: ${{ inputs.harness-ref }}
+          path: .harness
+          sparse-checkout: scripts
+          sparse-checkout-cone-mode: false
+
+      - name: Record audit event (Node.js, no shell interpolation)
+        env:
+          # The payload JSON is passed via env var so that the Node.js recorder
+          # never interpolates untrusted values into shell arguments or YAML.
+          # GitHub Actions sets env vars from ${{ }} expressions before running
+          # the shell; the value is treated as a raw string by the OS env layer
+          # and JSON.parse() in the script, so no shell-special characters can
+          # escape the env var boundary.  Callers must ensure the input is the
+          # exact toJson() output of client_payload.audit.
+          AUDIT_PAYLOAD_JSON: ${{ inputs.audit-payload-json }}
+          JOURNAL_DIR: ${{ inputs.journal-dir }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch || 'main' }}
+        run: node .harness/scripts/record_process_audit.mjs

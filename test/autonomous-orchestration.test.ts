@@ -24,6 +24,7 @@ import {
   recordDeliveryMergeEffect,
   reconcileInit,
   resolveGate,
+  upsertDocumentationSnapshot,
   upsertGate,
 } from "../src/state/state-machine.js";
 import { orchestrate } from "../src/orchestrator.js";
@@ -37,6 +38,23 @@ import { parseStateFromBody, renderStateBody } from "../src/state/issue-store.js
 /** Generate a 40-char hex SHA from a single hex digit char (0-9, a-f). */
 function sha(hexChar: string): string {
   return hexChar.repeat(40);
+}
+
+/** Build a persisted, audited documentation snapshot checkpoint for tests. */
+function persistedSnapshot(sourceHeadSha: string): Parameters<typeof upsertDocumentationSnapshot>[1] {
+  return {
+    schemaVersion: 1,
+    status: "persisted",
+    idempotencyKey: `test-idem-key-${sourceHeadSha.slice(0, 8)}`,
+    path: "docs/runs/generated/RUN-0001-spec-003.md",
+    indexPath: "docs/runs/RUN-INDEX.md",
+    obsidianBasePath: "docs/runs/Runs.base",
+    generatedAt: "2026-08-18T14:00:00Z",
+    sourceHeadSha,
+    commitSha: sha("e"),
+    auditIdempotencyKey: `test-audit-key-${sourceHeadSha.slice(0, 8)}`,
+    auditConfirmedAt: "2026-08-18T14:01:00Z",
+  };
 }
 
 function baseRun(overrides: Partial<Parameters<typeof initRunState>[0]> = {}) {
@@ -481,9 +499,18 @@ describe("TAC-04 orchestrator", () => {
     states.push(state);
 
     const afterMergeEffect = await orchestrate(store, 5);
-    expect(afterMergeEffect.stopReason).toBe("complete");
-    expect(states[states.length - 1].phase).toBe("complete");
+    expect(afterMergeEffect.stopReason).toBe("open-gate");
+    expect(afterMergeEffect.finalNextAction.action).toBe("persist-run-documentation");
+    expect(states[states.length - 1].phase).toBe("merge");
     expect(states[states.length - 1].deliveryMergeCommitSha).toBe(sha("c"));
+
+    // Simulate external documentation write + audit confirmation
+    state = upsertDocumentationSnapshot(states[states.length - 1], persistedSnapshot(sha("c")));
+    states.push(state);
+
+    const afterDocumentation = await orchestrate(store, 5);
+    expect(afterDocumentation.stopReason).toBe("complete");
+    expect(states[states.length - 1].phase).toBe("complete");
   });
 
   it("event order: merge-first — persisted evidence is pending until approval arrives", async () => {
@@ -528,9 +555,18 @@ describe("TAC-04 orchestrator", () => {
     };
 
     const result = await orchestrate(store, 5);
-    expect(result.stopReason).toBe("complete");
-    expect(states[states.length - 1].phase).toBe("complete");
+    expect(result.stopReason).toBe("open-gate");
+    expect(result.finalNextAction.action).toBe("persist-run-documentation");
+    expect(states[states.length - 1].phase).toBe("merge");
     expect(states[states.length - 1].deliveryMergeCommitSha).toBe(sha("c"));
+
+    // Simulate external documentation write + audit confirmation
+    state = upsertDocumentationSnapshot(states[states.length - 1], persistedSnapshot(sha("c")));
+    states.push(state);
+
+    const afterDocumentation = await orchestrate(store, 5);
+    expect(afterDocumentation.stopReason).toBe("complete");
+    expect(states[states.length - 1].phase).toBe("complete");
   });
 
   it("event order: approval-first — merge evidence recorded after delivery PR merges completes run", async () => {
@@ -561,7 +597,7 @@ describe("TAC-04 orchestrator", () => {
     expect(beforePrMerge.finalNextAction.action).toBe("await-technical-gate");
     expect(states[states.length - 1].phase).toBe("merge");
 
-    // PR merges → record evidence and complete
+    // PR merges → record evidence; now needs documentation snapshot before complete
     state = recordDeliveryMergeEffect(states[states.length - 1], {
       pullRequest: 48,
       approvedHeadSha,
@@ -571,9 +607,18 @@ describe("TAC-04 orchestrator", () => {
     states.push(state);
 
     const afterPrMerge = await orchestrate(store, 5);
-    expect(afterPrMerge.stopReason).toBe("complete");
-    expect(states[states.length - 1].phase).toBe("complete");
+    expect(afterPrMerge.stopReason).toBe("open-gate");
+    expect(afterPrMerge.finalNextAction.action).toBe("persist-run-documentation");
+    expect(states[states.length - 1].phase).toBe("merge");
     expect(states[states.length - 1].deliveryMergeCommitSha).toBe(sha("d"));
+
+    // Simulate external documentation write + audit confirmation
+    state = upsertDocumentationSnapshot(states[states.length - 1], persistedSnapshot(sha("d")));
+    states.push(state);
+
+    const afterDocumentation = await orchestrate(store, 5);
+    expect(afterDocumentation.stopReason).toBe("complete");
+    expect(states[states.length - 1].phase).toBe("complete");
   });
 });
 
