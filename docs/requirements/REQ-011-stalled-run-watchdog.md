@@ -2,7 +2,7 @@
 id: REQ-011
 type: requirement
 title: Deterministischer Stall-Watchdog für hängende Runs
-status: draft
+status: approved
 owner: product
 risk: medium
 created: 2026-08-13

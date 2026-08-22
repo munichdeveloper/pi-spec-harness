@@ -2,7 +2,7 @@
 id: SPEC-011
 type: software-spec
 title: Deterministischer Stall-Watchdog für hängende Runs
-status: draft
+status: approved
 owner: engineering
 risk: medium
 requirements:
