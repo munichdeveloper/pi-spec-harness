@@ -181,7 +181,13 @@ export function needsGateReconciliation(state: RunState): boolean {
 }
 
 export function isMergeApprovalGate(gate: GateRecord): boolean {
-  return gate.type === "merge" || gate.id === "merge-approval" || gate.id.startsWith("merge-approval-");
+  return (
+    gate.type === "merge" ||
+    gate.id === "merge-approval" ||
+    gate.id.startsWith("merge-approval-") ||
+    gate.id === "delivery-merge-approval" ||
+    gate.id.startsWith("delivery-merge-approval-")
+  );
 }
 
 export function findPassedMergeApprovalGate(state: RunState): GateRecord | undefined {
