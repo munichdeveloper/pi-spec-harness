@@ -40,21 +40,27 @@ siehe [`skills/pi-spec-harness/SKILL.md`](skills/pi-spec-harness/SKILL.md).
 
 ## Verantwortungsmodell der Software Factory
 
-Die Verantwortlichkeiten zwischen Produktsteuerung, externer Planung und
-Harness-Ausführung werden strikt getrennt:
+Die Verantwortlichkeiten zwischen Produktsteuerung, Immogent-Produktplanung
+und Harness-Weiterentwicklung werden strikt getrennt:
 
 - Der **Product Owner** trifft fachliche Entscheidungen und erteilt Human-Gate-
   sowie Merge-Freigaben.
-- Ein **externer Planungsagent** verantwortet Zielzerlegung, Slice-Definition,
-  Requirements/Specs und die Erstellung der zugehörigen GitHub-Issues.
-- Der **Harness-Ausführungsagent** arbeitet ausschließlich an bereits
-  definierten und freigegebenen Harness-Tickets beziehungsweise aktiven
-  Harness-Runs. Er definiert keine neuen Slices, entscheidet nicht selbst über
-  neuen Ticketbedarf und erweitert den Scope nicht eigenständig. Ein vom
-  externen Planungsagenten vollständig definierter und freigegebener Auftrag
-  darf über die vorhandenen `spec-to-issue`-/`issue-create`-Pfade technisch und
-  idempotent als GitHub-Issue materialisiert werden; die fachliche Urheberschaft
-  und Scope-Verantwortung verbleiben beim externen Planungsagenten.
+- Ein **externer Immogent-Agent** verantwortet ausschließlich die fachliche
+  Zielzerlegung, Slice-Definition, Requirements/Specs und GitHub-Issues des
+  Immogent-Produktrepositories. Er plant oder implementiert keine
+  Harness-Änderungen.
+- Der **Harness-Agent (Codex)** verantwortet die Weiterentwicklung und den
+  Betrieb dieses Harness-Repositories end-to-end. Dazu gehören insbesondere
+  Harness-Analyse, Ticket- und Spec-Erstellung, Implementierung, Delegation,
+  Review-Steuerung, Tests, Merge, Polling, Post-Merge-Verifikation,
+  Dokumentation und Auditierung. Er darf aus beobachteten Harness-Fehlern und
+  Automatisierungslücken selbstständig Harness-Tickets ableiten und innerhalb
+  freigegebener Harness-Ziele bearbeiten. Fachliche Immogent-Slices oder
+  Immogent-Tickets erstellt und verändert er nicht.
+- Die vorhandenen `spec-to-issue`-/`issue-create`-Pfade dürfen extern
+  definierte und freigegebene Immogent-Artefakte technisch und idempotent
+  materialisieren. Dies überträgt weder die fachliche Urheberschaft noch die
+  Scope-Verantwortung an den Harness-Agenten.
 - **Implementierungs- und Reviewagenten** bearbeiten nur den explizit
   delegierten Scope. Findings führen zurück in den bestehenden Run; sie
   erzeugen nicht stillschweigend einen neuen Slice.
