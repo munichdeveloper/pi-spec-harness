@@ -56,10 +56,6 @@ export async function orchestrate(
     const state = await store.load();
     const next = computeNextAction(state);
 
-    if (stopAtPhase && state.phase === stopAtPhase) {
-      return { steps, stopReason: "target-phase", stopDetail: `Reached requested target phase '${stopAtPhase}'.`, finalNextAction: next };
-    }
-
     if (next.action === "run-complete") {
       steps.push({ stepNumber: i, action: next.action, detail: next.detail });
       // Close the tracking issue on completion
@@ -76,6 +72,10 @@ export async function orchestrate(
         stopDetail: next.detail,
         finalNextAction: next,
       };
+    }
+
+    if (stopAtPhase && state.phase === stopAtPhase) {
+      return { steps, stopReason: "target-phase", stopDetail: `Reached requested target phase '${stopAtPhase}'.`, finalNextAction: next };
     }
 
     if (next.action !== "advance-phase") {

@@ -1687,7 +1687,7 @@ async function cmdIssueVerify(
   }
 
   // TAC-07: Verify actual assignee (not just a body mention)
-  const expectedAssignee = (argv.expectedAssignee ?? "copilot").toLowerCase().replace(/^@/, "");
+  const expectedAssignee = normalizeAgentLogin(argv.expectedAssignee ?? DEFAULT_CODING_AGENT);
   if (!assigneeLogins.has(expectedAssignee)) {
     failures.push(
       `assignee '${expectedAssignee}' is not actually set (actual: [${[...assigneeLogins].join(", ")}])`,
@@ -2542,7 +2542,7 @@ const _harnessCli = yargs(hideBin(process.argv))
     (y) =>
       storeOptions(y)
         .option("expected-labels", { type: "array", string: true, describe: "Labels that must be present" })
-        .option("expected-assignee", { type: "string", describe: "Assignee login that must be set (default: copilot)" })
+        .option("expected-assignee", { type: "string", describe: `Assignee login that must be set (default: ${DEFAULT_CODING_AGENT})` })
         .option("body-marker", { type: "string", describe: "String that must be present in the issue body" }),
     async (argv) =>
       cmdIssueVerify({
@@ -2559,7 +2559,7 @@ const _harnessCli = yargs(hideBin(process.argv))
     "Assign the Copilot Coding Agent to the implementation issue via the official API",
     (y) =>
       storeOptions(y)
-        .option("assignee", { type: "string", describe: "Agent login to assign (default: copilot)" })
+        .option("assignee", { type: "string", describe: `Agent login to assign (default: ${DEFAULT_CODING_AGENT})` })
         .option("base-ref", { type: "string", describe: "Delivery branch to set as baseRef (default: state.branch)" }),
     async (argv) =>
       cmdAgentAssign({

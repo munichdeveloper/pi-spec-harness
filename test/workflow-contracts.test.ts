@@ -37,6 +37,8 @@ describe("GitHub workflow contracts", () => {
     expect(workflow).toContain("pull_request:");
     expect(workflow).toContain("types: [opened, edited, synchronize, closed]");
     expect(workflow).toContain("impl-pr-auto-bind");
+    expect(workflow).toContain('[A-Za-z0-9_-]+');
+    expect(workflow).not.toContain('capture("harness:(?<id>[a-z0-9_-]+)")');
     expect(permissions).toContain("pull-requests: read");
     // Serialises across concurrent runs
     expect(workflow).toContain("cancel-in-progress: false");

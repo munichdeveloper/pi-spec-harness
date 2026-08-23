@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  DEFAULT_CODING_AGENT,
   extractReferencedIssueNumbers,
   pollForAgentAssignment,
   recordVerifiedAgentAssignment,
@@ -8,6 +9,9 @@ import { buildAgentAssignmentArgs } from "../src/github/gh.js";
 import { initRunState, upsertGate } from "../src/state/state-machine.js";
 
 describe("reactive coding-agent handoff", () => {
+  it("publishes the canonical Copilot coding-agent login as the default", () => {
+    expect(DEFAULT_CODING_AGENT).toBe("copilot-swe-agent[bot]");
+  });
   it("uses GitHub's current agent-assignment field contract", () => {
     const args = buildAgentAssignmentArgs("owner/repo", 62, "copilot-swe-agent[bot]", "main");
     expect(args).toContain("assignees[]=copilot-swe-agent[bot]");

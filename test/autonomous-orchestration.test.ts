@@ -390,6 +390,18 @@ describe("TAC-04 orchestrator", () => {
     expect(states.at(-1)?.phase).toBe("implementation");
   });
 
+  it("preserves normal completion semantics when complete is the requested target phase", async () => {
+    const state = { ...baseRun(), phase: "complete" as const };
+    const store = {
+      issueRef: undefined,
+      async load() { return state; },
+      async save() { throw new Error("complete must not save another phase"); },
+    };
+    const result = await orchestrate(store, 10, "complete");
+    expect(result.stopReason).toBe("complete");
+    expect(result.steps[0]?.action).toBe("run-complete");
+  });
+
   it("advances gate-free phases up to maxSteps and stops", async () => {
     // Use a minimal in-memory store to test the orchestrator
     const state = baseRun();

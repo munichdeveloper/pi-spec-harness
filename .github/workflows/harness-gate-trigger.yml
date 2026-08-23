@@ -137,7 +137,7 @@ jobs:
         id: run
         shell: bash
         run: |
-          run_id="$(jq -r '.pull_request.body | (try capture("harness:(?<id>[a-z0-9_-]+)") catch {}) | .id // empty' "$GITHUB_EVENT_PATH")"
+          run_id="$(jq -r '.pull_request.body | (try capture("harness:(?<id>[A-Za-z0-9_-]+)") catch {}) | .id // empty' "$GITHUB_EVENT_PATH")"
           if [[ -z "$run_id" ]]; then
             echo "::notice::No harness run id found in PR body; skipping orchestration."
             echo "skip=true" >> "$GITHUB_OUTPUT"
