@@ -16,7 +16,6 @@
 import { nowIso } from "../state/store.js";
 import {
   buildReviewRemediationDispatchKey,
-  classifyReviewAutomationScope,
   buildReviewIdempotencyKey,
   classifyReviewThread,
   detectSelfHosting,
@@ -30,7 +29,7 @@ import {
   upsertReviewRemediationDispatch,
   upsertReviewThread,
 } from "../state/state-machine.js";
-import type { ReviewAutomationScope, ReviewRecord, ReviewRemediationDispatch, ReviewThreadRecord, RunState } from "../state/types.js";
+import type { ReviewRecord, ReviewRemediationDispatch, ReviewThreadRecord, RunState } from "../state/types.js";
 
 export interface ReviewEventInput {
   /** Submitting actor login */
@@ -123,18 +122,6 @@ export function confirmReviewRemediationDispatch(
     throw new Error(`review remediation dispatch '${dispatchKey}' not found on run '${state.runId}'`);
   }
   return upsertReviewRemediationDispatch(state, { ...existing, ...update });
-}
-
-export function classifyReviewAutomationCandidates(opts: {
-  repository: string;
-  pullRequest: number;
-  headSha: string;
-  candidates: Array<{
-    state: Pick<RunState, "repository" | "pullRequest" | "pullRequestHeadSha" | "implementationPullRequest" | "implementationHeadSha">;
-    matchedByImplementationIssue?: boolean;
-  }>;
-}): ReviewAutomationScope {
-  return classifyReviewAutomationScope(opts);
 }
 
 /**

@@ -21,6 +21,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildReviewIdempotencyKey,
   buildReviewRemediationDispatchKey,
+  classifyReviewAutomationScope,
   classifyReviewThread,
   detectSelfHosting,
   findReviewRemediationDispatch,
@@ -36,7 +37,6 @@ import {
 import {
   buildReviewRemediationDispatch,
   buildReviewRemediationMarker,
-  classifyReviewAutomationCandidates,
   confirmReviewRemediationDispatch,
   handleFailedReviewIteration,
   prepareReviewRemediationDispatch,
@@ -196,7 +196,7 @@ describe("buildReviewIdempotencyKey (TAC-11)", () => {
 
 describe("SPEC-013 trusted review-remediation scope", () => {
   it("classifies an exact repository/PR/SHA match as managed", () => {
-    expect(classifyReviewAutomationCandidates({
+    expect(classifyReviewAutomationScope({
       repository: "munichdeveloper/pi-spec-harness",
       pullRequest: 42,
       headSha: sha("a"),
@@ -205,7 +205,7 @@ describe("SPEC-013 trusted review-remediation scope", () => {
   });
 
   it("classifies a unique implementation-issue recovery candidate as recoverable-binding", () => {
-    expect(classifyReviewAutomationCandidates({
+    expect(classifyReviewAutomationScope({
       repository: "munichdeveloper/pi-spec-harness",
       pullRequest: 42,
       headSha: sha("a"),
@@ -217,7 +217,7 @@ describe("SPEC-013 trusted review-remediation scope", () => {
   });
 
   it("classifies missing evidence as unmanaged-blocked", () => {
-    expect(classifyReviewAutomationCandidates({
+    expect(classifyReviewAutomationScope({
       repository: "munichdeveloper/pi-spec-harness",
       pullRequest: 42,
       headSha: sha("a"),
@@ -226,7 +226,7 @@ describe("SPEC-013 trusted review-remediation scope", () => {
   });
 
   it("classifies multiple exact matches as ambiguous-blocked", () => {
-    expect(classifyReviewAutomationCandidates({
+    expect(classifyReviewAutomationScope({
       repository: "munichdeveloper/pi-spec-harness",
       pullRequest: 42,
       headSha: sha("a"),
@@ -824,7 +824,8 @@ describe("renderReviewFixReference (TAC-12)", () => {
     const workflow = await readFile(".github/workflows/harness-review-fix.yml", "utf8");
     expect(workflow).toBe(renderReviewFixReference());
     expect(workflow).toContain("resolve-review-fix-comment:");
-    expect(workflow).toContain("gh api repos/${{ github.repository }}/pulls/${{ github.event.issue.number }} --jq '.head.sha'");
+    expect(workflow).toContain('gh api "repos/$REPOSITORY/pulls/$PULL_REQUEST_NUMBER" --jq \'.head.sha\'');
+    expect(workflow).toContain("github.event.pull_request.head.repo.full_name == github.repository");
   });
 });
 
@@ -907,6 +908,7 @@ describe("GitHub workflow contract — review-fix job (TAC-12)", () => {
     expect(cli).toContain("comment?.author?.login");
     expect(cli).toContain("hasOpenHumanGate");
     expect(cli).toContain("Dispatched the configured review-fix agent");
+    expect(cli).toContain("alreadyDispatched");
     expect(cli).toContain("findRunIssuesByPullRequest");
     expect(cli).toContain("dispatchKey");
   });

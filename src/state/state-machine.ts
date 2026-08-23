@@ -892,6 +892,19 @@ export function findReviewRemediationDispatch(
   return (state.reviewRemediationOutbox ?? []).find((entry) => entry.dispatchKey === dispatchKey);
 }
 
+export function isManagedReviewAutomationCandidate(
+  candidate: Pick<RunState, "repository" | "pullRequest" | "pullRequestHeadSha" | "implementationPullRequest" | "implementationHeadSha">,
+  repository: string,
+  pullRequest: number,
+  headSha: string,
+): boolean {
+  const boundPr = candidate.implementationPullRequest ?? candidate.pullRequest;
+  const boundSha = candidate.implementationHeadSha ?? candidate.pullRequestHeadSha;
+  return candidate.repository.toLowerCase() === repository.toLowerCase()
+    && boundPr === pullRequest
+    && boundSha?.toLowerCase() === headSha.toLowerCase();
+}
+
 export function classifyReviewAutomationScope(opts: {
   repository: string;
   pullRequest: number;
@@ -901,23 +914,17 @@ export function classifyReviewAutomationScope(opts: {
     matchedByImplementationIssue?: boolean;
   }>;
 }): ReviewAutomationScope {
-  const normalizedRepository = opts.repository.toLowerCase();
-  const normalizedHeadSha = opts.headSha.toLowerCase();
-  const exact = opts.candidates.filter(({ state }) => {
-    const boundPr = state.implementationPullRequest ?? state.pullRequest;
-    const boundSha = state.implementationHeadSha ?? state.pullRequestHeadSha;
-    return state.repository.toLowerCase() === normalizedRepository
-      && boundPr === opts.pullRequest
-      && boundSha?.toLowerCase() === normalizedHeadSha;
-  });
+  const exact = opts.candidates.filter(({ state }) =>
+    isManagedReviewAutomationCandidate(state, opts.repository, opts.pullRequest, opts.headSha)
+  );
   if (exact.length === 1) return "managed";
   if (exact.length > 1) return "ambiguous-blocked";
 
   const recoverable = opts.candidates.filter(({ state, matchedByImplementationIssue }) =>
     matchedByImplementationIssue === true
-    && state.repository.toLowerCase() === normalizedRepository
+    && state.repository.toLowerCase() === opts.repository.toLowerCase()
     && (state.implementationPullRequest === undefined || state.implementationPullRequest === opts.pullRequest)
-    && (state.implementationHeadSha === undefined || state.implementationHeadSha.toLowerCase() === normalizedHeadSha)
+    && (state.implementationHeadSha === undefined || state.implementationHeadSha.toLowerCase() === opts.headSha.toLowerCase())
   );
   if (recoverable.length === 1) return "recoverable-binding";
   if (recoverable.length > 1) return "ambiguous-blocked";

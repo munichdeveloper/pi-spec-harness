@@ -107,6 +107,7 @@ describe("WORKFLOW_TEMPLATE_CATALOG", () => {
     expect(rendered).toContain("resolve-review-fix-comment:");
     expect(rendered).toContain("review-fix-comment:");
     expect(rendered).toContain("review-fix-pr-event:");
+    expect(rendered).toContain("github.event.pull_request.head.repo.full_name == github.repository");
   });
 });
 

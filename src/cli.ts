@@ -27,12 +27,13 @@ import { buildIssueFromSpec } from "./spec/issue-from-spec.js";
 import { runSpecToIssuePipeline } from "./spec/spec-to-issue-pipeline.js";
 import { IssueStateStore, RUN_ISSUE_LABEL, ensureRunIssue, findRunIssue, findRunIssueByImplementationIssue, findRunIssuesByPullRequest, parseStateFromBody } from "./state/issue-store.js";
 import { DEFAULT_CODING_AGENT, extractReferencedIssueNumbers, normalizeAgentLogin, pollForAgentAssignment, recordVerifiedAgentAssignment } from "./agent/assignment.js";
-import { classifyReviewAutomationCandidates, confirmReviewRemediationDispatch, prepareReviewRemediationDispatch, processReviewEvent, validateSelfHostingRef } from "./review/review-fix.js";
+import { confirmReviewRemediationDispatch, prepareReviewRemediationDispatch, processReviewEvent, validateSelfHostingRef } from "./review/review-fix.js";
 import type { StateStore } from "./state/state-store.js";
 import { FileStateStore } from "./state/store.js";
 import {
   PHASE_ORDER,
   classifyDeliveryPrMergeEffect,
+  classifyReviewAutomationScope,
   computeNextAction,
   bindDeliveryPullRequest,
   bindImplementationPullRequest,
@@ -44,6 +45,7 @@ import {
   findPassedMergeApprovalGate,
   formatCanonicalRunId,
   initRunState,
+  isManagedReviewAutomationCandidate,
   needsGateReconciliation,
   needsDeliveryMergeReconciliation,
   recordDeliveryMergeEffect,
@@ -2077,7 +2079,7 @@ async function cmdReviewFix(argv: {
 }): Promise<void> {
   const candidateStores = await findRunIssuesByPullRequest(argv.repository, argv.pullRequest);
   const candidates = await Promise.all(candidateStores.map(async (store) => ({ store, state: await store.load() })));
-  const scope = classifyReviewAutomationCandidates({
+  const scope = classifyReviewAutomationScope({
     repository: argv.repository,
     pullRequest: argv.pullRequest,
     headSha: argv.headSha,
@@ -2116,9 +2118,7 @@ Harness review remediation is blocked.
     return;
   }
   const managed = candidates.find(({ state }) =>
-    state.repository.toLowerCase() === argv.repository.toLowerCase()
-      && (state.implementationPullRequest ?? state.pullRequest) === argv.pullRequest
-      && (state.implementationHeadSha ?? state.pullRequestHeadSha)?.toLowerCase() === argv.headSha.toLowerCase()
+    isManagedReviewAutomationCandidate(state, argv.repository, argv.pullRequest, argv.headSha)
   );
   if (!managed) {
     throw new Error(`managed review scope for PR #${argv.pullRequest} could not be resolved to an exact run`);
@@ -2168,6 +2168,7 @@ Harness review remediation is blocked.
   );
   let persistedState = result.state;
   let dispatched = false;
+  let alreadyDispatched = false;
   const hasOpenHumanGate = persistedState.gates.some(
     (gate) => gate.type === "human" && (gate.result === "pending" || gate.result === "needs-human"),
   );
@@ -2197,6 +2198,7 @@ Harness review remediation is blocked.
     const dispatch = persistedState.reviewRemediationOutbox?.find((entry) => entry.dispatchKey === dispatchKey);
     if (!dispatch) throw new Error(`review remediation dispatch '${dispatchKey}' was not persisted`);
     if (pr.comments.some((comment) => comment.body.includes(dispatch.marker))) {
+      alreadyDispatched = true;
       persistedState = confirmReviewRemediationDispatch(persistedState, dispatchKey, {
         status: "confirmed",
         providerUpdatedAt: new Date().toISOString(),
@@ -2227,10 +2229,13 @@ ${agentMention} Please address all unresolved actionable review threads for this
       gateOpened: result.gateOpened,
       classifiedKeys: result.classifiedKeys,
       dispatched,
+      alreadyDispatched,
       dispatchKey,
     },
-    dispatched
-      ? "Dispatched the configured review-fix agent for the classified package."
+    dispatched || alreadyDispatched
+      ? alreadyDispatched
+        ? "The configured review-fix agent was already dispatched for the classified package."
+        : "Dispatched the configured review-fix agent for the classified package."
       : hasOpenHumanGate || result.gateOpened
         ? "Remediation is blocked by an open human gate."
         : "No remediation required.",

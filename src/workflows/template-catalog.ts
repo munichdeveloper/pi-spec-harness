@@ -168,12 +168,14 @@ jobs:
       - id: pr
         env:
           GH_TOKEN: \${{ github.token }}
+          REPOSITORY: \${{ github.repository }}
+          PULL_REQUEST_NUMBER: \${{ github.event.issue.number }}
         run: |
-          head_sha="$(gh api repos/\${{ github.repository }}/pulls/\${{ github.event.issue.number }} --jq '.head.sha')"
+          head_sha="$(gh api "repos/$REPOSITORY/pulls/$PULL_REQUEST_NUMBER" --jq '.head.sha')"
           echo "head_sha=$head_sha" >> "$GITHUB_OUTPUT"
   review-fix-comment:
     needs: resolve-review-fix-comment
-    if: \${{ github.event_name == 'issue_comment' && github.event.issue.pull_request }}
+    if: \${{ github.event_name == 'issue_comment' && github.event.issue.pull_request && needs.resolve-review-fix-comment.outputs.head_sha != '' }}
     uses: ${reusableRepository}/.github/workflows/review-fix.yml@${harnessRef}
     with:
       harness-ref: '${harnessRef}'
@@ -187,12 +189,14 @@ jobs:
       trusted-actors: '${trustedActors.join(",")}'
       fix-agent: '${fixAgent}'
   review-fix-pr-event:
-    if: \${{ github.event_name == 'pull_request_target' }}
+    if: \${{ github.event_name == 'pull_request_target' && github.event.pull_request.head.repo.full_name == github.repository }}
     uses: ${reusableRepository}/.github/workflows/review-fix.yml@${harnessRef}
     with:
       harness-ref: '${harnessRef}'
       pull-request: \${{ github.event.pull_request.number }}
       review-id: 0
+      # Metadata only for binding/reconciliation. The reusable workflow must
+      # continue to checkout only the pinned harness ref, never this PR head.
       reviewed-head-sha: \${{ github.event.pull_request.head.sha || '' }}
       reviewer: ''
       reviewer-type: ''
