@@ -823,6 +823,8 @@ describe("renderReviewFixReference (TAC-12)", () => {
   it("matches the checked-in managed workflow reference", async () => {
     const workflow = await readFile(".github/workflows/harness-review-fix.yml", "utf8");
     expect(workflow).toBe(renderReviewFixReference());
+    expect(workflow).toContain("resolve-review-fix-comment:");
+    expect(workflow).toContain("gh api repos/${{ github.repository }}/pulls/${{ github.event.issue.number }} --jq '.head.sha'");
   });
 });
 
@@ -888,6 +890,7 @@ describe("GitHub workflow contract — review-fix job (TAC-12)", () => {
   it("installs the trusted review-fix receiver on the managed path", async () => {
     const workflow = await readFile(".github/workflows/harness-review-fix.yml", "utf8");
     expect(workflow).toContain("review-fix-review:");
+    expect(workflow).toContain("resolve-review-fix-comment:");
     expect(workflow).toContain("review-fix-comment:");
     expect(workflow).toContain("review-fix-pr-event:");
     expect(workflow).toContain(".github/workflows/review-fix.yml@v0.2.4");

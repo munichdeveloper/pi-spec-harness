@@ -159,14 +159,27 @@ jobs:
       submitted-at: \${{ github.event.review.submitted_at || '' }}
       trusted-actors: '${trustedActors.join(",")}'
       fix-agent: '${fixAgent}'
+  resolve-review-fix-comment:
+    if: \${{ github.event_name == 'issue_comment' && github.event.issue.pull_request }}
+    runs-on: ubuntu-latest
+    outputs:
+      head_sha: \${{ steps.pr.outputs.head_sha }}
+    steps:
+      - id: pr
+        env:
+          GH_TOKEN: \${{ github.token }}
+        run: |
+          head_sha="$(gh api repos/\${{ github.repository }}/pulls/\${{ github.event.issue.number }} --jq '.head.sha')"
+          echo "head_sha=$head_sha" >> "$GITHUB_OUTPUT"
   review-fix-comment:
+    needs: resolve-review-fix-comment
     if: \${{ github.event_name == 'issue_comment' && github.event.issue.pull_request }}
     uses: ${reusableRepository}/.github/workflows/review-fix.yml@${harnessRef}
     with:
       harness-ref: '${harnessRef}'
       pull-request: \${{ github.event.issue.number }}
       review-id: 0
-      reviewed-head-sha: ''
+      reviewed-head-sha: \${{ needs.resolve-review-fix-comment.outputs.head_sha }}
       reviewer: \${{ github.event.comment.user.login || '' }}
       reviewer-type: \${{ github.event.comment.user.type || '' }}
       review-state: commented

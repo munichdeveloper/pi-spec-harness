@@ -104,6 +104,7 @@ describe("WORKFLOW_TEMPLATE_CATALOG", () => {
     expect(rendered).toContain("pull_request_target:");
     expect(rendered).toContain("checks: write");
     expect(rendered).toContain("review-fix-review:");
+    expect(rendered).toContain("resolve-review-fix-comment:");
     expect(rendered).toContain("review-fix-comment:");
     expect(rendered).toContain("review-fix-pr-event:");
   });

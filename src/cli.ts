@@ -25,7 +25,7 @@ import { decideWorkflowInstall } from "./workflows/install-decision.js";
 import { upsertManagedBlock, renderHarnessContextBlock, AGENTS_MD_PATH } from "./agents-context/managed-block.js";
 import { buildIssueFromSpec } from "./spec/issue-from-spec.js";
 import { runSpecToIssuePipeline } from "./spec/spec-to-issue-pipeline.js";
-import { IssueStateStore, RUN_ISSUE_LABEL, ensureRunIssue, findRunIssue, findRunIssueByImplementationIssue, findRunIssueByPullRequest, findRunIssuesByPullRequest, parseStateFromBody } from "./state/issue-store.js";
+import { IssueStateStore, RUN_ISSUE_LABEL, ensureRunIssue, findRunIssue, findRunIssueByImplementationIssue, findRunIssuesByPullRequest, parseStateFromBody } from "./state/issue-store.js";
 import { DEFAULT_CODING_AGENT, extractReferencedIssueNumbers, normalizeAgentLogin, pollForAgentAssignment, recordVerifiedAgentAssignment } from "./agent/assignment.js";
 import { classifyReviewAutomationCandidates, confirmReviewRemediationDispatch, prepareReviewRemediationDispatch, processReviewEvent, validateSelfHostingRef } from "./review/review-fix.js";
 import type { StateStore } from "./state/state-store.js";
