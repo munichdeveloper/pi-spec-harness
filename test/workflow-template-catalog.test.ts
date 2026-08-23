@@ -87,14 +87,14 @@ describe("WORKFLOW_TEMPLATE_CATALOG", () => {
     expect(rendered).not.toContain("secrets: inherit");
   });
 
-  it("defaults reactive references to the v0.2.2 release", () => {
+  it("defaults each reactive reference to its latest compatible release", () => {
     expect(renderSpecToIssueReference()).toContain("spec-to-issue.yml@v0.2.2");
     expect(renderSpecToIssueReference()).toContain("harness-ref: 'v0.2.2'");
-    expect(renderLabelApprovalBundlingReference()).toContain("label-approval-bundling.yml@v0.2.2");
-    expect(renderLabelApprovalBundlingReference()).toContain("harness-ref: 'v0.2.2'");
+    expect(renderLabelApprovalBundlingReference()).toContain("label-approval-bundling.yml@v0.2.4");
+    expect(renderLabelApprovalBundlingReference()).toContain("harness-ref: 'v0.2.4'");
     expect(renderBugWorkflowReference()).toContain("bug-triage.yml@v0.2.2");
-    expect(renderReviewFixReference()).toContain("review-fix.yml@v0.2.2");
-    expect(renderReviewFixReference()).toContain("harness-ref: 'v0.2.2'");
+    expect(renderReviewFixReference()).toContain("review-fix.yml@v0.2.4");
+    expect(renderReviewFixReference()).toContain("harness-ref: 'v0.2.4'");
   });
 });
 

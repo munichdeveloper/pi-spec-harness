@@ -60,7 +60,7 @@ jobs:
 
 export const LABEL_APPROVAL_BUNDLING_REFERENCE_PATH = ".github/workflows/harness-label-approval-bundling.yml";
 export const LABEL_APPROVAL_BUNDLING_REFERENCE_MARKER = "# Managed by pi-spec-harness: label-approval-bundling-reference v1";
-export const DEFAULT_LABEL_APPROVAL_BUNDLING_WORKFLOW_REF = "v0.2.2";
+export const DEFAULT_LABEL_APPROVAL_BUNDLING_WORKFLOW_REF = "v0.2.4";
 
 export interface LabelApprovalBundlingReferenceOptions {
   harnessRef?: string;
@@ -113,7 +113,7 @@ export interface WorkflowTemplateDefinition {
 
 export const REVIEW_FIX_REFERENCE_PATH = ".github/workflows/harness-review-fix.yml";
 export const REVIEW_FIX_REFERENCE_MARKER = "# Managed by pi-spec-harness: review-fix-reference v1";
-export const DEFAULT_REVIEW_FIX_WORKFLOW_REF = "v0.2.2";
+export const DEFAULT_REVIEW_FIX_WORKFLOW_REF = "v0.2.4";
 
 export interface ReviewFixReferenceOptions {
   harnessRef?: string;

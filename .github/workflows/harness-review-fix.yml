@@ -11,9 +11,9 @@ permissions:
 
 jobs:
   review-fix:
-    uses: munichdeveloper/pi-spec-harness/.github/workflows/review-fix.yml@v0.2.3
+    uses: munichdeveloper/pi-spec-harness/.github/workflows/review-fix.yml@v0.2.4
     with:
-      harness-ref: 'v0.2.3'
+      harness-ref: 'v0.2.4'
       pull-request: ${{ github.event.pull_request.number }}
       review-id: ${{ github.event.review.id || 0 }}
       reviewed-head-sha: ${{ github.event.review.commit_id || github.event.pull_request.head.sha }}
