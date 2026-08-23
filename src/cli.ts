@@ -154,8 +154,9 @@ export async function loadReviewAutomationCandidates(args: {
     keyed.set(store.issueRef.number, { store, matchedByImplementationIssue: false });
   }
   for (const store of implementationIssueStores) {
+    const existing = keyed.get(store.issueRef.number);
     keyed.set(store.issueRef.number, {
-      store,
+      store: existing?.store ?? store,
       matchedByImplementationIssue: true,
     });
   }

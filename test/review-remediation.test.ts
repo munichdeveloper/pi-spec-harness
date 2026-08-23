@@ -303,6 +303,27 @@ describe("review-fix CLI helpers", () => {
     }]);
   });
 
+  it("keeps the PR-bound store when the same run is also found via implementation issue", async () => {
+    const prBoundStore = candidateStore(77, boundRun());
+    const implementationIssueStore = candidateStore(77, baseRun({ issue: 123 }));
+    const candidates = await loadReviewAutomationCandidates(
+      {
+        repository: "munichdeveloper/pi-spec-harness",
+        pullRequest: 42,
+        pullRequestBody: "Implements #123",
+      },
+      {
+        findRunIssuesByPullRequest: async () => [prBoundStore],
+        findRunIssueByImplementationIssue: async () => implementationIssueStore,
+      },
+    );
+
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0]?.store).toBe(prBoundStore);
+    expect(candidates[0]?.matchedByImplementationIssue).toBe(true);
+    expect(candidates[0]?.state).toEqual(await prBoundStore.load());
+  });
+
   it("accepts remediation markers only from the trusted harness identity", () => {
     const marker = buildReviewRemediationMarker("dispatch-key");
     expect(hasTrustedIssueCommentMarker([
