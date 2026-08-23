@@ -1752,6 +1752,7 @@ describe("TAC-18 cmdPersistRunDocumentation integration via injected adapter", (
     expect(content).toContain("workflow_call");
     expect(content).toContain("audit-payload-json");
     expect(content).toContain("record_process_audit.mjs");
+    expect(content).toContain("src/audit/journalParser.js");
   });
 
   it("harness-process-audit-receiver workflow exists and calls process-audit-automation", async () => {

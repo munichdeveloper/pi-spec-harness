@@ -62,7 +62,12 @@ jobs:
           repository: munichdeveloper/pi-spec-harness
           ref: ${{ inputs.harness-ref }}
           path: .harness
-          sparse-checkout: scripts
+          # Keep this list in sync with every transitive local import used by
+          # the recorder scripts. In non-cone mode, listing only `scripts`
+          # omits the shared journal parser imported by process_audit_support.
+          sparse-checkout: |
+            scripts
+            src/audit/journalParser.js
           sparse-checkout-cone-mode: false
 
       - name: Record audit event (Node.js, no shell interpolation)
