@@ -150,11 +150,11 @@ export async function findRunIssue(
   return undefined;
 }
 
-/** Find the single open harness run explicitly bound to a pull request. */
-export async function findRunIssueByPullRequest(
+/** Find all open harness runs explicitly bound to a pull request. */
+export async function findRunIssuesByPullRequest(
   repository: string,
   pullRequest: number,
-): Promise<IssueStateStore | undefined> {
+): Promise<IssueStateStore[]> {
   const issues = await github.findIssuesWithLabels(repository, [RUN_ISSUE_LABEL]);
   const matches = issues.filter((issue) => {
     try {
@@ -164,11 +164,19 @@ export async function findRunIssueByPullRequest(
       return false;
     }
   });
+  return matches.map((match) => new IssueStateStore(repository, match.number));
+}
+
+/** Find the single open harness run explicitly bound to a pull request. */
+export async function findRunIssueByPullRequest(
+  repository: string,
+  pullRequest: number,
+): Promise<IssueStateStore | undefined> {
+  const matches = await findRunIssuesByPullRequest(repository, pullRequest);
   if (matches.length > 1) {
     throw new Error(`multiple open harness runs are bound to PR #${pullRequest} in ${repository}`);
   }
-  const match = matches[0];
-  return match ? new IssueStateStore(repository, match.number) : undefined;
+  return matches[0];
 }
 
 /** Find the single open harness run bound to an implementation issue. */

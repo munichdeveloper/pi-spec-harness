@@ -96,6 +96,17 @@ describe("WORKFLOW_TEMPLATE_CATALOG", () => {
     expect(renderReviewFixReference()).toContain("review-fix.yml@v0.2.4");
     expect(renderReviewFixReference()).toContain("harness-ref: 'v0.2.4'");
   });
+
+  it("renders the trusted review-fix receiver with split triggers and checks permission", () => {
+    const rendered = renderReviewFixReference();
+    expect(rendered).toContain("pull_request_review:");
+    expect(rendered).toContain("issue_comment:");
+    expect(rendered).toContain("pull_request_target:");
+    expect(rendered).toContain("checks: write");
+    expect(rendered).toContain("review-fix-review:");
+    expect(rendered).toContain("review-fix-comment:");
+    expect(rendered).toContain("review-fix-pr-event:");
+  });
 });
 
 describe("decideWorkflowInstall (generic, TAC-05)", () => {

@@ -134,13 +134,19 @@ name: Harness Review Fix
 on:
   pull_request_review:
     types: [submitted]
+  issue_comment:
+    types: [created, edited]
+  pull_request_target:
+    types: [opened, synchronize, reopened]
 permissions:
   contents: read
   issues: write
   pull-requests: write
+  checks: write
 
 jobs:
-  review-fix:
+  review-fix-review:
+    if: \${{ github.event_name == 'pull_request_review' }}
     uses: ${reusableRepository}/.github/workflows/review-fix.yml@${harnessRef}
     with:
       harness-ref: '${harnessRef}'
@@ -151,6 +157,34 @@ jobs:
       reviewer-type: \${{ github.event.review.user.type || '' }}
       review-state: \${{ github.event.review.state || '' }}
       submitted-at: \${{ github.event.review.submitted_at || '' }}
+      trusted-actors: '${trustedActors.join(",")}'
+      fix-agent: '${fixAgent}'
+  review-fix-comment:
+    if: \${{ github.event_name == 'issue_comment' && github.event.issue.pull_request }}
+    uses: ${reusableRepository}/.github/workflows/review-fix.yml@${harnessRef}
+    with:
+      harness-ref: '${harnessRef}'
+      pull-request: \${{ github.event.issue.number }}
+      review-id: 0
+      reviewed-head-sha: ''
+      reviewer: \${{ github.event.comment.user.login || '' }}
+      reviewer-type: \${{ github.event.comment.user.type || '' }}
+      review-state: commented
+      submitted-at: \${{ github.event.comment.updated_at || github.event.comment.created_at || '' }}
+      trusted-actors: '${trustedActors.join(",")}'
+      fix-agent: '${fixAgent}'
+  review-fix-pr-event:
+    if: \${{ github.event_name == 'pull_request_target' }}
+    uses: ${reusableRepository}/.github/workflows/review-fix.yml@${harnessRef}
+    with:
+      harness-ref: '${harnessRef}'
+      pull-request: \${{ github.event.pull_request.number }}
+      review-id: 0
+      reviewed-head-sha: \${{ github.event.pull_request.head.sha || '' }}
+      reviewer: ''
+      reviewer-type: ''
+      review-state: commented
+      submitted-at: \${{ github.event.pull_request.updated_at || github.event.pull_request.created_at || '' }}
       trusted-actors: '${trustedActors.join(",")}'
       fix-agent: '${fixAgent}'
 `;

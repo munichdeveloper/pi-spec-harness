@@ -25,9 +25,9 @@ import { decideWorkflowInstall } from "./workflows/install-decision.js";
 import { upsertManagedBlock, renderHarnessContextBlock, AGENTS_MD_PATH } from "./agents-context/managed-block.js";
 import { buildIssueFromSpec } from "./spec/issue-from-spec.js";
 import { runSpecToIssuePipeline } from "./spec/spec-to-issue-pipeline.js";
-import { IssueStateStore, RUN_ISSUE_LABEL, ensureRunIssue, findRunIssue, findRunIssueByImplementationIssue, findRunIssueByPullRequest, parseStateFromBody } from "./state/issue-store.js";
+import { IssueStateStore, RUN_ISSUE_LABEL, ensureRunIssue, findRunIssue, findRunIssueByImplementationIssue, findRunIssueByPullRequest, findRunIssuesByPullRequest, parseStateFromBody } from "./state/issue-store.js";
 import { DEFAULT_CODING_AGENT, extractReferencedIssueNumbers, normalizeAgentLogin, pollForAgentAssignment, recordVerifiedAgentAssignment } from "./agent/assignment.js";
-import { processReviewEvent, validateSelfHostingRef } from "./review/review-fix.js";
+import { classifyReviewAutomationCandidates, confirmReviewRemediationDispatch, prepareReviewRemediationDispatch, processReviewEvent, validateSelfHostingRef } from "./review/review-fix.js";
 import type { StateStore } from "./state/state-store.js";
 import { FileStateStore } from "./state/store.js";
 import {
@@ -2075,16 +2075,56 @@ async function cmdReviewFix(argv: {
   fixAgent: string;
   selfActorLogin: string;
 }): Promise<void> {
-  const store = await findRunIssueByPullRequest(argv.repository, argv.pullRequest);
-  if (!store) {
+  const candidateStores = await findRunIssuesByPullRequest(argv.repository, argv.pullRequest);
+  const candidates = await Promise.all(candidateStores.map(async (store) => ({ store, state: await store.load() })));
+  const scope = classifyReviewAutomationCandidates({
+    repository: argv.repository,
+    pullRequest: argv.pullRequest,
+    headSha: argv.headSha,
+    candidates: candidates.map(({ state }) => ({ state })),
+  });
+  if (scope !== "managed") {
+    const recoveryCode = "HARNESS_REVIEW_BINDING_REQUIRED";
+    const marker = `<!-- harness:review-binding:${argv.pullRequest}:${argv.headSha.toLowerCase()} -->`;
+    const bindingMessage = `${marker}
+Harness review remediation is blocked.
+
+- scope: \`${scope}\`
+- recovery-code: \`${recoveryCode}\`
+- next-step: Bind this PR to exactly one open \`harness:run\` with the current head SHA before retrying automation.`;
+    const pr = await github.viewIssue(argv.repository, argv.pullRequest);
+    if (!pr.comments.some((comment) => comment.body.includes(marker))) {
+      await github.ensureLabel(argv.repository, "status:needs-human", {
+        color: "D93F0B",
+        description: "A human must decide how the harness should proceed",
+      });
+      await github.addLabels(argv.repository, argv.pullRequest, ["status:needs-human"]);
+      await github.commentIssue(argv.repository, argv.pullRequest, bindingMessage);
+    }
     printResult(
       "review-fix",
-      { hasActionable: false, gateOpened: false, classifiedKeys: [], dispatched: false, skipped: "unmanaged-pull-request" },
-      `No open harness run is bound to PR #${argv.pullRequest}; nothing to remediate.`,
+      {
+        hasActionable: false,
+        gateOpened: false,
+        classifiedKeys: [],
+        dispatched: false,
+        blocked: scope,
+        recoveryCode,
+      },
+      `Review remediation is blocked for PR #${argv.pullRequest} until a canonical run binding exists for head ${argv.headSha}.`,
     );
     return;
   }
-  const state = await store.load();
+  const managed = candidates.find(({ state }) =>
+    state.repository.toLowerCase() === argv.repository.toLowerCase()
+      && (state.implementationPullRequest ?? state.pullRequest) === argv.pullRequest
+      && (state.implementationHeadSha ?? state.pullRequestHeadSha)?.toLowerCase() === argv.headSha.toLowerCase()
+  );
+  if (!managed) {
+    throw new Error(`managed review scope for PR #${argv.pullRequest} could not be resolved to an exact run`);
+  }
+  const store = managed.store;
+  const state = managed.state;
   const preExistingHumanGate = state.gates.some(
     (gate) => gate.type === "human" && (gate.result === "pending" || gate.result === "needs-human"),
   );
@@ -2126,12 +2166,25 @@ async function cmdReviewFix(argv: {
       trustedActors: argv.trustedActors.split(",").map((actor) => actor.trim()).filter(Boolean),
     },
   );
-  await store.save(result.state);
+  let persistedState = result.state;
   let dispatched = false;
-  const hasOpenHumanGate = result.state.gates.some(
+  const hasOpenHumanGate = persistedState.gates.some(
     (gate) => gate.type === "human" && (gate.result === "pending" || gate.result === "needs-human"),
   );
+  let dispatchKey: string | undefined;
   if (result.hasActionable && !result.gateOpened && !hasOpenHumanGate) {
+    const prepared = prepareReviewRemediationDispatch(
+      persistedState,
+      argv.reviewId,
+      argv.pullRequest,
+      argv.headSha,
+      result.classifiedKeys,
+    );
+    persistedState = prepared.state;
+    dispatchKey = prepared.dispatch.dispatchKey;
+  }
+  await store.save(persistedState);
+  if (result.hasActionable && !result.gateOpened && !hasOpenHumanGate && dispatchKey) {
     const agentMention = argv.fixAgent === "github-copilot"
       ? "@copilot"
       : argv.fixAgent === "claude-code"
@@ -2140,14 +2193,31 @@ async function cmdReviewFix(argv: {
     if (!agentMention) {
       throw new Error(`unsupported HARNESS_REVIEW_FIX_AGENT '${argv.fixAgent}'`);
     }
-    await github.commentIssue(
-      argv.repository,
-      argv.pullRequest,
-      `${agentMention} Please address all unresolved actionable review threads for this PR on the existing PR branch. ` +
-        `Do not create another pull request or expand scope. Run the relevant checks, push the fixes to this branch, ` +
-        `then reply to each implemented thread with commit and test evidence. Review package: ${result.classifiedKeys.join(", ")}`,
-    );
-    dispatched = true;
+    const pr = await github.viewIssue(argv.repository, argv.pullRequest);
+    const dispatch = persistedState.reviewRemediationOutbox?.find((entry) => entry.dispatchKey === dispatchKey);
+    if (!dispatch) throw new Error(`review remediation dispatch '${dispatchKey}' was not persisted`);
+    if (pr.comments.some((comment) => comment.body.includes(dispatch.marker))) {
+      persistedState = confirmReviewRemediationDispatch(persistedState, dispatchKey, {
+        status: "confirmed",
+        providerUpdatedAt: new Date().toISOString(),
+      });
+    } else {
+      await github.commentIssue(
+        argv.repository,
+        argv.pullRequest,
+        `${dispatch.marker}
+${agentMention} Please address all unresolved actionable review threads for this PR on the existing PR branch. ` +
+          `Do not create another pull request or expand scope. Run the relevant checks, push the fixes to this branch, ` +
+          `then reply to each implemented thread with commit and test evidence. Review package: ${result.classifiedKeys.join(", ")}`,
+      );
+      dispatched = true;
+      const reread = await github.viewIssue(argv.repository, argv.pullRequest);
+      persistedState = confirmReviewRemediationDispatch(persistedState, dispatchKey, {
+        status: reread.comments.some((comment) => comment.body.includes(dispatch.marker)) ? "confirmed" : "sent",
+        providerUpdatedAt: new Date().toISOString(),
+      });
+    }
+    await store.save(persistedState);
   }
   printResult(
     "review-fix",
@@ -2156,6 +2226,7 @@ async function cmdReviewFix(argv: {
       gateOpened: result.gateOpened,
       classifiedKeys: result.classifiedKeys,
       dispatched,
+      dispatchKey,
     },
     dispatched
       ? "Dispatched the configured review-fix agent for the classified package."

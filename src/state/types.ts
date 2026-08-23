@@ -166,6 +166,32 @@ export interface ReviewRecord {
   loopProtected?: boolean;
 }
 
+export type ReviewAutomationScope =
+  | "managed"
+  | "recoverable-binding"
+  | "unmanaged-blocked"
+  | "ambiguous-blocked";
+
+/**
+ * Persisted remediation dispatch checkpoint for one review package.
+ * Prepared before GitHub writes so retries can deduplicate by marker.
+ * SPEC-013, decisions 3-4.
+ */
+export interface ReviewRemediationDispatch {
+  schemaVersion: 1;
+  dispatchKey: string;
+  reviewId: number;
+  threadKeys: string[];
+  pullRequest: number;
+  headSha: string;
+  requestedAt: string;
+  provider: "issue-comment";
+  marker: string;
+  status: "prepared" | "sent" | "confirmed";
+  providerCommentId?: string;
+  providerUpdatedAt?: string;
+}
+
 /**
  * Canonical run identity derived from the persistent tracking-issue number.
  * SPEC-012, decision 1 / TAC-01.
@@ -291,6 +317,11 @@ export interface RunState {
    * independently. SPEC-009, decision 6.
    */
   reviewLoopCounter?: number;
+  /**
+   * Persisted outbox for trusted review-remediation dispatches.
+   * SPEC-013, decisions 3-4.
+   */
+  reviewRemediationOutbox?: ReviewRemediationDispatch[];
   /**
    * Checkpoint tracking the post-merge documentation snapshot lifecycle.
    * Optional and rückwärtskompatibel; absent for runs created before SPEC-012.
