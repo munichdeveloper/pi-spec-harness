@@ -18,20 +18,29 @@ import { readFileSync } from "node:fs";
 
 import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
+import { hasTrustedIssueCommentMarker, loadReviewAutomationCandidates, type ReviewAutomationCandidateStore } from "../src/cli.js";
 import {
   buildReviewIdempotencyKey,
+  buildReviewRemediationDispatchKey,
+  classifyReviewAutomationScope,
   classifyReviewThread,
   detectSelfHosting,
+  findReviewRemediationDispatch,
   initRunState,
   invalidateReviewEvidenceForSha,
   isReviewIterationActive,
   isReviewThreadAlreadyProcessed,
   recordReview,
   reviewLoopCapReached,
+  upsertReviewRemediationDispatch,
   upsertReviewThread,
 } from "../src/state/state-machine.js";
 import {
+  buildReviewRemediationDispatch,
+  buildReviewRemediationMarker,
+  confirmReviewRemediationDispatch,
   handleFailedReviewIteration,
+  prepareReviewRemediationDispatch,
   processReviewEvent,
   validateSelfHostingRef,
 } from "../src/review/review-fix.js";
@@ -69,6 +78,18 @@ function boundRun(): RunState {
     implementationHeadSha: sha("a"),
   };
   return state;
+}
+
+function candidateStore(number: number, state: RunState): ReviewAutomationCandidateStore {
+  return {
+    issueRef: {
+      repository: state.repository,
+      number,
+      url: `https://github.com/${state.repository}/issues/${number}`,
+    },
+    load: async () => state,
+    save: async () => undefined,
+  };
 }
 
 const TRUSTED_ACTORS = ["copilot-pull-request-reviewer", "trusted-human"];
@@ -183,6 +204,136 @@ describe("buildReviewIdempotencyKey (TAC-11)", () => {
     const k1 = buildReviewIdempotencyKey("r/r", 1, 1, "t", sha("a"));
     const k2 = buildReviewIdempotencyKey("r/r", 1, 1, "t", sha("b"));
     expect(k1).not.toBe(k2);
+  });
+});
+
+describe("SPEC-013 trusted review-remediation scope", () => {
+  it("classifies an exact repository/PR/SHA match as managed", () => {
+    expect(classifyReviewAutomationScope({
+      repository: "munichdeveloper/pi-spec-harness",
+      pullRequest: 42,
+      headSha: sha("a"),
+      candidates: [{ state: boundRun() }],
+    })).toBe("managed");
+  });
+
+  it("classifies a unique implementation-issue recovery candidate as recoverable-binding", () => {
+    expect(classifyReviewAutomationScope({
+      repository: "munichdeveloper/pi-spec-harness",
+      pullRequest: 42,
+      headSha: sha("a"),
+      candidates: [{
+        state: baseRun(),
+        matchedByImplementationIssue: true,
+      }],
+    })).toBe("recoverable-binding");
+  });
+
+  it("classifies missing evidence as unmanaged-blocked", () => {
+    expect(classifyReviewAutomationScope({
+      repository: "munichdeveloper/pi-spec-harness",
+      pullRequest: 42,
+      headSha: sha("a"),
+      candidates: [],
+    })).toBe("unmanaged-blocked");
+  });
+
+  it("classifies multiple exact matches as ambiguous-blocked", () => {
+    expect(classifyReviewAutomationScope({
+      repository: "munichdeveloper/pi-spec-harness",
+      pullRequest: 42,
+      headSha: sha("a"),
+      candidates: [{ state: boundRun() }, { state: boundRun() }],
+    })).toBe("ambiguous-blocked");
+  });
+});
+
+describe("SPEC-013 remediation dispatch outbox", () => {
+  it("builds a stable dispatch key from repository, PR, SHA and sorted thread keys", () => {
+    const left = buildReviewRemediationDispatchKey("Owner/Repo", 42, sha("A"), ["b", "a"]);
+    const right = buildReviewRemediationDispatchKey("owner/repo", 42, sha("a"), ["a", "b"]);
+    expect(left).toBe(right);
+  });
+
+  it("prepares exactly one dispatch entry for a review package", () => {
+    const prepared = prepareReviewRemediationDispatch(boundRun(), 1001, 42, sha("a"), [" b ", "", "a", "  "]);
+    expect(prepared.dispatch.marker).toBe(buildReviewRemediationMarker(prepared.dispatch.dispatchKey));
+    expect(prepared.state.reviewRemediationOutbox).toHaveLength(1);
+    expect(prepared.dispatch.threadKeys).toEqual(["a", "b"]);
+  });
+
+  it("upsertReviewRemediationDispatch updates an existing dispatch instead of duplicating it", () => {
+    const dispatch = buildReviewRemediationDispatch(boundRun(), 1001, 42, sha("a"), ["a"]);
+    const state0 = upsertReviewRemediationDispatch(boundRun(), dispatch);
+    const state1 = upsertReviewRemediationDispatch(state0, { ...dispatch, status: "confirmed" });
+    expect(state1.reviewRemediationOutbox).toHaveLength(1);
+    expect(findReviewRemediationDispatch(state1, dispatch.dispatchKey)?.status).toBe("confirmed");
+  });
+
+  it("confirmReviewRemediationDispatch marks a prepared dispatch as confirmed", () => {
+    const prepared = prepareReviewRemediationDispatch(boundRun(), 1001, 42, sha("a"), ["a"]);
+    const confirmed = confirmReviewRemediationDispatch(prepared.state, prepared.dispatch.dispatchKey, {
+      status: "confirmed",
+      providerUpdatedAt: "2026-08-23T12:00:00.000Z",
+    });
+    expect(findReviewRemediationDispatch(confirmed, prepared.dispatch.dispatchKey)?.status).toBe("confirmed");
+  });
+});
+
+describe("review-fix CLI helpers", () => {
+  it("loads recoverable-binding candidates from referenced implementation issues", async () => {
+    const store = candidateStore(77, baseRun({ issue: 123 }));
+    const candidates = await loadReviewAutomationCandidates(
+      {
+        repository: "munichdeveloper/pi-spec-harness",
+        pullRequest: 42,
+        pullRequestBody: "Implements #123",
+      },
+      {
+        findRunIssuesByPullRequest: async () => [],
+        findRunIssueByImplementationIssue: async (_repository, implementationIssue) =>
+          implementationIssue === 123 ? store : undefined,
+      },
+    );
+
+    expect(candidates).toEqual([{
+      store,
+      state: await store.load(),
+      matchedByImplementationIssue: true,
+    }]);
+  });
+
+  it("keeps the PR-bound store and direct-binding classification when the same run is also found via implementation issue", async () => {
+    const prBoundStore = candidateStore(77, boundRun());
+    const implementationIssueStore = candidateStore(77, baseRun({ issue: 123 }));
+    const candidates = await loadReviewAutomationCandidates(
+      {
+        repository: "munichdeveloper/pi-spec-harness",
+        pullRequest: 42,
+        pullRequestBody: "Implements #123",
+      },
+      {
+        findRunIssuesByPullRequest: async () => [prBoundStore],
+        findRunIssueByImplementationIssue: async () => implementationIssueStore,
+      },
+    );
+
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0]?.store).toBe(prBoundStore);
+    expect(candidates[0]?.matchedByImplementationIssue).toBe(false);
+    expect(candidates[0]?.state).toEqual(await prBoundStore.load());
+  });
+
+  it("accepts remediation markers only from the trusted harness identity", () => {
+    const marker = buildReviewRemediationMarker("dispatch-key");
+    expect(hasTrustedIssueCommentMarker([
+      { body: marker, author: { login: "random-user" } },
+      { body: "no marker", author: { login: "copilot-swe-agent[bot]" } },
+    ], marker, "copilot-swe-agent[bot]")).toBe(false);
+
+    expect(hasTrustedIssueCommentMarker([
+      { body: marker, author: { login: "copilot-swe-agent[bot]" } },
+    ], marker, "copilot-swe-agent[bot]")).toBe(true);
   });
 });
 
@@ -698,10 +849,14 @@ describe("renderReviewFixReference (TAC-12)", () => {
     expect(content).toContain(REVIEW_FIX_REFERENCE_MARKER);
   });
 
-  it("triggers on pull_request_review submitted", () => {
+  it("triggers on trusted pull_request_review, issue_comment and pull_request_target events", () => {
     const content = renderReviewFixReference();
     expect(content).toContain("pull_request_review:");
     expect(content).toContain("types: [submitted]");
+    expect(content).toContain("issue_comment:");
+    expect(content).toContain("types: [created, edited]");
+    expect(content).toContain("pull_request_target:");
+    expect(content).toContain("types: [opened, synchronize, reopened]");
   });
 
   it("does not install the unsupported pull_request_review_thread webhook as an Actions trigger", () => {
@@ -729,9 +884,18 @@ describe("renderReviewFixReference (TAC-12)", () => {
     expect(content).not.toContain("github.event.thread.pull_request.number");
   });
 
-  it("exposes pull-requests write permission", () => {
+  it("exposes pull-requests and checks write permissions", () => {
     const content = renderReviewFixReference();
     expect(content).toContain("pull-requests: write");
+    expect(content).toContain("checks: write");
+  });
+
+  it("matches the checked-in managed workflow reference", async () => {
+    const workflow = await readFile(".github/workflows/harness-review-fix.yml", "utf8");
+    expect(workflow).toBe(renderReviewFixReference());
+    expect(workflow).toContain("resolve-review-fix-comment:");
+    expect(workflow).toContain('gh api "repos/$REPOSITORY/pulls/$PULL_REQUEST_NUMBER" --jq \'.head.sha\'');
+    expect(workflow).toContain("github.event.pull_request.head.repo.full_name == github.repository");
   });
 });
 
@@ -794,16 +958,29 @@ describe("GitHub workflow contract — review-fix job (TAC-12)", () => {
     expect(workflow).toContain("ref: ${{ inputs.harness-ref }}");
   });
 
+  it("installs the trusted review-fix receiver on the managed path", async () => {
+    const workflow = await readFile(".github/workflows/harness-review-fix.yml", "utf8");
+    expect(workflow).toContain("review-fix-review:");
+    expect(workflow).toContain("resolve-review-fix-comment:");
+    expect(workflow).toContain("review-fix-comment:");
+    expect(workflow).toContain("review-fix-pr-event:");
+    expect(workflow).toContain(".github/workflows/review-fix.yml@v0.2.4");
+    expect(workflow).not.toContain("@main");
+  });
+
   it("registers the review-fix CLI command", async () => {
     const cli = await readFile("src/cli.ts", "utf8");
     expect(cli).toContain('"review-fix"');
     expect(cli).toContain("cmdReviewFix");
     expect(cli).toContain("selfActorLogin: argv.selfActorLogin");
     expect(cli).toContain("@copilot");
-    expect(cli).toContain('skipped: "unmanaged-pull-request"');
+    expect(cli).toContain("HARNESS_REVIEW_BINDING_REQUIRED");
     expect(cli).toContain("comment?.author?.login");
     expect(cli).toContain("hasOpenHumanGate");
     expect(cli).toContain("Dispatched the configured review-fix agent");
+    expect(cli).toContain("alreadyDispatched");
+    expect(cli).toContain("findRunIssuesByPullRequest");
+    expect(cli).toContain("dispatchKey");
   });
 
   it("enforces immutable refs during self-hosted init", async () => {

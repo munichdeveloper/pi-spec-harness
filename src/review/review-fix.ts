@@ -15,18 +15,22 @@
 
 import { nowIso } from "../state/store.js";
 import {
+  buildReviewRemediationDispatchKey,
   buildReviewIdempotencyKey,
   classifyReviewThread,
   detectSelfHosting,
+  findReviewRemediationDispatch,
   incrementReviewLoopCounter,
   isReviewIterationActive,
   isReviewThreadAlreadyProcessed,
+  normalizeReviewRemediationThreadKeys,
   recordReview,
   reviewLoopCapReached,
   upsertGate,
+  upsertReviewRemediationDispatch,
   upsertReviewThread,
 } from "../state/state-machine.js";
-import type { ReviewRecord, ReviewThreadRecord, RunState } from "../state/types.js";
+import type { ReviewRecord, ReviewRemediationDispatch, ReviewThreadRecord, RunState } from "../state/types.js";
 
 export interface ReviewEventInput {
   /** Submitting actor login */
@@ -65,6 +69,60 @@ export interface ReviewPackageResult {
   gateOpened: boolean;
   /** The idempotency keys of threads that were newly classified */
   classifiedKeys: string[];
+}
+
+export function buildReviewRemediationMarker(dispatchKey: string): string {
+  return `<!-- harness:review-remediation:${dispatchKey} -->`;
+}
+
+export function buildReviewRemediationDispatch(
+  state: RunState,
+  reviewId: number,
+  pullRequest: number,
+  headSha: string,
+  threadKeys: string[],
+): ReviewRemediationDispatch {
+  const dispatchKey = buildReviewRemediationDispatchKey(state.repository, pullRequest, headSha, threadKeys);
+  return {
+    schemaVersion: 1,
+    dispatchKey,
+    reviewId,
+    threadKeys: normalizeReviewRemediationThreadKeys(threadKeys),
+    pullRequest,
+    headSha: headSha.toLowerCase(),
+    requestedAt: nowIso(),
+    provider: "issue-comment",
+    marker: buildReviewRemediationMarker(dispatchKey),
+    status: "prepared",
+  };
+}
+
+export function prepareReviewRemediationDispatch(
+  state: RunState,
+  reviewId: number,
+  pullRequest: number,
+  headSha: string,
+  threadKeys: string[],
+): { state: RunState; dispatch: ReviewRemediationDispatch; alreadyPrepared: boolean } {
+  const dispatch = buildReviewRemediationDispatch(state, reviewId, pullRequest, headSha, threadKeys);
+  const existing = findReviewRemediationDispatch(state, dispatch.dispatchKey);
+  return {
+    state: upsertReviewRemediationDispatch(state, existing ? { ...existing, ...dispatch } : dispatch),
+    dispatch: existing ? { ...existing, ...dispatch } : dispatch,
+    alreadyPrepared: existing !== undefined,
+  };
+}
+
+export function confirmReviewRemediationDispatch(
+  state: RunState,
+  dispatchKey: string,
+  update: Pick<ReviewRemediationDispatch, "status"> & Partial<Pick<ReviewRemediationDispatch, "providerCommentId" | "providerUpdatedAt">>,
+): RunState {
+  const existing = findReviewRemediationDispatch(state, dispatchKey);
+  if (!existing) {
+    throw new Error(`review remediation dispatch '${dispatchKey}' not found on run '${state.runId}'`);
+  }
+  return upsertReviewRemediationDispatch(state, { ...existing, ...update });
 }
 
 /**

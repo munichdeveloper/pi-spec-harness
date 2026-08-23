@@ -4,13 +4,19 @@ name: Harness Review Fix
 on:
   pull_request_review:
     types: [submitted]
+  issue_comment:
+    types: [created, edited]
+  pull_request_target:
+    types: [opened, synchronize, reopened]
 permissions:
   contents: read
   issues: write
   pull-requests: write
+  checks: write
 
 jobs:
-  review-fix:
+  review-fix-review:
+    if: ${{ github.event_name == 'pull_request_review' }}
     uses: munichdeveloper/pi-spec-harness/.github/workflows/review-fix.yml@v0.2.4
     with:
       harness-ref: 'v0.2.4'
@@ -21,5 +27,50 @@ jobs:
       reviewer-type: ${{ github.event.review.user.type || '' }}
       review-state: ${{ github.event.review.state || '' }}
       submitted-at: ${{ github.event.review.submitted_at || '' }}
+      trusted-actors: 'copilot-pull-request-reviewer'
+      fix-agent: 'github-copilot'
+  resolve-review-fix-comment:
+    if: ${{ github.event_name == 'issue_comment' && github.event.issue.pull_request }}
+    runs-on: ubuntu-latest
+    outputs:
+      head_sha: ${{ steps.pr.outputs.head_sha }}
+    steps:
+      - id: pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          PULL_REQUEST_NUMBER: ${{ github.event.issue.number }}
+        run: |
+          head_sha="$(gh api "repos/$REPOSITORY/pulls/$PULL_REQUEST_NUMBER" --jq '.head.sha')"
+          echo "head_sha=$head_sha" >> "$GITHUB_OUTPUT"
+  review-fix-comment:
+    needs: resolve-review-fix-comment
+    if: ${{ github.event_name == 'issue_comment' && github.event.issue.pull_request && needs.resolve-review-fix-comment.outputs.head_sha != '' }}
+    uses: munichdeveloper/pi-spec-harness/.github/workflows/review-fix.yml@v0.2.4
+    with:
+      harness-ref: 'v0.2.4'
+      pull-request: ${{ github.event.issue.number }}
+      review-id: 0
+      reviewed-head-sha: ${{ needs.resolve-review-fix-comment.outputs.head_sha }}
+      reviewer: ${{ github.event.comment.user.login || '' }}
+      reviewer-type: ${{ github.event.comment.user.type || '' }}
+      review-state: commented
+      submitted-at: ${{ github.event.comment.updated_at || github.event.comment.created_at || '' }}
+      trusted-actors: 'copilot-pull-request-reviewer'
+      fix-agent: 'github-copilot'
+  review-fix-pr-event:
+    if: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.head.repo.full_name == github.repository }}
+    uses: munichdeveloper/pi-spec-harness/.github/workflows/review-fix.yml@v0.2.4
+    with:
+      harness-ref: 'v0.2.4'
+      pull-request: ${{ github.event.pull_request.number }}
+      review-id: 0
+      # Metadata only for binding/reconciliation. The reusable workflow must
+      # continue to checkout only the pinned harness ref, never this PR head.
+      reviewed-head-sha: ${{ github.event.pull_request.head.sha || '' }}
+      reviewer: ''
+      reviewer-type: ''
+      review-state: ''
+      submitted-at: ${{ github.event.pull_request.updated_at || github.event.pull_request.created_at || '' }}
       trusted-actors: 'copilot-pull-request-reviewer'
       fix-agent: 'github-copilot'

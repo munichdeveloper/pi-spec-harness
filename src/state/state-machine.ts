@@ -1,5 +1,5 @@
 import { nowIso } from "./store.js";
-import type { CanonicalRunId, GateDecisionContext, GateRecord, GateResult, GateType, IterationRecord, PhaseId, ReviewRecord, ReviewThreadRecord, ReviewThreadStatus, RunState } from "./types.js";
+import type { CanonicalRunId, GateDecisionContext, GateRecord, GateResult, GateType, IterationRecord, PhaseId, ReviewAutomationScope, ReviewRecord, ReviewRemediationDispatch, ReviewThreadRecord, ReviewThreadStatus, RunState } from "./types.js";
 import { SCHEMA_VERSION } from "./types.js";
 
 export const PHASE_ORDER: PhaseId[] = [
@@ -858,6 +858,81 @@ export function incrementReviewLoopCounter(state: RunState): RunState {
  */
 export function reviewLoopCapReached(state: RunState): boolean {
   return (state.reviewLoopCounter ?? 0) >= state.maxAutomaticIterations;
+}
+
+export function buildReviewRemediationDispatchKey(
+  repository: string,
+  pullRequest: number,
+  headSha: string,
+  threadKeys: string[],
+): string {
+  const normalizedThreads = normalizeReviewRemediationThreadKeys(threadKeys);
+  return `${repository.toLowerCase()}:pr${pullRequest}:sha${headSha.toLowerCase()}:threads:${normalizedThreads.join(",")}`;
+}
+
+export function normalizeReviewRemediationThreadKeys(threadKeys: string[]): string[] {
+  return [...threadKeys].map((key) => key.trim()).filter(Boolean).sort();
+}
+
+export function upsertReviewRemediationDispatch(
+  state: RunState,
+  update: ReviewRemediationDispatch,
+): RunState {
+  const current = state.reviewRemediationOutbox ?? [];
+  const index = current.findIndex((entry) => entry.dispatchKey === update.dispatchKey);
+  if (index < 0) {
+    return { ...state, reviewRemediationOutbox: [...current, update], updatedAt: nowIso() };
+  }
+  const merged = { ...current[index], ...update };
+  const next = [...current];
+  next[index] = merged;
+  return { ...state, reviewRemediationOutbox: next, updatedAt: nowIso() };
+}
+
+export function findReviewRemediationDispatch(
+  state: RunState,
+  dispatchKey: string,
+): ReviewRemediationDispatch | undefined {
+  return (state.reviewRemediationOutbox ?? []).find((entry) => entry.dispatchKey === dispatchKey);
+}
+
+export function isManagedReviewAutomationCandidate(
+  candidate: Pick<RunState, "repository" | "pullRequest" | "pullRequestHeadSha" | "implementationPullRequest" | "implementationHeadSha">,
+  repository: string,
+  pullRequest: number,
+  headSha: string,
+): boolean {
+  const boundPr = candidate.implementationPullRequest ?? candidate.pullRequest;
+  const boundSha = candidate.implementationHeadSha ?? candidate.pullRequestHeadSha;
+  return candidate.repository.toLowerCase() === repository.toLowerCase()
+    && boundPr === pullRequest
+    && boundSha?.toLowerCase() === headSha.toLowerCase();
+}
+
+export function classifyReviewAutomationScope(opts: {
+  repository: string;
+  pullRequest: number;
+  headSha: string;
+  candidates: Array<{
+    state: Pick<RunState, "repository" | "pullRequest" | "pullRequestHeadSha" | "implementationPullRequest" | "implementationHeadSha">;
+    matchedByImplementationIssue?: boolean;
+  }>;
+}): ReviewAutomationScope {
+  const exact = opts.candidates.filter(({ state }) =>
+    isManagedReviewAutomationCandidate(state, opts.repository, opts.pullRequest, opts.headSha)
+  );
+  if (exact.length === 1) return "managed";
+  if (exact.length > 1) return "ambiguous-blocked";
+
+  const recoverable = opts.candidates.filter(({ state, matchedByImplementationIssue }) =>
+    matchedByImplementationIssue === true
+    && state.repository.toLowerCase() === opts.repository.toLowerCase()
+    && (state.implementationPullRequest === undefined || state.implementationPullRequest === opts.pullRequest)
+    && (state.implementationHeadSha === undefined || state.implementationHeadSha.toLowerCase() === opts.headSha.toLowerCase())
+  );
+  if (recoverable.length === 1) return "recoverable-binding";
+  if (recoverable.length > 1) return "ambiguous-blocked";
+  return "unmanaged-blocked";
 }
 
 /**

@@ -28,6 +28,8 @@ jobs:
       cancel-in-progress: false
     steps:
       - name: Checkout pinned harness implementation
+        # `inputs.reviewed-head-sha` is metadata for binding/classification only.
+        # The trusted receiver must never checkout or execute PR-head code here.
         uses: actions/checkout@v4
         with:
           repository: munichdeveloper/pi-spec-harness

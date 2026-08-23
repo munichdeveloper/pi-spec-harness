@@ -25,14 +25,15 @@ import { decideWorkflowInstall } from "./workflows/install-decision.js";
 import { upsertManagedBlock, renderHarnessContextBlock, AGENTS_MD_PATH } from "./agents-context/managed-block.js";
 import { buildIssueFromSpec } from "./spec/issue-from-spec.js";
 import { runSpecToIssuePipeline } from "./spec/spec-to-issue-pipeline.js";
-import { IssueStateStore, RUN_ISSUE_LABEL, ensureRunIssue, findRunIssue, findRunIssueByImplementationIssue, findRunIssueByPullRequest, parseStateFromBody } from "./state/issue-store.js";
+import { IssueStateStore, RUN_ISSUE_LABEL, ensureRunIssue, findRunIssue, findRunIssueByImplementationIssue, findRunIssuesByPullRequest, parseStateFromBody } from "./state/issue-store.js";
 import { DEFAULT_CODING_AGENT, extractReferencedIssueNumbers, normalizeAgentLogin, pollForAgentAssignment, recordVerifiedAgentAssignment } from "./agent/assignment.js";
-import { processReviewEvent, validateSelfHostingRef } from "./review/review-fix.js";
+import { confirmReviewRemediationDispatch, prepareReviewRemediationDispatch, processReviewEvent, validateSelfHostingRef } from "./review/review-fix.js";
 import type { StateStore } from "./state/state-store.js";
 import { FileStateStore } from "./state/store.js";
 import {
   PHASE_ORDER,
   classifyDeliveryPrMergeEffect,
+  classifyReviewAutomationScope,
   computeNextAction,
   bindDeliveryPullRequest,
   bindImplementationPullRequest,
@@ -44,6 +45,7 @@ import {
   findPassedMergeApprovalGate,
   formatCanonicalRunId,
   initRunState,
+  isManagedReviewAutomationCandidate,
   needsGateReconciliation,
   needsDeliveryMergeReconciliation,
   recordDeliveryMergeEffect,
@@ -118,6 +120,66 @@ export interface WriterGithubAdapter {
   addLabels(repository: string, issueNumber: number, labels: string[]): Promise<void>;
   closeIssue(repository: string, issueNumber: number): Promise<void>;
   ensureLabel(repository: string, name: string, opts?: { color?: string; description?: string }): Promise<void>;
+}
+
+export interface ReviewAutomationCandidateStore extends StateStore {
+  issueRef: { repository: string; number: number; url: string };
+}
+
+export interface ReviewAutomationCandidate {
+  store: ReviewAutomationCandidateStore;
+  state: RunState;
+  matchedByImplementationIssue: boolean;
+}
+
+export async function loadReviewAutomationCandidates(args: {
+  repository: string;
+  pullRequest: number;
+  pullRequestBody: string;
+}, deps: {
+  findRunIssuesByPullRequest: (repository: string, pullRequest: number) => Promise<ReviewAutomationCandidateStore[]>;
+  findRunIssueByImplementationIssue: (repository: string, implementationIssue: number) => Promise<ReviewAutomationCandidateStore | undefined>;
+} = {
+  findRunIssuesByPullRequest,
+  findRunIssueByImplementationIssue,
+}): Promise<ReviewAutomationCandidate[]> {
+  const prBoundStores = await deps.findRunIssuesByPullRequest(args.repository, args.pullRequest);
+  const implementationIssues = [...new Set(extractReferencedIssueNumbers(args.pullRequestBody))];
+  const implementationIssueStores = (await Promise.all(
+    implementationIssues.map((issue) => deps.findRunIssueByImplementationIssue(args.repository, issue)),
+  )).filter((store): store is ReviewAutomationCandidateStore => store !== undefined);
+
+  const keyed = new Map<number, { store: ReviewAutomationCandidateStore; matchedByImplementationIssue: boolean }>();
+  for (const store of prBoundStores) {
+    keyed.set(store.issueRef.number, { store, matchedByImplementationIssue: false });
+  }
+  for (const store of implementationIssueStores) {
+    const existing = keyed.get(store.issueRef.number);
+    keyed.set(store.issueRef.number, {
+      store: existing?.store ?? store,
+      matchedByImplementationIssue: existing?.matchedByImplementationIssue ?? true,
+    });
+  }
+
+  return Promise.all(
+    [...keyed.values()].map(async ({ store, matchedByImplementationIssue }) => ({
+      store,
+      state: await store.load(),
+      matchedByImplementationIssue,
+    })),
+  );
+}
+
+export function hasTrustedIssueCommentMarker(
+  comments: Array<{ body: string; author?: { login?: string } | null }>,
+  marker: string,
+  trustedActorLogin: string,
+): boolean {
+  const trustedActor = normalizeAgentLogin(trustedActorLogin);
+  return comments.some((comment) =>
+    comment.body.includes(marker)
+    && normalizeAgentLogin(comment.author?.login ?? "") === trustedActor
+  );
 }
 
 interface StoreArgs {
@@ -2075,16 +2137,57 @@ async function cmdReviewFix(argv: {
   fixAgent: string;
   selfActorLogin: string;
 }): Promise<void> {
-  const store = await findRunIssueByPullRequest(argv.repository, argv.pullRequest);
-  if (!store) {
+  const pr = await github.viewIssue(argv.repository, argv.pullRequest);
+  const candidates = await loadReviewAutomationCandidates({
+    repository: argv.repository,
+    pullRequest: argv.pullRequest,
+    pullRequestBody: pr.body ?? "",
+  });
+  const scope = classifyReviewAutomationScope({
+    repository: argv.repository,
+    pullRequest: argv.pullRequest,
+    headSha: argv.headSha,
+    candidates: candidates.map(({ state, matchedByImplementationIssue }) => ({ state, matchedByImplementationIssue })),
+  });
+  if (scope !== "managed") {
+    const recoveryCode = "HARNESS_REVIEW_BINDING_REQUIRED";
+    const marker = `<!-- harness:review-binding:${argv.pullRequest}:${argv.headSha.toLowerCase()} -->`;
+    const bindingMessage = `${marker}
+Harness review remediation is blocked.
+
+- scope: \`${scope}\`
+- recovery-code: \`${recoveryCode}\`
+- next-step: Bind this PR to exactly one open \`harness:run\` with the current head SHA before retrying automation.`;
+    if (!hasTrustedIssueCommentMarker(pr.comments, marker, argv.selfActorLogin)) {
+      await github.ensureLabel(argv.repository, "status:needs-human", {
+        color: "D93F0B",
+        description: "A human must decide how the harness should proceed",
+      });
+      await github.addLabels(argv.repository, argv.pullRequest, ["status:needs-human"]);
+      await github.commentIssue(argv.repository, argv.pullRequest, bindingMessage);
+    }
     printResult(
       "review-fix",
-      { hasActionable: false, gateOpened: false, classifiedKeys: [], dispatched: false, skipped: "unmanaged-pull-request" },
-      `No open harness run is bound to PR #${argv.pullRequest}; nothing to remediate.`,
+      {
+        hasActionable: false,
+        gateOpened: false,
+        classifiedKeys: [],
+        dispatched: false,
+        blocked: scope,
+        recoveryCode,
+      },
+      `Review remediation is blocked for PR #${argv.pullRequest} until a canonical run binding exists for head ${argv.headSha}.`,
     );
     return;
   }
-  const state = await store.load();
+  const managed = candidates.find(({ state }) =>
+    isManagedReviewAutomationCandidate(state, argv.repository, argv.pullRequest, argv.headSha)
+  );
+  if (!managed) {
+    throw new Error(`managed review scope for PR #${argv.pullRequest} could not be resolved to an exact run`);
+  }
+  const store = managed.store;
+  const state = managed.state;
   const preExistingHumanGate = state.gates.some(
     (gate) => gate.type === "human" && (gate.result === "pending" || gate.result === "needs-human"),
   );
@@ -2126,12 +2229,26 @@ async function cmdReviewFix(argv: {
       trustedActors: argv.trustedActors.split(",").map((actor) => actor.trim()).filter(Boolean),
     },
   );
-  await store.save(result.state);
+  let persistedState = result.state;
   let dispatched = false;
-  const hasOpenHumanGate = result.state.gates.some(
+  let alreadyDispatched = false;
+  const hasOpenHumanGate = persistedState.gates.some(
     (gate) => gate.type === "human" && (gate.result === "pending" || gate.result === "needs-human"),
   );
+  let dispatchKey: string | undefined;
   if (result.hasActionable && !result.gateOpened && !hasOpenHumanGate) {
+    const prepared = prepareReviewRemediationDispatch(
+      persistedState,
+      argv.reviewId,
+      argv.pullRequest,
+      argv.headSha,
+      result.classifiedKeys,
+    );
+    persistedState = prepared.state;
+    dispatchKey = prepared.dispatch.dispatchKey;
+  }
+  await store.save(persistedState);
+  if (result.hasActionable && !result.gateOpened && !hasOpenHumanGate && dispatchKey) {
     const agentMention = argv.fixAgent === "github-copilot"
       ? "@copilot"
       : argv.fixAgent === "claude-code"
@@ -2140,14 +2257,33 @@ async function cmdReviewFix(argv: {
     if (!agentMention) {
       throw new Error(`unsupported HARNESS_REVIEW_FIX_AGENT '${argv.fixAgent}'`);
     }
-    await github.commentIssue(
-      argv.repository,
-      argv.pullRequest,
-      `${agentMention} Please address all unresolved actionable review threads for this PR on the existing PR branch. ` +
-        `Do not create another pull request or expand scope. Run the relevant checks, push the fixes to this branch, ` +
-        `then reply to each implemented thread with commit and test evidence. Review package: ${result.classifiedKeys.join(", ")}`,
-    );
-    dispatched = true;
+    const pr = await github.viewIssue(argv.repository, argv.pullRequest);
+    const dispatch = persistedState.reviewRemediationOutbox?.find((entry) => entry.dispatchKey === dispatchKey);
+    if (!dispatch) throw new Error(`review remediation dispatch '${dispatchKey}' was not persisted`);
+    if (hasTrustedIssueCommentMarker(pr.comments, dispatch.marker, argv.selfActorLogin)) {
+      alreadyDispatched = true;
+      persistedState = confirmReviewRemediationDispatch(persistedState, dispatchKey, {
+        status: "confirmed",
+        providerUpdatedAt: new Date().toISOString(),
+      });
+      await store.save(persistedState);
+    } else {
+      await github.commentIssue(
+        argv.repository,
+        argv.pullRequest,
+        `${dispatch.marker}
+${agentMention} Please address all unresolved actionable review threads for this PR on the existing PR branch. ` +
+          `Do not create another pull request or expand scope. Run the relevant checks, push the fixes to this branch, ` +
+          `then reply to each implemented thread with commit and test evidence. Review package: ${result.classifiedKeys.join(", ")}`,
+      );
+      dispatched = true;
+      const reread = await github.viewIssue(argv.repository, argv.pullRequest);
+      persistedState = confirmReviewRemediationDispatch(persistedState, dispatchKey, {
+        status: hasTrustedIssueCommentMarker(reread.comments, dispatch.marker, argv.selfActorLogin) ? "confirmed" : "sent",
+        providerUpdatedAt: new Date().toISOString(),
+      });
+      await store.save(persistedState);
+    }
   }
   printResult(
     "review-fix",
@@ -2156,9 +2292,13 @@ async function cmdReviewFix(argv: {
       gateOpened: result.gateOpened,
       classifiedKeys: result.classifiedKeys,
       dispatched,
+      alreadyDispatched,
+      dispatchKey,
     },
-    dispatched
-      ? "Dispatched the configured review-fix agent for the classified package."
+    dispatched || alreadyDispatched
+      ? alreadyDispatched
+        ? "The configured review-fix agent was already dispatched for the classified package."
+        : "Dispatched the configured review-fix agent for the classified package."
       : hasOpenHumanGate || result.gateOpened
         ? "Remediation is blocked by an open human gate."
         : "No remediation required.",
