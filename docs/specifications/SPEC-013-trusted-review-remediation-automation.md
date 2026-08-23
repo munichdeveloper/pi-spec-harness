@@ -152,13 +152,13 @@ harte State-Machine-Barriere.
 
 | Ereignis | Process code | Outcome | Idempotenz/Korrelation | Evidenz |
 | --- | --- | --- | --- | --- |
-| Auftrag bestätigt | `AI_IMPLEMENTATION_DISPATCH` | `dispatched` | Dispatch-Key, Run-ID, PR, Head, Provider-ID | Outbox + Kommentar |
-| Bindung blockiert | `PROCESS_BLOCK` | `unmanaged-blocked` / `ambiguous-blocked` | PR-Prozesskennung + Head | Failure-Check + Recovery-Code |
-| Watchdog-Retry | `PROCESS_RETRY` | `retrying` / `exhausted` | Run/PR + Action-Key + Versuch | Run-State + Workflow-Run |
-| Idempotenter Skip | `PROCESS_SKIP` | `duplicate` / `informational` | Event-Key + Dispatch-Key | Outbox/No-op-Entscheid |
+| Auftrag bestätigt | `AGENT_ASSIGNMENT` | `SUCCEEDED` | Dispatch-Key, Run-ID, PR, Head, Provider-ID | Outbox + Kommentar |
+| Bindung blockiert | `HUMAN_GATE_OPEN` | `BLOCKED` | PR-Prozesskennung + Head | Failure-Check + Recovery-Code |
+| Watchdog-Retry | `PROCESS_RECONCILIATION` | `STARTED` / `BLOCKED` | Run/PR + Action-Key + Versuch | Run-State + Workflow-Run |
+| Idempotenter Skip | `PROCESS_RECONCILIATION` | `SKIPPED` | Event-Key + Dispatch-Key | Outbox/No-op-Entscheid |
 | Thread gelöst | `REVIEW_FINDING_RESOLVE` | `resolved` | Thread-ID + geprüfter Head | Thread + Check-/Testevidenz |
-| Run fortgesetzt | `RUN_RESUME` | `continued` | Run-ID + State-Revision | Run-State-Transition |
-| Remediation fertig | `AI_IMPLEMENTATION_COMPLETE` | `completed` | Dispatch-Key + finaler Head | Commit, Checks, geschlossene Threads |
+| Run fortgesetzt | `PROCESS_RECONCILIATION` | `SUCCEEDED` | Run-ID + State-Revision | Run-State-Transition |
+| Remediation fertig | `ITERATION_FINISH` | `SUCCEEDED` | Dispatch-Key + finaler Head | Commit, Checks, geschlossene Threads |
 
 Jedes Envelope enthält Zeitpunkt, Process Code, Actor, Access Role, Begründung,
 Beschreibung, Repository, PR, Head-SHA sowie Run-ID oder deterministische
