@@ -196,7 +196,7 @@ jobs:
       reviewed-head-sha: \${{ github.event.pull_request.head.sha || '' }}
       reviewer: ''
       reviewer-type: ''
-      review-state: commented
+      review-state: ''
       submitted-at: \${{ github.event.pull_request.updated_at || github.event.pull_request.created_at || '' }}
       trusted-actors: '${trustedActors.join(",")}'
       fix-agent: '${fixAgent}'

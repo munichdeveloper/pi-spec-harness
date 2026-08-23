@@ -2201,6 +2201,7 @@ Harness review remediation is blocked.
         status: "confirmed",
         providerUpdatedAt: new Date().toISOString(),
       });
+      await store.save(persistedState);
     } else {
       await github.commentIssue(
         argv.repository,
@@ -2216,8 +2217,8 @@ ${agentMention} Please address all unresolved actionable review threads for this
         status: reread.comments.some((comment) => comment.body.includes(dispatch.marker)) ? "confirmed" : "sent",
         providerUpdatedAt: new Date().toISOString(),
       });
+      await store.save(persistedState);
     }
-    await store.save(persistedState);
   }
   printResult(
     "review-fix",
