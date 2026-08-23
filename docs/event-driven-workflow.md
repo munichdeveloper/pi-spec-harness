@@ -10,6 +10,30 @@ weiter.
 Die Automation darf niemals das „neueste“ Issue, die höchste Spec oder den
 zuletzt geöffneten PR auswählen.
 
+## Reaktiver Implementierungs-Handoff
+
+Nach dem konfigurierten Freigabe-Label führt der wiederverwendbare Workflow
+eine begrenzte Transaktion aus: Er erzeugt oder findet den kanonischen Run,
+führt ihn deterministisch bis `implementation`, markiert das
+Implementierungs-Issue mit `<!-- harness:<run-id> -->` und weist
+`copilot-swe-agent[bot]` über GitHubs Agent Assignment API zu. Der Request
+verwendet `agent_assignment.target_repo` und
+`agent_assignment.base_branch`; das alte Feld `base_ref` wird nicht verwendet.
+
+Da GitHubs Assignee-Ansicht eventual-consistent ist, erfolgt die Verifikation
+mit begrenztem Backoff. Eine bestätigte Zuweisung wird im Tracking-Issue
+persistiert. Ein zuvor durch einen verfrühten Read entstandenes Gate
+`agent-assign-unverified` oder `agent-assign-unavailable` wird anschließend als
+System-Reconciliation superseded – ohne eine menschliche Freigabe zu erfinden.
+
+Öffnet oder aktualisiert der Coding Agent einen PR, löst der PR-Workflow den
+Run über den Marker oder die Referenz zum Implementierungs-Issue auf, prüft den
+Base-Branch, bindet PR und vollständigen Head-SHA und ergänzt den Marker im
+PR-Body. Offene actionable, implementing, conflicting oder needs-human Review-
+Threads blockieren jeden Phasenfortschritt. Ein wegen eines offenen Human-Gates
+zurückgestelltes Review verbraucht seine Thread-Idempotenz nicht und kann nach
+der Reconciliation sicher erneut verarbeitet werden.
+
 ## Kanonische Zuordnung
 
 Ein Slice besitzt:

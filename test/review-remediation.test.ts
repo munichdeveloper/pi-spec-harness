@@ -540,6 +540,22 @@ describe("processReviewEvent (TAC-04/TAC-05/TAC-09)", () => {
     expect(result2.hasActionable).toBe(false);
   });
 
+  it("retries a previously recorded review whose threads were never classified", () => {
+    const state = recordReview(boundRun(), {
+      reviewId: REVIEW_EVENT_DEFAULTS.reviewId,
+      reviewer: REVIEW_EVENT_DEFAULTS.reviewerLogin,
+      reviewerType: REVIEW_EVENT_DEFAULTS.reviewerType,
+      submittedAt: REVIEW_EVENT_DEFAULTS.submittedAt,
+      state: REVIEW_EVENT_DEFAULTS.state,
+      repository: "munichdeveloper/pi-spec-harness",
+      pullRequest: 42,
+      reviewedHeadSha: sha("a"),
+    });
+    const result = processReviewEvent(state, REVIEW_EVENT_DEFAULTS, [THREAD_DEFAULTS], opts);
+    expect(result.classifiedKeys).toHaveLength(1);
+    expect(result.hasActionable).toBe(true);
+  });
+
   it("TAC-09: bot-own event is loop-guarded", () => {
     const state = boundRun();
     const result = processReviewEvent(

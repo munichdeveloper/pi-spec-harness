@@ -22,7 +22,8 @@ export type OrchestratorStopReason =
   | "open-gate"
   | "complete"
   | "max-steps"
-  | "error";
+  | "error"
+  | "target-phase";
 
 export interface OrchestratorResult {
   steps: OrchestratorStep[];
@@ -47,6 +48,7 @@ const DEFAULT_MAX_STEPS = 10;
 export async function orchestrate(
   store: StateStore,
   maxSteps = DEFAULT_MAX_STEPS,
+  stopAtPhase?: import("./state/types.js").PhaseId,
 ): Promise<OrchestratorResult> {
   const steps: OrchestratorStep[] = [];
 
@@ -70,6 +72,10 @@ export async function orchestrate(
         stopDetail: next.detail,
         finalNextAction: next,
       };
+    }
+
+    if (stopAtPhase && state.phase === stopAtPhase) {
+      return { steps, stopReason: "target-phase", stopDetail: `Reached requested target phase '${stopAtPhase}'.`, finalNextAction: next };
     }
 
     if (next.action !== "advance-phase") {
