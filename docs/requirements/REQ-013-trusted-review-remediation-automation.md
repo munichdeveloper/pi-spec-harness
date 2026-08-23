@@ -2,7 +2,7 @@
 id: REQ-013
 type: requirement
 title: Vertrauenswürdige vollautomatische Review-Remediation
-status: draft
+status: approved
 owner: product
 risk: high
 created: 2026-08-23
@@ -65,4 +65,3 @@ ein Human-Gate.
 Die Lösung verwendet GitHub Actions, GitHub Copilot und bestehende
 Repository-Ressourcen im vorhandenen 0-Euro-Kostenrahmen. Bei erschöpftem
 Kontingent wird sichtbar blockiert, nicht kostenpflichtig ausgewichen.
-

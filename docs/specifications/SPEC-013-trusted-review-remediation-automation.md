@@ -2,7 +2,7 @@
 id: SPEC-013
 type: software-spec
 title: Vertrauenswürdige vollautomatische Review-Remediation
-status: draft
+status: approved
 owner: engineering
 risk: high
 requirements:
@@ -123,4 +123,3 @@ harte State-Machine-Barriere.
 Die trusted Review-Referenz kann einzeln deaktiviert und auf den bisherigen
 `pull_request_review`-Receiver zurückgepinnt werden. Persistierte Checkpoints und
 Audit-Historie bleiben erhalten; offene Runs werden nicht gelöscht.
-
