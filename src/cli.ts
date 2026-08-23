@@ -122,6 +122,65 @@ export interface WriterGithubAdapter {
   ensureLabel(repository: string, name: string, opts?: { color?: string; description?: string }): Promise<void>;
 }
 
+export interface ReviewAutomationCandidateStore extends StateStore {
+  issueRef: { repository: string; number: number; url: string };
+}
+
+export interface ReviewAutomationCandidate {
+  store: ReviewAutomationCandidateStore;
+  state: RunState;
+  matchedByImplementationIssue?: boolean;
+}
+
+export async function loadReviewAutomationCandidates(args: {
+  repository: string;
+  pullRequest: number;
+  pullRequestBody: string;
+}, deps: {
+  findRunIssuesByPullRequest: (repository: string, pullRequest: number) => Promise<ReviewAutomationCandidateStore[]>;
+  findRunIssueByImplementationIssue: (repository: string, implementationIssue: number) => Promise<ReviewAutomationCandidateStore | undefined>;
+} = {
+  findRunIssuesByPullRequest,
+  findRunIssueByImplementationIssue,
+}): Promise<ReviewAutomationCandidate[]> {
+  const prBoundStores = await deps.findRunIssuesByPullRequest(args.repository, args.pullRequest);
+  const implementationIssues = [...new Set(extractReferencedIssueNumbers(args.pullRequestBody))];
+  const implementationIssueStores = (await Promise.all(
+    implementationIssues.map((issue) => deps.findRunIssueByImplementationIssue(args.repository, issue)),
+  )).filter((store): store is ReviewAutomationCandidateStore => store !== undefined);
+
+  const keyed = new Map<number, { store: ReviewAutomationCandidateStore; matchedByImplementationIssue: boolean }>();
+  for (const store of prBoundStores) {
+    keyed.set(store.issueRef.number, { store, matchedByImplementationIssue: false });
+  }
+  for (const store of implementationIssueStores) {
+    keyed.set(store.issueRef.number, {
+      store,
+      matchedByImplementationIssue: true,
+    });
+  }
+
+  return Promise.all(
+    [...keyed.values()].map(async ({ store, matchedByImplementationIssue }) => ({
+      store,
+      state: await store.load(),
+      ...(matchedByImplementationIssue ? { matchedByImplementationIssue: true } : {}),
+    })),
+  );
+}
+
+export function hasTrustedIssueCommentMarker(
+  comments: Array<{ body: string; author?: { login?: string } | null }>,
+  marker: string,
+  trustedActorLogin: string,
+): boolean {
+  const trustedActor = normalizeAgentLogin(trustedActorLogin);
+  return comments.some((comment) =>
+    comment.body.includes(marker)
+    && normalizeAgentLogin(comment.author?.login ?? "") === trustedActor
+  );
+}
+
 interface StoreArgs {
   state?: string;
   repository?: string;
@@ -2077,13 +2136,17 @@ async function cmdReviewFix(argv: {
   fixAgent: string;
   selfActorLogin: string;
 }): Promise<void> {
-  const candidateStores = await findRunIssuesByPullRequest(argv.repository, argv.pullRequest);
-  const candidates = await Promise.all(candidateStores.map(async (store) => ({ store, state: await store.load() })));
+  const pr = await github.viewIssue(argv.repository, argv.pullRequest);
+  const candidates = await loadReviewAutomationCandidates({
+    repository: argv.repository,
+    pullRequest: argv.pullRequest,
+    pullRequestBody: pr.body ?? "",
+  });
   const scope = classifyReviewAutomationScope({
     repository: argv.repository,
     pullRequest: argv.pullRequest,
     headSha: argv.headSha,
-    candidates: candidates.map(({ state }) => ({ state })),
+    candidates: candidates.map(({ state, matchedByImplementationIssue }) => ({ state, matchedByImplementationIssue })),
   });
   if (scope !== "managed") {
     const recoveryCode = "HARNESS_REVIEW_BINDING_REQUIRED";
@@ -2094,7 +2157,6 @@ Harness review remediation is blocked.
 - scope: \`${scope}\`
 - recovery-code: \`${recoveryCode}\`
 - next-step: Bind this PR to exactly one open \`harness:run\` with the current head SHA before retrying automation.`;
-    const pr = await github.viewIssue(argv.repository, argv.pullRequest);
     if (!pr.comments.some((comment) => comment.body.includes(marker))) {
       await github.ensureLabel(argv.repository, "status:needs-human", {
         color: "D93F0B",
@@ -2197,7 +2259,7 @@ Harness review remediation is blocked.
     const pr = await github.viewIssue(argv.repository, argv.pullRequest);
     const dispatch = persistedState.reviewRemediationOutbox?.find((entry) => entry.dispatchKey === dispatchKey);
     if (!dispatch) throw new Error(`review remediation dispatch '${dispatchKey}' was not persisted`);
-    if (pr.comments.some((comment) => comment.body.includes(dispatch.marker))) {
+    if (hasTrustedIssueCommentMarker(pr.comments, dispatch.marker, argv.selfActorLogin)) {
       alreadyDispatched = true;
       persistedState = confirmReviewRemediationDispatch(persistedState, dispatchKey, {
         status: "confirmed",
@@ -2216,7 +2278,7 @@ ${agentMention} Please address all unresolved actionable review threads for this
       dispatched = true;
       const reread = await github.viewIssue(argv.repository, argv.pullRequest);
       persistedState = confirmReviewRemediationDispatch(persistedState, dispatchKey, {
-        status: reread.comments.some((comment) => comment.body.includes(dispatch.marker)) ? "confirmed" : "sent",
+        status: hasTrustedIssueCommentMarker(reread.comments, dispatch.marker, argv.selfActorLogin) ? "confirmed" : "sent",
         providerUpdatedAt: new Date().toISOString(),
       });
       await store.save(persistedState);

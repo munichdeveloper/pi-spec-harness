@@ -866,8 +866,12 @@ export function buildReviewRemediationDispatchKey(
   headSha: string,
   threadKeys: string[],
 ): string {
-  const normalizedThreads = [...threadKeys].map((key) => key.trim()).filter(Boolean).sort();
+  const normalizedThreads = normalizeReviewRemediationThreadKeys(threadKeys);
   return `${repository.toLowerCase()}:pr${pullRequest}:sha${headSha.toLowerCase()}:threads:${normalizedThreads.join(",")}`;
+}
+
+export function normalizeReviewRemediationThreadKeys(threadKeys: string[]): string[] {
+  return [...threadKeys].map((key) => key.trim()).filter(Boolean).sort();
 }
 
 export function upsertReviewRemediationDispatch(

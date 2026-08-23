@@ -18,6 +18,7 @@ import { readFileSync } from "node:fs";
 
 import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
+import { hasTrustedIssueCommentMarker, loadReviewAutomationCandidates, type ReviewAutomationCandidateStore } from "../src/cli.js";
 import {
   buildReviewIdempotencyKey,
   buildReviewRemediationDispatchKey,
@@ -77,6 +78,18 @@ function boundRun(): RunState {
     implementationHeadSha: sha("a"),
   };
   return state;
+}
+
+function candidateStore(number: number, state: RunState): ReviewAutomationCandidateStore {
+  return {
+    issueRef: {
+      repository: state.repository,
+      number,
+      url: `https://github.com/${state.repository}/issues/${number}`,
+    },
+    load: async () => state,
+    save: async () => undefined,
+  };
 }
 
 const TRUSTED_ACTORS = ["copilot-pull-request-reviewer", "trusted-human"];
@@ -243,7 +256,7 @@ describe("SPEC-013 remediation dispatch outbox", () => {
   });
 
   it("prepares exactly one dispatch entry for a review package", () => {
-    const prepared = prepareReviewRemediationDispatch(boundRun(), 1001, 42, sha("a"), ["b", "a"]);
+    const prepared = prepareReviewRemediationDispatch(boundRun(), 1001, 42, sha("a"), [" b ", "", "a", "  "]);
     expect(prepared.dispatch.marker).toBe(buildReviewRemediationMarker(prepared.dispatch.dispatchKey));
     expect(prepared.state.reviewRemediationOutbox).toHaveLength(1);
     expect(prepared.dispatch.threadKeys).toEqual(["a", "b"]);
@@ -264,6 +277,42 @@ describe("SPEC-013 remediation dispatch outbox", () => {
       providerUpdatedAt: "2026-08-23T12:00:00.000Z",
     });
     expect(findReviewRemediationDispatch(confirmed, prepared.dispatch.dispatchKey)?.status).toBe("confirmed");
+  });
+});
+
+describe("review-fix CLI helpers", () => {
+  it("loads recoverable-binding candidates from referenced implementation issues", async () => {
+    const store = candidateStore(77, baseRun({ issue: 123 }));
+    const candidates = await loadReviewAutomationCandidates(
+      {
+        repository: "munichdeveloper/pi-spec-harness",
+        pullRequest: 42,
+        pullRequestBody: "Implements #123",
+      },
+      {
+        findRunIssuesByPullRequest: async () => [],
+        findRunIssueByImplementationIssue: async (_repository, implementationIssue) =>
+          implementationIssue === 123 ? store : undefined,
+      },
+    );
+
+    expect(candidates).toEqual([{
+      store,
+      state: await store.load(),
+      matchedByImplementationIssue: true,
+    }]);
+  });
+
+  it("accepts remediation markers only from the trusted harness identity", () => {
+    const marker = buildReviewRemediationMarker("dispatch-key");
+    expect(hasTrustedIssueCommentMarker([
+      { body: marker, author: { login: "random-user" } },
+      { body: "no marker", author: { login: "copilot-swe-agent[bot]" } },
+    ], marker, "copilot-swe-agent[bot]")).toBe(false);
+
+    expect(hasTrustedIssueCommentMarker([
+      { body: marker, author: { login: "copilot-swe-agent[bot]" } },
+    ], marker, "copilot-swe-agent[bot]")).toBe(true);
   });
 });
 
