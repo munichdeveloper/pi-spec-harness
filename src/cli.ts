@@ -2158,7 +2158,7 @@ Harness review remediation is blocked.
 - scope: \`${scope}\`
 - recovery-code: \`${recoveryCode}\`
 - next-step: Bind this PR to exactly one open \`harness:run\` with the current head SHA before retrying automation.`;
-    if (!pr.comments.some((comment) => comment.body.includes(marker))) {
+    if (!hasTrustedIssueCommentMarker(pr.comments, marker, argv.selfActorLogin)) {
       await github.ensureLabel(argv.repository, "status:needs-human", {
         color: "D93F0B",
         description: "A human must decide how the harness should proceed",
