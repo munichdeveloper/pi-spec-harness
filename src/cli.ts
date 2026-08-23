@@ -129,7 +129,7 @@ export interface ReviewAutomationCandidateStore extends StateStore {
 export interface ReviewAutomationCandidate {
   store: ReviewAutomationCandidateStore;
   state: RunState;
-  matchedByImplementationIssue?: boolean;
+  matchedByImplementationIssue: boolean;
 }
 
 export async function loadReviewAutomationCandidates(args: {
@@ -165,7 +165,7 @@ export async function loadReviewAutomationCandidates(args: {
     [...keyed.values()].map(async ({ store, matchedByImplementationIssue }) => ({
       store,
       state: await store.load(),
-      ...(matchedByImplementationIssue ? { matchedByImplementationIssue: true } : {}),
+      matchedByImplementationIssue,
     })),
   );
 }
