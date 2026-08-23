@@ -87,7 +87,7 @@ describe("WORKFLOW_TEMPLATE_CATALOG", () => {
     expect(rendered).not.toContain("secrets: inherit");
   });
 
-  it("defaults each reactive reference to its latest compatible release", () => {
+  it("renders each reactive reference with its configured catalog default ref", () => {
     expect(renderSpecToIssueReference()).toContain("spec-to-issue.yml@v0.2.2");
     expect(renderSpecToIssueReference()).toContain("harness-ref: 'v0.2.2'");
     expect(renderLabelApprovalBundlingReference()).toContain("label-approval-bundling.yml@v0.2.4");
