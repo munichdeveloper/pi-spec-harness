@@ -303,7 +303,7 @@ describe("review-fix CLI helpers", () => {
     }]);
   });
 
-  it("keeps the PR-bound store when the same run is also found via implementation issue", async () => {
+  it("keeps the PR-bound store and direct-binding classification when the same run is also found via implementation issue", async () => {
     const prBoundStore = candidateStore(77, boundRun());
     const implementationIssueStore = candidateStore(77, baseRun({ issue: 123 }));
     const candidates = await loadReviewAutomationCandidates(
@@ -320,7 +320,7 @@ describe("review-fix CLI helpers", () => {
 
     expect(candidates).toHaveLength(1);
     expect(candidates[0]?.store).toBe(prBoundStore);
-    expect(candidates[0]?.matchedByImplementationIssue).toBe(true);
+    expect(candidates[0]?.matchedByImplementationIssue).toBe(false);
     expect(candidates[0]?.state).toEqual(await prBoundStore.load());
   });
 

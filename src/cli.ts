@@ -157,7 +157,7 @@ export async function loadReviewAutomationCandidates(args: {
     const existing = keyed.get(store.issueRef.number);
     keyed.set(store.issueRef.number, {
       store: existing?.store ?? store,
-      matchedByImplementationIssue: true,
+      matchedByImplementationIssue: existing?.matchedByImplementationIssue ?? true,
     });
   }
 
