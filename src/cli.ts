@@ -35,7 +35,7 @@ import {
 } from "./spec/requirement-to-spec.js";
 import type { StateStore } from "./state/state-store.js";
 import { FileStateStore, nowIso } from "./state/store.js";
-import { SpecGenFileStore, findStoreRecord, upsertStoreRecord } from "./spec/spec-gen-store.js";
+import { SpecGenFileStore, SpecGenIssueStore, findStoreRecord, findStoreRecordByBranch, upsertStoreRecord } from "./spec/spec-gen-store.js";
 import { validateSpecContent } from "./spec/spec-validator.js";
 import {
   PHASE_ORDER,
@@ -2123,7 +2123,6 @@ async function cmdRequirementToSpecDispatch(argv: {
   sourceSha: string;
   provider: SpecGenerationProvider;
   harnessRef: string;
-  state?: string;
 }): Promise<void> {
   // ── 1. Read and parse the requirement file ─────────────────────────────────
   let content: string;
@@ -2168,11 +2167,11 @@ async function cmdRequirementToSpecDispatch(argv: {
     provider: argv.provider,
   });
 
-  // ── 4. PRIMARY idempotency: outbox in file store ─────────────────────────
-  const specStore = argv.state ? new SpecGenFileStore(argv.state) : null;
-  let storeData = specStore ? await specStore.load() : null;
+  // ── 4. PRIMARY idempotency: GitHub-issue-backed outbox (TAC-02) ──────────
+  const specStore = new SpecGenIssueStore(argv.repository);
+  let { data: storeData, issueNumber: storeIssueNumber } = await specStore.load();
 
-  const existingRecord = storeData ? findStoreRecord(storeData, order.dispatchKey) : undefined;
+  const existingRecord = findStoreRecord(storeData, order.dispatchKey);
   if (existingRecord && existingRecord.status !== "prepared") {
     const result = {
       idempotent: true,
@@ -2192,35 +2191,33 @@ async function cmdRequirementToSpecDispatch(argv: {
     return;
   }
 
-  // ── 5. SECONDARY idempotency: issue-title lookup (crash recovery) ─────────
+  // ── 5. SECONDARY idempotency: dispatch issue-title lookup (crash recovery) ─
   const issueTitle = buildSpecGenIssueTitle(fm.id, order.dispatchKey);
   const existing = await github.findIssueByExactTitle(argv.repository, issueTitle);
   if (existing) {
-    // Issue exists but outbox was not persisted (crash between create and save).
-    // Restore the outbox entry from GitHub as recovery evidence, then return.
-    if (specStore && storeData) {
-      const recovered: SpecDispatchRecord = {
-        schemaVersion: 1,
-        dispatchKey: order.dispatchKey,
-        requirementId: fm.id,
-        sourceSha: argv.sourceSha,
-        targetSpecPath: order.targetSpecPath,
-        provider: argv.provider,
-        branch: order.agentBranch,
-        status: "dispatched",
-        requestedAt: nowIso(),
-        updatedAt: nowIso(),
-      };
-      storeData = upsertStoreRecord(storeData, recovered);
-      await specStore.save(storeData);
-    }
+    // Dispatch issue exists but outbox was not persisted (crash between create and save).
+    // Restore the outbox entry from GitHub as crash-recovery evidence, then return.
+    const recovered: SpecDispatchRecord = {
+      schemaVersion: 1,
+      dispatchKey: order.dispatchKey,
+      requirementId: fm.id,
+      sourceSha: argv.sourceSha,
+      targetSpecPath: order.targetSpecPath,
+      provider: argv.provider,
+      branch: order.agentBranch,
+      status: "dispatched",
+      requestedAt: nowIso(),
+      updatedAt: nowIso(),
+    };
+    storeData = upsertStoreRecord(storeData, recovered);
+    await specStore.save(storeData, storeIssueNumber);
     const result = {
       idempotent: true,
       dispatchKey: order.dispatchKey,
       requirementId: fm.id,
       issueNumber: existing.number,
       issueUrl: existing.url,
-      recoveredToOutbox: specStore !== null,
+      recoveredToOutbox: true,
     };
     console.log(
       JSON.stringify({

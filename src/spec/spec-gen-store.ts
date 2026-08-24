@@ -1,17 +1,34 @@
 /**
- * Lightweight persistent store for spec-generation dispatch records.
- * Stored as a flat JSON array keyed by dispatchKey; NOT a full RunState.
- * This file is the authoritative idempotency checkpoint for the
- * requirement-to-spec pipeline. SPEC-014, decision 2 / TAC-02.
+ * Persistent store for spec-generation dispatch records.
+ *
+ * Two backends:
+ *  - SpecGenIssueStore  — GitHub-issue-backed, durable across runner lifetimes.
+ *                         This is the AUTHORITATIVE production store (TAC-02).
+ *  - SpecGenFileStore   — local file, used for local development / unit tests.
+ *
+ * SPEC-014, decision 2 / TAC-02.
  */
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { randomUUID } from "node:crypto";
+import { github } from "../github/gh.js";
 import { assertHygiene } from "../state/hygiene.js";
 import type { SpecDispatchRecord } from "../state/types.js";
 
+// ---------------------------------------------------------------------------
+// GitHub-backed issue store (production)
+// ---------------------------------------------------------------------------
+
+/** Label on the spec-gen state issue in the target repository. */
+export const SPEC_GEN_STATE_ISSUE_LABEL = "harness:spec-gen-state";
+
+const SPEC_GEN_STATE_ISSUE_TITLE_PREFIX = "[harness:spec-gen-state]";
+const STATE_BEGIN = "<!-- harness:spec-gen-state:begin -->";
+const STATE_END = "<!-- harness:spec-gen-state:end -->";
+const STATE_BLOCK = new RegExp(`${STATE_BEGIN}\\s*\`\`\`json\\r?\\n([\\s\\S]*?)\\r?\\n\`\`\`\\s*${STATE_END}`);
+
 /** Schema version for this store format. */
-const SPEC_GEN_STORE_SCHEMA_VERSION = 1 as const;
+export const SPEC_GEN_STORE_SCHEMA_VERSION = 1 as const;
 
 export interface SpecGenStoreData {
   schemaVersion: typeof SPEC_GEN_STORE_SCHEMA_VERSION;
@@ -70,7 +87,111 @@ export function upsertStoreRecord(
   return { ...store, records: [...store.records, record] };
 }
 
-/** File-backed spec-gen store. */
+/** Find a record by agent branch name. Pure. */
+export function findStoreRecordByBranch(
+  store: SpecGenStoreData,
+  branch: string,
+): SpecDispatchRecord | undefined {
+  return store.records.find((r) => r.branch === branch);
+}
+
+// ---------------------------------------------------------------------------
+// Issue body serialization helpers (used by SpecGenIssueStore)
+// ---------------------------------------------------------------------------
+
+/** Render the store as a GitHub issue body with an embedded JSON block. */
+export function renderSpecGenStoreBody(data: SpecGenStoreData): string {
+  const jsonBlock = ["```json", JSON.stringify(data, null, 2), "```"].join("\n");
+  return [
+    "## Spec-Generation State (SPEC-014)",
+    "",
+    "Persistent outbox for spec-generation dispatch records.",
+    "Managed by pi-spec-harness. **Do not edit this issue body manually.**",
+    "",
+    STATE_BEGIN,
+    jsonBlock,
+    STATE_END,
+  ].join("\n");
+}
+
+/** Parse the store data from a GitHub issue body. Returns an empty store if no block found. */
+export function parseSpecGenStoreFromBody(body: string): SpecGenStoreData {
+  const match = STATE_BLOCK.exec(body);
+  if (!match) {
+    return { schemaVersion: SPEC_GEN_STORE_SCHEMA_VERSION, records: [] };
+  }
+  const parsed = JSON.parse(match[1]!) as SpecGenStoreData;
+  if (parsed.schemaVersion !== SPEC_GEN_STORE_SCHEMA_VERSION) {
+    throw new Error(
+      `spec-gen issue store: unsupported schema version ${String(parsed.schemaVersion)}`,
+    );
+  }
+  return parsed;
+}
+
+// ---------------------------------------------------------------------------
+// SpecGenIssueStore — GitHub-issue-backed, survives runner process termination
+// ---------------------------------------------------------------------------
+
+/**
+ * Durable spec-gen store backed by a GitHub issue in the target repository.
+ *
+ * The issue title is `[harness:spec-gen-state] <repository>`.  The canonical
+ * JSON is stored in an HTML-comment-delimited block in the issue body, using
+ * the same pattern as the run-state issue store.
+ *
+ * load()  → find issue by title; parse JSON block (empty store if absent).
+ * save()  → create the issue on first call; update body on subsequent calls.
+ *
+ * This is the AUTHORITATIVE store for production use (SPEC-014 TAC-02).
+ */
+export class SpecGenIssueStore {
+  private readonly issueTitle: string;
+
+  constructor(private readonly repository: string) {
+    this.issueTitle = `${SPEC_GEN_STATE_ISSUE_TITLE_PREFIX} ${repository}`;
+  }
+
+  /** Load the store from the GitHub issue. Returns an empty store if the issue does not exist yet. */
+  async load(): Promise<{ data: SpecGenStoreData; issueNumber?: number }> {
+    const ref = await github.findIssueByExactTitle(this.repository, this.issueTitle);
+    if (!ref) {
+      return { data: { schemaVersion: SPEC_GEN_STORE_SCHEMA_VERSION, records: [] } };
+    }
+    const issue = await github.viewIssue(this.repository, ref.number);
+    const data = parseSpecGenStoreFromBody(issue.body);
+    return { data, issueNumber: ref.number };
+  }
+
+  /**
+   * Persist the store to GitHub.  Hygiene-checked before write.
+   * If `issueNumber` is provided the existing issue body is updated;
+   * otherwise the issue is found-or-created (safe against concurrent first-write).
+   */
+  async save(data: SpecGenStoreData, issueNumber?: number): Promise<void> {
+    assertHygiene(data);
+    const body = renderSpecGenStoreBody(data);
+    if (issueNumber !== undefined) {
+      await github.updateIssueBody(this.repository, issueNumber, body);
+      return;
+    }
+    // Find-or-create: safe against a concurrent first save by re-checking.
+    const existing = await github.findIssueByExactTitle(this.repository, this.issueTitle);
+    if (existing) {
+      await github.updateIssueBody(this.repository, existing.number, body);
+    } else {
+      await github.createIssue(this.repository, {
+        title: this.issueTitle,
+        body,
+        labels: [SPEC_GEN_STATE_ISSUE_LABEL],
+      });
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// SpecGenFileStore — local file store (local dev / unit tests)
+// ---------------------------------------------------------------------------
 export class SpecGenFileStore {
   constructor(private readonly path: string) {}
 
