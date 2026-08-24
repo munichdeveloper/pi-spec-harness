@@ -1,0 +1,36 @@
+# Managed by pi-spec-harness: run-documentation-finalizer-reference v1
+name: Harness Run Documentation Finalizer
+
+on:
+  workflow_dispatch:
+    inputs:
+      issue-number:
+        description: Tracking issue number selected by trusted reconciliation
+        required: true
+        type: string
+  issues:
+    types: [labeled]
+  pull_request:
+    types: [closed]
+
+# Non-cancelling concurrency: a waiting run must not be dropped.
+concurrency:
+  group: harness-run-documentation-finalizer-${{ github.repository }}-${{ inputs.issue-number || github.event.issue.number || github.event.pull_request.number }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: read
+  actions: read
+
+jobs:
+  finalize:
+    uses: munichdeveloper/pi-spec-harness/.github/workflows/run-documentation-finalizer.yml@v0.2.2
+    with:
+      harness-ref: 'v0.2.2'
+      default-branch: 'main'
+      generated-directory: 'docs/runs/generated'
+      index-path: 'docs/runs/RUN-INDEX.md'
+      obsidian-base-path: 'docs/runs/Runs.base'
+      issue-number: ${{ inputs.issue-number || github.event.issue.number || github.event.pull_request.number }}
