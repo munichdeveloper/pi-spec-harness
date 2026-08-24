@@ -1,0 +1,119 @@
+name: Harness Requirement to Spec Reusable
+
+on:
+  workflow_call:
+    inputs:
+      requirement-path-glob:
+        description: Path glob (relative to repo root) that identifies requirement files, e.g. docs/requirements/**/*.md.
+        required: false
+        type: string
+        default: docs/requirements/**/*.md
+      default-branch:
+        description: Default branch the pipeline runs against.
+        required: false
+        type: string
+        default: main
+      harness-ref:
+        description: Pinned ref (tag or SHA) of munichdeveloper/pi-spec-harness to check out and run the dispatch logic from.
+        required: false
+        type: string
+        default: main
+      provider:
+        description: Spec-generation agent provider. One of "github-copilot" or "claude-code".
+        required: false
+        type: string
+        default: github-copilot
+
+# Minimal permissions: read-only on contents; issues for gate reporting.
+# No write-capable credentials are passed to PR-head code (SPEC-014, decision 6).
+permissions:
+  contents: read
+  issues: write
+  pull-requests: read
+
+jobs:
+  requirement-to-spec:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout caller repository
+        uses: actions/checkout@v4
+        with:
+          # Full history: the before/after diff base below can be further
+          # back than one commit for multi-commit pushes/squash-merges.
+          fetch-depth: 0
+          ref: ${{ inputs.default-branch }}
+
+      - name: Determine changed requirement files under the configured glob
+        id: changed
+        if: github.event_name == 'push'
+        shell: bash
+        env:
+          REQUIREMENT_PATH_GLOB: ${{ inputs.requirement-path-glob }}
+          GIT_BEFORE: ${{ github.event.before }}
+          GIT_AFTER: ${{ github.event.after }}
+        run: |
+          glob="$REQUIREMENT_PATH_GLOB"
+          before="$GIT_BEFORE"
+          after="$GIT_AFTER"
+          if [[ -n "$before" && "$before" != "0000000000000000000000000000000000000000" && -n "$after" ]]; then
+            files=$(git diff --name-only "$before" "$after" -- "$glob" 2>/dev/null || true)
+          else
+            files=$(git diff --name-only HEAD~1 HEAD -- "$glob" 2>/dev/null || true)
+          fi
+          if [[ -z "$files" ]]; then
+            echo "No requirement files changed — skipping dispatch."
+            echo "files=" >> "$GITHUB_OUTPUT"
+          else
+            # Newline-separated list encoded as a single line for the output.
+            echo "files<<EOF" >> "$GITHUB_OUTPUT"
+            echo "$files" >> "$GITHUB_OUTPUT"
+            echo "EOF" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout pi-spec-harness at pinned ref
+        uses: actions/checkout@v4
+        with:
+          repository: munichdeveloper/pi-spec-harness
+          ref: ${{ inputs.harness-ref }}
+          path: .harness
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: .harness/package-lock.json
+
+      - name: Install harness dependencies
+        working-directory: .harness
+        run: npm ci
+
+      - name: Dispatch spec-generation for each changed requirement
+        if: steps.changed.outputs.files != ''
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          CALLER_REPOSITORY: ${{ github.repository }}
+          SOURCE_SHA: ${{ github.sha }}
+          PROVIDER: ${{ inputs.provider }}
+          HARNESS_REF: ${{ inputs.harness-ref }}
+        run: |
+          while IFS= read -r req_file; do
+            [[ -z "$req_file" ]] && continue
+            echo "Processing requirement file: $req_file"
+            node .harness/dist/cli.js requirement-to-spec-dispatch \
+              --repository "$CALLER_REPOSITORY" \
+              --requirement-path "$req_file" \
+              --source-sha "$SOURCE_SHA" \
+              --provider "$PROVIDER" \
+              --harness-ref "$HARNESS_REF"
+          done <<< "${{ steps.changed.outputs.files }}"
+
+      - name: Reconcile durable spec-generation outbox
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          CALLER_REPOSITORY: ${{ github.repository }}
+        run: |
+          node .harness/dist/cli.js requirement-to-spec-check \
+            --repository "$CALLER_REPOSITORY"

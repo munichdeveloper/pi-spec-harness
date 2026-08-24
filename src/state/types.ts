@@ -246,6 +246,63 @@ export interface DocumentationSnapshotCheckpoint {
   deliveryFailureCount?: number;
 }
 
+/**
+ * PR approval policy for a run.
+ *
+ * - `merge-is-approval`: The merge of the delivery PR itself is the only
+ *   required human action (SPEC-015 default for new runs). No additional
+ *   gate-label is required before or after the merge.
+ * - `label-authorizes-auto-merge`: Legacy behavior — a `harness:gate-approved`
+ *   label on the tracking issue is required before the run can enter the merge
+ *   phase. Kept for backward compatibility with runs created before SPEC-015.
+ *
+ * SPEC-015, decisions 1 & 6.
+ */
+export type PrApprovalPolicy = "merge-is-approval" | "label-authorizes-auto-merge";
+
+/**
+ * Idempotency/classification result for requirement-to-spec dispatch.
+ * SPEC-014, decision 1.
+ */
+export type SpecGenerationClassification =
+  | "eligible"
+  | "already-dispatched"
+  | "already-materialized"
+  | "blocked";
+
+/** Supported spec-generation agent providers. SPEC-014, decision 2/3. */
+export type SpecGenerationProvider = "github-copilot" | "claude-code";
+
+/**
+ * Persistent checkpoint for one spec-generation dispatch.
+ * Key = `<repository>:<req-id>:<source-sha>` (stable, deduplication).
+ * SPEC-014, decision 2.
+ */
+export interface SpecDispatchRecord {
+  schemaVersion: 1;
+  /** Stable idempotency key: `<repository>:<req-id>:<source-sha>`. */
+  dispatchKey: string;
+  requirementId: string;
+  sourceSha: string;
+  targetSpecPath: string;
+  provider: SpecGenerationProvider;
+  branch: string;
+  /** Durable GitHub issue that carries the provider-neutral agent order. */
+  dispatchIssue?: number;
+  status: "prepared" | "dispatched" | "pr-open" | "pr-merged" | "cancelled";
+  requestedAt: string;
+  /** Pull-request number once the agent creates the spec PR. */
+  specPullRequest?: number;
+  /** HEAD SHA of the spec PR at last checkpoint. */
+  specPrHeadSha?: string;
+  /** Merge commit SHA once the spec PR is merged to the default branch. */
+  specMergeCommitSha?: string;
+  /** ISO timestamp when the spec PR was merged. */
+  specMergedAt?: string;
+  /** ISO timestamp of last status update. */
+  updatedAt: string;
+}
+
 export interface RunState {
   schemaVersion: typeof SCHEMA_VERSION;
   runId: string;
@@ -328,6 +385,21 @@ export interface RunState {
    * SPEC-012, decision 2.
    */
   documentationSnapshot?: DocumentationSnapshotCheckpoint;
+  /**
+   * Explicit PR approval policy for this run.
+   * - `"merge-is-approval"`: The delivery PR merge itself is the only required
+   *   human action; no additional gate-label is needed (SPEC-015 default).
+   * - `"label-authorizes-auto-merge"`: Legacy policy — a gate-label is required.
+   * When absent (legacy runs), behavior is equivalent to `"label-authorizes-auto-merge"`.
+   * SPEC-015, decision 1 / TAC-07.
+   */
+  prApprovalPolicy?: PrApprovalPolicy;
+  /**
+   * Persistent outbox for spec-generation dispatches (requirement-to-spec pipeline).
+   * One entry per unique `<repository>:<req-id>:<source-sha>` key.
+   * SPEC-014, decision 2.
+   */
+  specGenerationOutbox?: SpecDispatchRecord[];
 }
 
 export interface CommandResult<TResult = unknown> {

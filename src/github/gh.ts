@@ -49,6 +49,20 @@ export function buildAgentAssignmentArgs(
   ];
 }
 
+export function buildMergePullRequestArgs(
+  repository: string,
+  baseRef: string,
+  expectedHeadSha: string,
+): string[] {
+  return [
+    "api",
+    `repos/${repository}/merges`,
+    "--method", "POST",
+    "-f", `base=${baseRef}`,
+    "-f", `head=${expectedHeadSha}`,
+  ];
+}
+
 async function runGh(args: string[]): Promise<string> {
   try {
     const { stdout } = await execFile("gh", args, { maxBuffer: 20 * 1024 * 1024 });
@@ -69,6 +83,31 @@ export interface LabelEvent {
   label: string;
   actor: string;
   createdAt: string;
+}
+
+export interface StatusCheckRollupItem {
+  __typename?: "CheckRun" | "StatusContext";
+  status?: string;
+  conclusion?: string;
+  state?: string;
+  name?: string;
+  context?: string;
+}
+
+export function findBlockingStatusChecks(checks: StatusCheckRollupItem[]): string[] {
+  const acceptedConclusions = new Set(["SUCCESS", "NEUTRAL", "SKIPPED"]);
+  return checks.flatMap((check) => {
+    const label = check.name ?? check.context ?? "unnamed-check";
+    if (check.__typename === "StatusContext" || (!check.status && check.state)) {
+      return check.state === "SUCCESS" ? [] : [`${label}: ${check.state ?? "UNKNOWN"}`];
+    }
+    if (check.status !== "COMPLETED") {
+      return [`${label}: ${check.status ?? "UNKNOWN"}`];
+    }
+    return check.conclusion && acceptedConclusions.has(check.conclusion)
+      ? []
+      : [`${label}: ${check.conclusion ?? "UNKNOWN"}`];
+  });
 }
 
 interface TimelineEvent {
@@ -305,7 +344,7 @@ export const github = {
 
   async viewPullRequest(repository: string, number: number) {
     const out = await runGh(["pr", "view", String(number), "--repo", repository, "--json",
-      "number,title,body,state,url,mergeable,mergeStateStatus,reviewDecision,statusCheckRollup,headRefOid,baseRefName,headRefName,mergedAt,mergeCommit"]);
+      "number,title,body,state,url,mergeable,mergeStateStatus,reviewDecision,statusCheckRollup,headRefOid,baseRefName,headRefName,mergedAt,mergeCommit,mergedBy"]);
     return JSON.parse(out) as Record<string, unknown>;
   },
 
@@ -587,6 +626,34 @@ export const github = {
   },
 
   /**
+   * Find the first open or merged PR whose HEAD branch matches the given ref.
+   * Returns undefined when no matching PR exists.
+   * SPEC-014 TAC-02: used to adopt the spec PR created by the agent.
+   */
+  async findPullRequestByHead(
+    repository: string,
+    headBranch: string,
+  ): Promise<{ number: number; headRefOid: string; headRefName: string; state: string; mergedAt: string | null; mergeCommit: { oid: string } | null; url: string } | undefined> {
+    const out = await runGh([
+      "pr", "list", "--repo", repository,
+      "--head", headBranch,
+      "--state", "all",
+      "--json", "number,headRefOid,headRefName,state,mergedAt,mergeCommit,url",
+      "--limit", "1",
+    ]);
+    const results = JSON.parse(out) as Array<{
+      number: number;
+      headRefOid: string;
+      headRefName: string;
+      state: string;
+      mergedAt: string | null;
+      mergeCommit: { oid: string } | null;
+      url: string;
+    }>;
+    return results[0];
+  },
+
+  /**
    * Merge a pull request. Returns the merge commit SHA.
    * TAC-11: used to merge the implementation PR into the delivery branch after
    * CI is green and all reviews are resolved.
@@ -594,16 +661,18 @@ export const github = {
   async mergePullRequest(
     repository: string,
     prNumber: number,
-    method: "merge" | "squash" | "rebase" = "merge",
+    baseRef: string,
+    expectedHeadSha: string,
   ): Promise<string> {
-    const out = await runGh([
-      "pr", "merge", String(prNumber),
-      "--repo", repository,
-      `--${method}`,
-      "--json", "mergeCommit",
-      "--jq", ".mergeCommit.oid",
-    ]);
-    return out.trim();
+    const out = await runGh(buildMergePullRequestArgs(repository, baseRef, expectedHeadSha));
+    if (!out.trim()) {
+      return this.getBranchSha(repository, baseRef);
+    }
+    const result = JSON.parse(out) as { sha?: string };
+    if (!result.sha) {
+      throw new GhError(`merge of PR #${prNumber} into '${baseRef}' did not expose a commit SHA`);
+    }
+    return result.sha;
   },
 
   /**
