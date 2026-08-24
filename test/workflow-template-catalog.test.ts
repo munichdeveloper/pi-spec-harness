@@ -11,6 +11,9 @@ import {
   PROCESS_AUDIT_RECEIVER_MARKER,
   PROCESS_AUDIT_RECEIVER_PATH,
   DEFAULT_PROCESS_AUDIT_RECEIVER_WORKFLOW_REF,
+  DEFAULT_RUN_DOCUMENTATION_FINALIZER_WORKFLOW_REF,
+  RUN_DOCUMENTATION_FINALIZER_MARKER,
+  RUN_DOCUMENTATION_FINALIZER_PATH,
   REQUIREMENT_TO_SPEC_REFERENCE_MARKER,
   REQUIREMENT_TO_SPEC_REFERENCE_PATH,
   DEFAULT_REQUIREMENT_TO_SPEC_WORKFLOW_REF,
@@ -20,6 +23,7 @@ import {
   findWorkflowTemplate,
   renderLabelApprovalBundlingReference,
   renderProcessAuditReceiver,
+  renderRunDocumentationFinalizer,
   renderRequirementToSpecReference,
   renderReviewFixReference,
   renderSpecToIssueReference,
@@ -222,6 +226,23 @@ describe("SPEC-005: process-audit-receiver catalog entry (Finding 1)", () => {
     const rendered = renderProcessAuditReceiver();
     expect(decideWorkflowInstall(undefined, rendered, PROCESS_AUDIT_RECEIVER_MARKER)).toBe("create");
     expect(decideWorkflowInstall(rendered, rendered, PROCESS_AUDIT_RECEIVER_MARKER)).toBe("noop");
+  });
+});
+
+describe("SPEC-012: run-documentation-finalizer consumer template", () => {
+  it("remains a remote immutable workflow reference for consumer repositories", () => {
+    const entry = findWorkflowTemplate("run-documentation-finalizer");
+    expect(entry).toBeDefined();
+    expect(entry!.targetPath).toBe(RUN_DOCUMENTATION_FINALIZER_PATH);
+    expect(entry!.marker).toBe(RUN_DOCUMENTATION_FINALIZER_MARKER);
+    expect(entry!.defaultRef).toBe(DEFAULT_RUN_DOCUMENTATION_FINALIZER_WORKFLOW_REF);
+
+    const rendered = renderRunDocumentationFinalizer();
+    expect(rendered).toContain(
+      `uses: munichdeveloper/pi-spec-harness/.github/workflows/run-documentation-finalizer.yml@${DEFAULT_RUN_DOCUMENTATION_FINALIZER_WORKFLOW_REF}`,
+    );
+    expect(rendered).toContain(`harness-ref: '${DEFAULT_RUN_DOCUMENTATION_FINALIZER_WORKFLOW_REF}'`);
+    expect(rendered).not.toContain("uses: ./.github/workflows/run-documentation-finalizer.yml");
   });
 });
 

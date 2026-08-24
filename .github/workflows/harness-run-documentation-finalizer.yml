@@ -23,7 +23,10 @@ permissions:
 
 jobs:
   finalize:
-    uses: munichdeveloper/pi-spec-harness/.github/workflows/run-documentation-finalizer.yml@aca192d94f3db79747c000a7b0f9438acac48b5a
+    # The harness repository calls its own reusable workflow locally. Remote
+    # same-repository SHA calls failed before runner assignment (issue #96),
+    # while consumer repositories continue to use the immutable remote template.
+    uses: ./.github/workflows/run-documentation-finalizer.yml
     with:
       harness-ref: 'aca192d94f3db79747c000a7b0f9438acac48b5a'
       default-branch: 'main'
