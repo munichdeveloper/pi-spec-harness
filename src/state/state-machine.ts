@@ -595,11 +595,15 @@ export function bindImplementationPullRequest(
           : gate,
       )
     : state.gates;
+  const reviewThreads = headChanged && state.implementationHeadSha
+    ? invalidateReviewEvidenceForSha(state, state.implementationHeadSha).reviewThreads
+    : state.reviewThreads;
   return {
     ...state,
     implementationPullRequest: pullRequest,
     implementationHeadSha: normalizedHeadSha,
     gates,
+    reviewThreads,
     updatedAt: nowIso(),
   };
 }

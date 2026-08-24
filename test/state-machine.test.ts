@@ -394,4 +394,28 @@ describe("state-machine", () => {
     expect(rebound.gates.find((gate) => gate.id === "verification")?.evidence).toBeUndefined();
     expect(() => bindPullRequest(state, 42, "short")).toThrow(/full 40-character/);
   });
+
+  it("marks actionable implementation-review threads outdated when the bound HEAD changes", () => {
+    const oldSha = "a".repeat(40);
+    let state = bindImplementationPullRequest(baseRun(), 90, oldSha);
+    state = {
+      ...state,
+      reviewThreads: [{
+        idempotencyKey: `owner/repo:pr90:review1:threadT1:sha${oldSha}`,
+        repository: state.repository,
+        pullRequest: 90,
+        reviewId: 1,
+        threadId: "T1",
+        reviewedHeadSha: oldSha,
+        reviewer: "copilot-pull-request-reviewer",
+        reviewerType: "Bot",
+        status: "actionable",
+        classifiedAt: "2026-08-24T10:00:00Z",
+        auditedAt: "2026-08-24T10:00:00Z",
+      }],
+    };
+
+    const rebound = bindImplementationPullRequest(state, 90, "b".repeat(40));
+    expect(rebound.reviewThreads?.[0]?.status).toBe("outdated");
+  });
 });
