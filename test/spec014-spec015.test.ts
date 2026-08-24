@@ -382,6 +382,11 @@ describe("SPEC-014: buildSpecDispatchOrder", () => {
     expect(order.targetSpecPath).toBe("docs/specifications/SPEC-014.md");
     expect(order.requiredSections).toContain("Architektur");
     expect(order.requiredSections).toContain("Technische Akzeptanzkriterien");
+    // AC-04: spec must contain traceability, decisions, risks, and open questions
+    expect(order.requiredSections).toContain("Rückverfolgbarkeit");
+    expect(order.requiredSections).toContain("Risiken");
+    expect(order.requiredSections).toContain("Offene Fragen");
+    expect(order.requiredSections).not.toContain("Rollback");
     expect(order.agentBranch).toMatch(/^harness\/spec-gen-req-014-/);
   });
 

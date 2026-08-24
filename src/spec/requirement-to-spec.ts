@@ -161,7 +161,9 @@ export function buildSpecDispatchOrder(opts: {
       "Architektur",
       "Technische Entscheidungen",
       "Technische Akzeptanzkriterien",
-      "Rollback",
+      "Rückverfolgbarkeit",
+      "Risiken",
+      "Offene Fragen",
     ],
   };
 }

@@ -286,6 +286,10 @@ interface CmdInitArgs {
   triggerLabel?: string;
   targetLabels?: string[];
   installAgentsContext?: boolean;
+  requirementPathGlob?: string;
+  requirementDefaultBranch?: string;
+  requirementProvider?: string;
+  prApprovalPolicy?: string;
 }
 
 /**
@@ -316,6 +320,15 @@ function buildWorkflowRenderOptions(name: string, argv: CmdInitArgs): Record<str
       targetLabels: argv.targetLabels,
     };
   }
+  if (name === "requirement-to-spec") {
+    return {
+      harnessRef: argv.workflowRef,
+      reusableRepository: argv.workflowRepository,
+      requirementPathGlob: argv.requirementPathGlob,
+      defaultBranch: argv.requirementDefaultBranch,
+      provider: argv.requirementProvider,
+    };
+  }
   return undefined;
 }
 
@@ -344,7 +357,21 @@ async function cmdInit(argv: CmdInitArgs): Promise<void> {
     if (validationError) throw new Error(validationError);
   }
 
-  const initial = initRunState(argv);
+  const VALID_PR_APPROVAL_POLICIES = ["merge-is-approval", "label-authorizes-auto-merge"] as const;
+  if (
+    argv.prApprovalPolicy !== undefined &&
+    !(VALID_PR_APPROVAL_POLICIES as readonly string[]).includes(argv.prApprovalPolicy)
+  ) {
+    throw new Error(
+      `Invalid --pr-approval-policy value: "${argv.prApprovalPolicy}". ` +
+        `Valid values are: ${VALID_PR_APPROVAL_POLICIES.join(", ")}`
+    );
+  }
+  const initOptions = {
+    ...argv,
+    prApprovalPolicy: argv.prApprovalPolicy as import("./state/types.js").PrApprovalPolicy | undefined,
+  };
+  const initial = initRunState(initOptions);
   let store: StateStore;
   let state: RunState;
 
@@ -352,7 +379,7 @@ async function cmdInit(argv: CmdInitArgs): Promise<void> {
     store = new FileStateStore(argv.state);
     try {
       const existing = await store.load();
-      state = reconcileInit(existing, argv);
+      state = reconcileInit(existing, initOptions);
     } catch {
       state = initial;
       await store.save(state);
@@ -363,7 +390,7 @@ async function cmdInit(argv: CmdInitArgs): Promise<void> {
     // that as-is (freshly created) or validates immutable fields match.
     store = await ensureRunIssue(argv.repository, argv.runId, initial);
     const existing = await store.load();
-    state = reconcileInit(existing, argv);
+    state = reconcileInit(existing, initOptions);
   }
 
   let bugWorkflow:
@@ -2414,6 +2441,25 @@ const _harnessCli = yargs(hideBin(process.argv))
           type: "boolean",
           default: false,
           describe: "Install/update the managed pi-spec-harness context block in the target repository's AGENTS.md",
+        })
+        .option("requirement-path-glob", {
+          type: "string",
+          describe: "Path glob that triggers the installed requirement-to-spec reference workflow",
+        })
+        .option("requirement-default-branch", {
+          type: "string",
+          describe: "Default branch that triggers the installed requirement-to-spec reference workflow",
+        })
+        .option("requirement-provider", {
+          type: "string",
+          choices: ["github-copilot", "claude-code"] as const,
+          describe: "Agent provider used by the installed requirement-to-spec reference workflow",
+        })
+        .option("pr-approval-policy", {
+          type: "string",
+          choices: ["merge-is-approval", "label-authorizes-auto-merge"] as const,
+          describe:
+            "PR approval policy for this run. 'merge-is-approval' (default): the merge itself is the approval signal. 'label-authorizes-auto-merge': requires a gate label before auto-merge (legacy behavior).",
         }),
     async (argv) =>
       cmdInit({
@@ -2444,6 +2490,10 @@ const _harnessCli = yargs(hideBin(process.argv))
         triggerLabel: argv["trigger-label"] as string | undefined,
         targetLabels: argv["target-labels"] as string[] | undefined,
         installAgentsContext: argv["install-agents-context"] as boolean | undefined,
+        requirementPathGlob: argv["requirement-path-glob"] as string | undefined,
+        requirementDefaultBranch: argv["requirement-default-branch"] as string | undefined,
+        requirementProvider: argv["requirement-provider"] as string | undefined,
+        prApprovalPolicy: argv["pr-approval-policy"] as string | undefined,
       }),
   )
   .command(

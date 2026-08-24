@@ -281,6 +281,9 @@ describe("SPEC-014: requirement-to-spec catalog entry", () => {
   it("uses non-cancelling concurrency to avoid dropping queued runs", () => {
     const rendered = renderRequirementToSpecReference();
     expect(rendered).toContain("cancel-in-progress: false");
+    // Serialized per repository (no github.sha) to prevent concurrent races
+    expect(rendered).toContain("group: harness-requirement-to-spec-${{ github.repository }}");
+    expect(rendered).not.toContain("github.sha");
   });
 
   it("rendered reference is parseable by decideWorkflowInstall", () => {

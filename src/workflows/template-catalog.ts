@@ -5,6 +5,7 @@ import {
   renderBugWorkflowReference,
   type BugWorkflowReferenceOptions,
 } from "../bug/workflow-reference.js";
+import type { SpecGenerationProvider } from "../state/types.js";
 import {
   CAPABILITY_CALLER_MARKER,
   CAPABILITY_CALLER_PATH,
@@ -352,8 +353,8 @@ export interface RequirementToSpecReferenceOptions {
   reusableRepository?: string;
   requirementPathGlob?: string;
   defaultBranch?: string;
-  /** Agent provider: "github-copilot" or "claude-code". Defaults to "github-copilot". */
-  provider?: string;
+  /** Agent provider. Defaults to "github-copilot". */
+  provider?: SpecGenerationProvider;
 }
 
 /**
@@ -387,8 +388,10 @@ on:
       - '${requirementPathGlob}'
 
 # Non-cancelling: a queued run must not be dropped when a second push arrives.
+# Serialized per repository so concurrent pushes cannot race into duplicate
+# outbox reads and duplicate spec dispatches.
 concurrency:
-  group: harness-requirement-to-spec-\${{ github.repository }}-\${{ github.sha }}
+  group: harness-requirement-to-spec-\${{ github.repository }}
   cancel-in-progress: false
 
 # Minimal permissions: read-only on contents; issues for gate reporting.
