@@ -10,7 +10,13 @@ describe("GitHub workflow contracts", () => {
     expect(workflow).toContain("uses: ./.github/workflows/run-documentation-finalizer.yml");
     expect(workflow).not.toContain("uses: munichdeveloper/pi-spec-harness/.github/workflows/run-documentation-finalizer.yml@");
     expect(workflow).toContain("harness-ref: 'aca192d94f3db79747c000a7b0f9438acac48b5a'");
-    expect(workflow).toContain("cancel-in-progress: false");
+    expect(workflow).not.toContain("concurrency:");
+    expect(workflow).not.toContain("cancel-in-progress:");
+    const reusable = await readFile(".github/workflows/run-documentation-finalizer.yml", "utf8");
+    expect(reusable).toContain(
+      "group: harness-run-documentation-finalizer-${{ github.repository }}-${{ inputs.issue-number || github.event.issue.number || github.event.pull_request.number }}",
+    );
+    expect(reusable).toContain("cancel-in-progress: false");
     expect(workflow).not.toContain("pull_request:");
     expect(workflow).not.toContain("github.event.pull_request.number");
   });

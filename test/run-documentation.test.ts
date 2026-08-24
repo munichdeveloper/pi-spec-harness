@@ -12,13 +12,14 @@
  * - TAC-11: duplicate delivery is a no-op (already-persisted guard)
  * - TAC-12: conflict retry preserves existing run history
  * - TAC-14: validateSnapshotContent() — PII, secrets, evidence URLs rejected
- * - TAC-16: renderRunDocumentationFinalizer() — minimal permissions, no secrets:inherit, cancel-in-progress: false
+ * - TAC-16: renderRunDocumentationFinalizer() — minimal permissions and delegated concurrency
  * - TAC-17: persist-run-documentation CLI command contract (state machine + integration)
  * - TAC-18 (integration): cmdPersistRunDocumentation via injected adapter
  */
 
 import { describe, expect, it } from "vitest";
 import { createHash } from "node:crypto";
+import { readFile } from "node:fs/promises";
 import {
   computeNextAction,
   formatCanonicalRunId,
@@ -563,9 +564,12 @@ describe("TAC-16 run-documentation-finalizer workflow template", () => {
     expect(result).not.toMatch(/^\s*secrets:\s*inherit\s*$/m);
   });
 
-  it("sets cancel-in-progress: false", () => {
+  it("delegates concurrency to the reusable workflow to avoid a nested self-lock", async () => {
     const result = renderRunDocumentationFinalizer();
-    expect(result).toContain("cancel-in-progress: false");
+    expect(result).not.toContain("concurrency:");
+    expect(result).not.toContain("cancel-in-progress:");
+    const reusable = await readFile(new URL("../.github/workflows/run-documentation-finalizer.yml", import.meta.url), "utf8");
+    expect(reusable).toContain("cancel-in-progress: false");
   });
 
   it("supports trusted reconciliation dispatch with an explicit issue number", () => {
