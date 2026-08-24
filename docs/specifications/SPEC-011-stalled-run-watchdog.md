@@ -14,6 +14,12 @@ updated: 2026-08-23
 
 # SPEC-011: Deterministischer Stall-Watchdog für hängende Runs
 
+> Rollenhinweis: Der Harness-Agent (Codex) erarbeitet und steuert Harness-Issues
+> gemeinsam mit dem Product Owner. Er kann selbst implementieren oder die
+> Implementierung ausdrücklich an einen Coding Agent wie GitHub Copilot
+> delegieren. Copilots automatische Reviewer-Rolle aus den Repository-
+> Einstellungen ist davon getrennt und benötigt keine manuelle Anforderung.
+
 ## Zusammenfassung
 
 Ein neuer, `schedule`-getriggerter Workflow ruft periodisch ausschließlich
