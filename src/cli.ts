@@ -11,7 +11,7 @@ import {
   publishHumanGateIssue,
   postGateDecision,
 } from "./gates/human-gate.js";
-import { github } from "./github/gh.js";
+import { findBlockingStatusChecks, github, type StatusCheckRollupItem } from "./github/gh.js";
 import { orchestrate } from "./orchestrator.js";
 import { getSpecAssignee } from "./spec/spec-parser.js";
 import {
@@ -1982,7 +1982,7 @@ async function cmdImplPrMerge(argv: StoreArgs): Promise<void> {
   const prData = await github.viewPullRequest(argv.repository, implPr) as {
     mergeStateStatus?: string;
     reviewDecision?: string;
-    statusCheckRollup?: Array<{ state: string }> | null;
+    statusCheckRollup?: StatusCheckRollupItem[] | null;
     headRefOid?: string;
     baseRefName?: string;
   };
@@ -1998,9 +1998,9 @@ async function cmdImplPrMerge(argv: StoreArgs): Promise<void> {
     failures.push(`PR not ready to merge (mergeStateStatus: '${prData.mergeStateStatus}')`);
   }
   const checks = prData.statusCheckRollup ?? [];
-  const failedChecks = checks.filter((c) => c.state === "FAILURE" || c.state === "ERROR");
-  if (failedChecks.length > 0) {
-    failures.push(`${failedChecks.length} CI check(s) failed`);
+  const blockingChecks = findBlockingStatusChecks(checks);
+  if (blockingChecks.length > 0) {
+    failures.push(`${blockingChecks.length} CI check(s) are not successful: ${blockingChecks.join(", ")}`);
   }
 
   // Upsert gate (idempotent) and reflect current CI/review state
@@ -2019,6 +2019,11 @@ async function cmdImplPrMerge(argv: StoreArgs): Promise<void> {
   // TAC-11: Merge the PR
   if (!prData.headRefOid) {
     throw new Error(`implementation PR #${implPr} did not expose a head SHA`);
+  }
+  if (!state.implementationHeadSha || prData.headRefOid.toLowerCase() !== state.implementationHeadSha.toLowerCase()) {
+    throw new Error(
+      `implementation PR #${implPr} head '${prData.headRefOid}' does not match bound head '${state.implementationHeadSha ?? "missing"}'`,
+    );
   }
   if (!prData.baseRefName || prData.baseRefName !== state.branch) {
     throw new Error(

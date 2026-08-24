@@ -85,6 +85,31 @@ export interface LabelEvent {
   createdAt: string;
 }
 
+export interface StatusCheckRollupItem {
+  __typename?: "CheckRun" | "StatusContext";
+  status?: string;
+  conclusion?: string;
+  state?: string;
+  name?: string;
+  context?: string;
+}
+
+export function findBlockingStatusChecks(checks: StatusCheckRollupItem[]): string[] {
+  const acceptedConclusions = new Set(["SUCCESS", "NEUTRAL", "SKIPPED"]);
+  return checks.flatMap((check) => {
+    const label = check.name ?? check.context ?? "unnamed-check";
+    if (check.__typename === "StatusContext" || (!check.status && check.state)) {
+      return check.state === "SUCCESS" ? [] : [`${label}: ${check.state ?? "UNKNOWN"}`];
+    }
+    if (check.status !== "COMPLETED") {
+      return [`${label}: ${check.status ?? "UNKNOWN"}`];
+    }
+    return check.conclusion && acceptedConclusions.has(check.conclusion)
+      ? []
+      : [`${label}: ${check.conclusion ?? "UNKNOWN"}`];
+  });
+}
+
 interface TimelineEvent {
   event: string;
   label?: { name: string };
@@ -640,6 +665,9 @@ export const github = {
     expectedHeadSha: string,
   ): Promise<string> {
     const out = await runGh(buildMergePullRequestArgs(repository, baseRef, expectedHeadSha));
+    if (!out.trim()) {
+      return this.getBranchSha(repository, baseRef);
+    }
     const result = JSON.parse(out) as { sha?: string };
     if (!result.sha) {
       throw new GhError(`merge of PR #${prNumber} into '${baseRef}' did not expose a commit SHA`);

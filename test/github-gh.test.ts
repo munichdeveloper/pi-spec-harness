@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildMergePullRequestArgs,
+  findBlockingStatusChecks,
   parsePaginatedIssues,
   parsePaginatedLabelEvents,
 } from "../src/github/gh.js";
@@ -13,6 +14,30 @@ describe("GitHub pull-request merge command", () => {
       "--method", "POST",
       "-f", "base=delivery/spec-014",
       "-f", "head=abc123",
+    ]);
+  });
+});
+
+describe("GitHub status-check rollup", () => {
+  it("accepts successful and intentionally skipped completed checks", () => {
+    expect(findBlockingStatusChecks([
+      { __typename: "CheckRun", name: "ci", status: "COMPLETED", conclusion: "SUCCESS" },
+      { __typename: "CheckRun", name: "optional", status: "COMPLETED", conclusion: "SKIPPED" },
+      { __typename: "StatusContext", context: "security", state: "SUCCESS" },
+    ])).toEqual([]);
+  });
+
+  it("fails closed for pending, failed, and unknown checks", () => {
+    expect(findBlockingStatusChecks([
+      { __typename: "CheckRun", name: "ci", status: "IN_PROGRESS", conclusion: "" },
+      { __typename: "CheckRun", name: "lint", status: "COMPLETED", conclusion: "FAILURE" },
+      { __typename: "StatusContext", context: "security", state: "PENDING" },
+      {},
+    ])).toEqual([
+      "ci: IN_PROGRESS",
+      "lint: FAILURE",
+      "security: PENDING",
+      "unnamed-check: UNKNOWN",
     ]);
   });
 });
