@@ -580,8 +580,20 @@ export function bindImplementationPullRequest(
       `run '${state.runId}' is already bound to implementation PR #${state.implementationPullRequest}; refusing PR #${pullRequest}`,
     );
   }
+  const reconciledReviewThreads = state.reviewThreads?.map((thread) =>
+    thread.reviewedHeadSha.toLowerCase() !== normalizedHeadSha &&
+    thread.status !== "resolved" &&
+    thread.status !== "outdated"
+      ? { ...thread, status: "outdated" as ReviewThreadStatus }
+      : thread,
+  );
+  const reconciledStaleThreads = reconciledReviewThreads?.some(
+    (thread, index) => thread !== state.reviewThreads?.[index],
+  ) ?? false;
   if (state.implementationPullRequest === pullRequest && state.implementationHeadSha === normalizedHeadSha) {
-    return state; // idempotent
+    return reconciledStaleThreads
+      ? { ...state, reviewThreads: reconciledReviewThreads, updatedAt: nowIso() }
+      : state;
   }
   const headChanged =
     state.implementationPullRequest === pullRequest &&
@@ -595,15 +607,12 @@ export function bindImplementationPullRequest(
           : gate,
       )
     : state.gates;
-  const reviewThreads = headChanged && state.implementationHeadSha
-    ? invalidateReviewEvidenceForSha(state, state.implementationHeadSha).reviewThreads
-    : state.reviewThreads;
   return {
     ...state,
     implementationPullRequest: pullRequest,
     implementationHeadSha: normalizedHeadSha,
     gates,
-    reviewThreads,
+    reviewThreads: reconciledReviewThreads,
     updatedAt: nowIso(),
   };
 }

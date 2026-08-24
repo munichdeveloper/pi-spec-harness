@@ -418,4 +418,28 @@ describe("state-machine", () => {
     const rebound = bindImplementationPullRequest(state, 90, "b".repeat(40));
     expect(rebound.reviewThreads?.[0]?.status).toBe("outdated");
   });
+
+  it("reconciles stale review threads even when PR and current HEAD were already bound", () => {
+    const currentSha = "b".repeat(40);
+    let state = bindImplementationPullRequest(baseRun(), 90, currentSha);
+    state = {
+      ...state,
+      reviewThreads: [{
+        idempotencyKey: `owner/repo:pr90:review1:threadT1:sha${"a".repeat(40)}`,
+        repository: state.repository,
+        pullRequest: 90,
+        reviewId: 1,
+        threadId: "T1",
+        reviewedHeadSha: "a".repeat(40),
+        reviewer: "copilot-pull-request-reviewer",
+        reviewerType: "Bot",
+        status: "actionable",
+        classifiedAt: "2026-08-24T10:00:00Z",
+        auditedAt: "2026-08-24T10:00:00Z",
+      }],
+    };
+
+    const reconciled = bindImplementationPullRequest(state, 90, currentSha);
+    expect(reconciled.reviewThreads?.[0]?.status).toBe("outdated");
+  });
 });
