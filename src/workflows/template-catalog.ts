@@ -311,11 +311,9 @@ on:
         type: string
   issues:
     types: [labeled]
-# Non-cancelling concurrency: a waiting run must not be dropped.
-# TAC-16: cancel-in-progress must be false.
-concurrency:
-  group: harness-run-documentation-finalizer-\${{ github.repository }}-\${{ inputs.issue-number || github.event.issue.number }}
-  cancel-in-progress: false
+
+# Concurrency is delegated to the reusable workflow. Defining the same
+# non-cancelling key in caller and callee creates a nested self-lock.
 
 # TAC-16: minimal permissions only; no secrets: inherit.
 permissions:
