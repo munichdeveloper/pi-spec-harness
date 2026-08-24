@@ -214,7 +214,7 @@ jobs:
 
 export const PROCESS_AUDIT_RECEIVER_PATH = ".github/workflows/harness-process-audit-receiver.yml";
 export const PROCESS_AUDIT_RECEIVER_MARKER = "# Managed by pi-spec-harness: process-audit-receiver-reference v1";
-export const DEFAULT_PROCESS_AUDIT_RECEIVER_WORKFLOW_REF = "v0.2.4";
+export const DEFAULT_PROCESS_AUDIT_RECEIVER_WORKFLOW_REF = "aca192d94f3db79747c000a7b0f9438acac48b5a";
 
 export interface ProcessAuditReceiverOptions {
   harnessRef?: string;
@@ -272,7 +272,7 @@ jobs:
 
 export const RUN_DOCUMENTATION_FINALIZER_PATH = ".github/workflows/harness-run-documentation-finalizer.yml";
 export const RUN_DOCUMENTATION_FINALIZER_MARKER = "# Managed by pi-spec-harness: run-documentation-finalizer-reference v1";
-export const DEFAULT_RUN_DOCUMENTATION_FINALIZER_WORKFLOW_REF = "v0.2.4";
+export const DEFAULT_RUN_DOCUMENTATION_FINALIZER_WORKFLOW_REF = "aca192d94f3db79747c000a7b0f9438acac48b5a";
 
 export interface RunDocumentationFinalizerOptions {
   harnessRef?: string;

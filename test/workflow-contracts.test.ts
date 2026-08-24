@@ -7,8 +7,8 @@ describe("GitHub workflow contracts", () => {
 
     expect(workflow).toContain("# Managed by pi-spec-harness: run-documentation-finalizer-reference v1");
     expect(workflow).toContain("workflow_dispatch:");
-    expect(workflow).toContain("run-documentation-finalizer.yml@v0.2.4");
-    expect(workflow).toContain("harness-ref: 'v0.2.4'");
+    expect(workflow).toContain("run-documentation-finalizer.yml@aca192d94f3db79747c000a7b0f9438acac48b5a");
+    expect(workflow).toContain("harness-ref: 'aca192d94f3db79747c000a7b0f9438acac48b5a'");
     expect(workflow).toContain("cancel-in-progress: false");
     expect(workflow).not.toContain("pull_request:");
     expect(workflow).not.toContain("github.event.pull_request.number");
