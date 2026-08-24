@@ -57,9 +57,11 @@ export function buildMergePullRequestArgs(
 ): string[] {
   return [
     "api",
-    `repos/${repository}/pulls/${prNumber}/merge`,
+    `repos/${repository}/pulls/${prNumber}/merge-async`,
     "--method", "PUT",
+    "-H", "X-GitHub-Api-Version: 2026-03-10",
     "-f", `merge_method=${method}`,
+    "-f", "merge_action=default",
     "-f", `sha=${expectedHeadSha}`,
   ];
 }
