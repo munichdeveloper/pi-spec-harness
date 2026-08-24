@@ -2,12 +2,13 @@ import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 
 describe("GitHub workflow contracts", () => {
-  it("installs the managed self run-documentation finalizer at an immutable harness ref", async () => {
+  it("calls the self run-documentation finalizer locally while pinning its implementation checkout", async () => {
     const workflow = await readFile(".github/workflows/harness-run-documentation-finalizer.yml", "utf8");
 
     expect(workflow).toContain("# Managed by pi-spec-harness: run-documentation-finalizer-reference v1");
     expect(workflow).toContain("workflow_dispatch:");
-    expect(workflow).toContain("run-documentation-finalizer.yml@aca192d94f3db79747c000a7b0f9438acac48b5a");
+    expect(workflow).toContain("uses: ./.github/workflows/run-documentation-finalizer.yml");
+    expect(workflow).not.toContain("uses: munichdeveloper/pi-spec-harness/.github/workflows/run-documentation-finalizer.yml@");
     expect(workflow).toContain("harness-ref: 'aca192d94f3db79747c000a7b0f9438acac48b5a'");
     expect(workflow).toContain("cancel-in-progress: false");
     expect(workflow).not.toContain("pull_request:");
