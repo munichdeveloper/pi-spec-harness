@@ -45,10 +45,14 @@ jobs:
       - name: Determine changed requirement files under the configured glob
         id: changed
         shell: bash
+        env:
+          REQUIREMENT_PATH_GLOB: ${{ inputs.requirement-path-glob }}
+          GIT_BEFORE: ${{ github.event.before }}
+          GIT_AFTER: ${{ github.event.after }}
         run: |
-          glob='${{ inputs.requirement-path-glob }}'
-          before='${{ github.event.before }}'
-          after='${{ github.event.after }}'
+          glob="$REQUIREMENT_PATH_GLOB"
+          before="$GIT_BEFORE"
+          after="$GIT_AFTER"
           if [[ -n "$before" && "$before" != "0000000000000000000000000000000000000000" && -n "$after" ]]; then
             files=$(git diff --name-only "$before" "$after" -- "$glob" 2>/dev/null || true)
           else

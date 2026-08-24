@@ -288,7 +288,7 @@ interface CmdInitArgs {
   installAgentsContext?: boolean;
   requirementPathGlob?: string;
   requirementDefaultBranch?: string;
-  requirementProvider?: string;
+  requirementProvider?: "github-copilot" | "claude-code";
   prApprovalPolicy?: string;
 }
 
@@ -2492,7 +2492,7 @@ const _harnessCli = yargs(hideBin(process.argv))
         installAgentsContext: argv["install-agents-context"] as boolean | undefined,
         requirementPathGlob: argv["requirement-path-glob"] as string | undefined,
         requirementDefaultBranch: argv["requirement-default-branch"] as string | undefined,
-        requirementProvider: argv["requirement-provider"] as string | undefined,
+        requirementProvider: argv["requirement-provider"] as "github-copilot" | "claude-code" | undefined,
         prApprovalPolicy: argv["pr-approval-policy"] as string | undefined,
       }),
   )
