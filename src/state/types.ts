@@ -287,6 +287,8 @@ export interface SpecDispatchRecord {
   targetSpecPath: string;
   provider: SpecGenerationProvider;
   branch: string;
+  /** Durable GitHub issue that carries the provider-neutral agent order. */
+  dispatchIssue?: number;
   status: "prepared" | "dispatched" | "pr-open" | "pr-merged" | "cancelled";
   requestedAt: string;
   /** Pull-request number once the agent creates the spec PR. */

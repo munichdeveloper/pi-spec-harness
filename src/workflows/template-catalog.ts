@@ -386,6 +386,11 @@ on:
     branches: [${defaultBranch}]
     paths:
       - '${requirementPathGlob}'
+  pull_request_target:
+    types: [opened, synchronize, reopened, closed]
+  schedule:
+    - cron: '17,47 * * * *'
+  workflow_dispatch:
 
 # Non-cancelling: a queued run must not be dropped when a second push arrives.
 # Serialized per repository so concurrent pushes cannot race into duplicate
@@ -399,6 +404,7 @@ concurrency:
 permissions:
   contents: read
   issues: write
+  pull-requests: read
 
 jobs:
   requirement-to-spec:

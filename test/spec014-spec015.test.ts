@@ -564,7 +564,13 @@ describe("SPEC-015: needsDeliveryMergeReconciliation for merge-is-approval runs"
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { rm } from "node:fs/promises";
-import { SpecGenFileStore, findStoreRecord, upsertStoreRecord } from "../src/spec/spec-gen-store.js";
+import {
+  SpecGenFileStore,
+  findStoreRecord,
+  parseSpecGenStoreFromBody,
+  renderSpecGenStoreBody,
+  upsertStoreRecord,
+} from "../src/spec/spec-gen-store.js";
 import { validateSpecContent } from "../src/spec/spec-validator.js";
 import type { SpecGenStoreData } from "../src/spec/spec-gen-store.js";
 
@@ -655,6 +661,22 @@ describe("SPEC-014: SpecGenFileStore persistence", () => {
     } finally {
       await rm(path, { force: true });
     }
+  });
+});
+
+describe("SPEC-014: durable issue outbox serialization", () => {
+  it("round-trips all provider and PR evidence through the managed issue body", () => {
+    const data = upsertStoreRecord(emptyStore(), makeRecord({
+      dispatchKey: "o/r:req-014:durable",
+      dispatchIssue: 41,
+      status: "pr-open",
+      specPullRequest: 42,
+      specPrHeadSha: "b".repeat(40),
+    }));
+
+    const body = renderSpecGenStoreBody(data);
+    expect(body).toContain("harness:spec-gen-state:begin");
+    expect(parseSpecGenStoreFromBody(body)).toEqual(data);
   });
 });
 

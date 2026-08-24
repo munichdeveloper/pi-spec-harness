@@ -29,10 +29,10 @@ on:
 permissions:
   contents: read
   issues: write
+  pull-requests: read
 
 jobs:
   requirement-to-spec:
-    if: github.ref_name == inputs.default-branch
     runs-on: ubuntu-latest
     steps:
       - name: Checkout caller repository
@@ -41,9 +41,11 @@ jobs:
           # Full history: the before/after diff base below can be further
           # back than one commit for multi-commit pushes/squash-merges.
           fetch-depth: 0
+          ref: ${{ inputs.default-branch }}
 
       - name: Determine changed requirement files under the configured glob
         id: changed
+        if: github.event_name == 'push'
         shell: bash
         env:
           REQUIREMENT_PATH_GLOB: ${{ inputs.requirement-path-glob }}
@@ -69,7 +71,6 @@ jobs:
           fi
 
       - name: Checkout pi-spec-harness at pinned ref
-        if: steps.changed.outputs.files != ''
         uses: actions/checkout@v4
         with:
           repository: munichdeveloper/pi-spec-harness
@@ -77,7 +78,6 @@ jobs:
           path: .harness
 
       - name: Setup Node.js
-        if: steps.changed.outputs.files != ''
         uses: actions/setup-node@v4
         with:
           node-version: "20"
@@ -85,7 +85,6 @@ jobs:
           cache-dependency-path: .harness/package-lock.json
 
       - name: Install harness dependencies
-        if: steps.changed.outputs.files != ''
         working-directory: .harness
         run: npm ci
 
@@ -98,7 +97,6 @@ jobs:
           SOURCE_SHA: ${{ github.sha }}
           PROVIDER: ${{ inputs.provider }}
           HARNESS_REF: ${{ inputs.harness-ref }}
-          SPEC_GEN_STATE: ${{ github.workspace }}/.harness/.spec-gen-state.json
         run: |
           while IFS= read -r req_file; do
             [[ -z "$req_file" ]] && continue
@@ -108,6 +106,14 @@ jobs:
               --requirement-path "$req_file" \
               --source-sha "$SOURCE_SHA" \
               --provider "$PROVIDER" \
-              --harness-ref "$HARNESS_REF" \
-              --state "$SPEC_GEN_STATE"
+              --harness-ref "$HARNESS_REF"
           done <<< "${{ steps.changed.outputs.files }}"
+
+      - name: Reconcile durable spec-generation outbox
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          CALLER_REPOSITORY: ${{ github.repository }}
+        run: |
+          node .harness/dist/cli.js requirement-to-spec-check \
+            --repository "$CALLER_REPOSITORY"

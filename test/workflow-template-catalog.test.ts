@@ -248,6 +248,9 @@ describe("SPEC-014: requirement-to-spec catalog entry", () => {
     const rendered = renderRequirementToSpecReference();
     expect(rendered).toContain(REQUIREMENT_TO_SPEC_REFERENCE_MARKER);
     expect(rendered).toContain("push:");
+    expect(rendered).toContain("pull_request_target:");
+    expect(rendered).toContain("schedule:");
+    expect(rendered).toContain("workflow_dispatch:");
     expect(rendered).toContain("docs/requirements/**/*.md");
     expect(rendered).toContain(`requirement-to-spec.yml@${DEFAULT_REQUIREMENT_TO_SPEC_WORKFLOW_REF}`);
     expect(rendered).toContain(`harness-ref: '${DEFAULT_REQUIREMENT_TO_SPEC_WORKFLOW_REF}'`);
@@ -270,10 +273,11 @@ describe("SPEC-014: requirement-to-spec catalog entry", () => {
     expect(rendered).toContain("branches: [trunk]");
   });
 
-  it("minimal permissions: only contents:read and issues:write (no secrets:inherit)", () => {
+  it("uses the minimum read/write permissions needed for dispatch and PR reconciliation", () => {
     const rendered = renderRequirementToSpecReference();
     expect(rendered).toContain("contents: read");
     expect(rendered).toContain("issues: write");
+    expect(rendered).toContain("pull-requests: read");
     expect(rendered).not.toContain("secrets: inherit");
     expect(rendered).not.toContain("contents: write");
   });
