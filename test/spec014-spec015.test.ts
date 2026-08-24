@@ -557,3 +557,391 @@ describe("SPEC-015: needsDeliveryMergeReconciliation for merge-is-approval runs"
     expect(needsDeliveryMergeReconciliation(state)).toBe(true);
   });
 });
+
+// ============================================================================
+// SPEC-014: SpecGenFileStore, validateSpecContent, and adapter contract tests
+// ============================================================================
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { rm } from "node:fs/promises";
+import { SpecGenFileStore, findStoreRecord, upsertStoreRecord } from "../src/spec/spec-gen-store.js";
+import { validateSpecContent } from "../src/spec/spec-validator.js";
+import type { SpecGenStoreData } from "../src/spec/spec-gen-store.js";
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+function makeRecord(opts: Partial<SpecDispatchRecord> & { dispatchKey: string }): SpecDispatchRecord {
+  return {
+    schemaVersion: 1,
+    dispatchKey: opts.dispatchKey,
+    requirementId: opts.requirementId ?? "REQ-014",
+    sourceSha: opts.sourceSha ?? "a".repeat(40),
+    targetSpecPath: opts.targetSpecPath ?? "docs/specifications/SPEC-014.md",
+    provider: opts.provider ?? "github-copilot",
+    branch: opts.branch ?? "harness/spec-gen-req-014-aaaaaaaa",
+    status: opts.status ?? "dispatched",
+    requestedAt: opts.requestedAt ?? "2026-08-24T10:00:00.000Z",
+    updatedAt: opts.updatedAt ?? "2026-08-24T10:00:00.000Z",
+    ...opts,
+  };
+}
+
+function emptyStore(): SpecGenStoreData {
+  return { schemaVersion: 1, records: [] };
+}
+
+// ---------------------------------------------------------------------------
+// SpecGenFileStore: persistence and monotonicity
+// ---------------------------------------------------------------------------
+
+describe("SPEC-014: SpecGenFileStore persistence", () => {
+  it("returns an empty store when the file does not exist", async () => {
+    const path = join(tmpdir(), `spec-gen-store-test-${Date.now()}-nonexistent.json`);
+    const store = new SpecGenFileStore(path);
+    const data = await store.load();
+    expect(data.records).toHaveLength(0);
+    expect(data.schemaVersion).toBe(1);
+  });
+
+  it("round-trips a record through save and load", async () => {
+    const path = join(tmpdir(), `spec-gen-store-test-${Date.now()}.json`);
+    const store = new SpecGenFileStore(path);
+    try {
+      const record = makeRecord({ dispatchKey: "o/r:req-014:aaaaaa" });
+      const updated = upsertStoreRecord(emptyStore(), record);
+      await store.save(updated);
+      const loaded = await store.load();
+      expect(loaded.records).toHaveLength(1);
+      expect(loaded.records[0]!.dispatchKey).toBe("o/r:req-014:aaaaaa");
+    } finally {
+      await rm(path, { force: true });
+    }
+  });
+
+  it("upserts (replaces) an existing record on the same dispatch key", async () => {
+    const path = join(tmpdir(), `spec-gen-store-test-${Date.now()}.json`);
+    const store = new SpecGenFileStore(path);
+    try {
+      const initial = makeRecord({ dispatchKey: "o/r:req-014:aaa", status: "dispatched" });
+      let data = upsertStoreRecord(emptyStore(), initial);
+      await store.save(data);
+
+      const update = makeRecord({ dispatchKey: "o/r:req-014:aaa", status: "pr-open", specPullRequest: 99 });
+      data = upsertStoreRecord(data, update);
+      await store.save(data);
+
+      const loaded = await store.load();
+      expect(loaded.records).toHaveLength(1);
+      expect(loaded.records[0]!.status).toBe("pr-open");
+      expect(loaded.records[0]!.specPullRequest).toBe(99);
+    } finally {
+      await rm(path, { force: true });
+    }
+  });
+
+  it("preserves multiple independent dispatch records", async () => {
+    const path = join(tmpdir(), `spec-gen-store-test-${Date.now()}.json`);
+    const store = new SpecGenFileStore(path);
+    try {
+      let data = emptyStore();
+      data = upsertStoreRecord(data, makeRecord({ dispatchKey: "o/r:req-014:aaa" }));
+      data = upsertStoreRecord(data, makeRecord({ dispatchKey: "o/r:req-015:bbb", requirementId: "REQ-015" }));
+      await store.save(data);
+
+      const loaded = await store.load();
+      expect(loaded.records).toHaveLength(2);
+    } finally {
+      await rm(path, { force: true });
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// upsertStoreRecord: monotonic status ordering
+// ---------------------------------------------------------------------------
+
+describe("SPEC-014: upsertStoreRecord monotonic ordering", () => {
+  it("allows forward status transitions (dispatched → pr-open → pr-merged)", () => {
+    let data = emptyStore();
+    const key = "o/r:req-014:sha1";
+    data = upsertStoreRecord(data, makeRecord({ dispatchKey: key, status: "dispatched" }));
+    data = upsertStoreRecord(data, makeRecord({ dispatchKey: key, status: "pr-open" }));
+    data = upsertStoreRecord(data, makeRecord({ dispatchKey: key, status: "pr-merged" }));
+    expect(findStoreRecord(data, key)!.status).toBe("pr-merged");
+  });
+
+  it("refuses backward status transitions (pr-merged → dispatched)", () => {
+    let data = emptyStore();
+    const key = "o/r:req-014:sha2";
+    data = upsertStoreRecord(data, makeRecord({ dispatchKey: key, status: "pr-merged" }));
+    expect(() =>
+      upsertStoreRecord(data, makeRecord({ dispatchKey: key, status: "dispatched" })),
+    ).toThrow(/refusing status downgrade from 'pr-merged' to 'dispatched'/);
+  });
+
+  it("refuses same-level downgrade within intermediate states (pr-open → dispatched)", () => {
+    let data = emptyStore();
+    const key = "o/r:req-014:sha3";
+    data = upsertStoreRecord(data, makeRecord({ dispatchKey: key, status: "pr-open" }));
+    expect(() =>
+      upsertStoreRecord(data, makeRecord({ dispatchKey: key, status: "dispatched" })),
+    ).toThrow(/refusing status downgrade/);
+  });
+
+  it("allows same-status idempotent update (dispatched → dispatched)", () => {
+    let data = emptyStore();
+    const key = "o/r:req-014:sha4";
+    data = upsertStoreRecord(data, makeRecord({ dispatchKey: key, status: "dispatched" }));
+    // Same status update is allowed (idempotent re-write)
+    expect(() =>
+      upsertStoreRecord(data, makeRecord({ dispatchKey: key, status: "dispatched" })),
+    ).not.toThrow();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// validateSpecContent: pure spec validator (SPEC-014 TAC-05)
+// ---------------------------------------------------------------------------
+
+describe("SPEC-014: validateSpecContent", () => {
+  const requiredSections = [
+    "Architektur",
+    "Technische Entscheidungen",
+    "Technische Akzeptanzkriterien",
+    "Rückverfolgbarkeit",
+    "Risiken",
+    "Offene Fragen",
+  ];
+
+  it("returns valid:true when all sections and REQ traceability are present", () => {
+    const content = [
+      "# SPEC-014",
+      "## Architektur",
+      "## Technische Entscheidungen",
+      "## Technische Akzeptanzkriterien",
+      "## Rückverfolgbarkeit",
+      "Dieses Spec basiert auf REQ-014.",
+      "## Risiken",
+      "## Offene Fragen",
+    ].join("\n");
+    const result = validateSpecContent(content, requiredSections, "REQ-014");
+    expect(result.valid).toBe(true);
+    expect(result.missingSections).toHaveLength(0);
+    expect(result.traceable).toBe(true);
+  });
+
+  it("reports missing sections", () => {
+    const content = [
+      "# SPEC-014",
+      "## Architektur",
+      "REQ-014 ist hier referenziert.",
+    ].join("\n");
+    const result = validateSpecContent(content, requiredSections, "REQ-014");
+    expect(result.valid).toBe(false);
+    expect(result.missingSections).toContain("Technische Entscheidungen");
+    expect(result.missingSections).toContain("Rückverfolgbarkeit");
+  });
+
+  it("returns traceable:false when requirementId is absent", () => {
+    const content = requiredSections.map((s) => `## ${s}`).join("\n");
+    const result = validateSpecContent(content, requiredSections, "REQ-014");
+    expect(result.traceable).toBe(false);
+    expect(result.valid).toBe(false);
+  });
+
+  it("is case-insensitive for both sections and requirementId", () => {
+    const content = [
+      "## architektur",
+      "## technische entscheidungen",
+      "## technische akzeptanzkriterien",
+      "## rückverfolgbarkeit",
+      "## risiken",
+      "## offene fragen",
+      "req-014",
+    ].join("\n");
+    const result = validateSpecContent(content, requiredSections, "REQ-014");
+    expect(result.valid).toBe(true);
+  });
+
+  it("returns valid:false for empty content", () => {
+    const result = validateSpecContent("", requiredSections, "REQ-014");
+    expect(result.valid).toBe(false);
+    expect(result.missingSections).toHaveLength(requiredSections.length);
+    expect(result.traceable).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// SPEC-014 TAC-04: dispatch contract — provider adapter contracts
+// ---------------------------------------------------------------------------
+
+describe("SPEC-014 TAC-04: dispatch contract — provider adapter contracts", () => {
+  it("github-copilot dispatch order has all required mandatory sections (no Rollback)", () => {
+    const order = buildSpecDispatchOrder({
+      repository: "munichdeveloper/Immogent",
+      requirementId: "REQ-014",
+      sourceSha: "a".repeat(40),
+      requirementPath: "docs/requirements/REQ-014.md",
+      provider: "github-copilot",
+    });
+    expect(order.provider).toBe("github-copilot");
+    expect(order.requiredSections).toContain("Rückverfolgbarkeit");
+    expect(order.requiredSections).toContain("Risiken");
+    expect(order.requiredSections).toContain("Offene Fragen");
+    expect(order.requiredSections).not.toContain("Rollback");
+    expect(order.dispatchKey).toContain("req-014");
+  });
+
+  it("claude-code dispatch order conforms to the same contract structure", () => {
+    const order = buildSpecDispatchOrder({
+      repository: "munichdeveloper/Immogent",
+      requirementId: "REQ-014",
+      sourceSha: "b".repeat(40),
+      requirementPath: "docs/requirements/REQ-014.md",
+      provider: "claude-code",
+    });
+    expect(order.provider).toBe("claude-code");
+    expect(order.requiredSections).toHaveLength(6);
+    expect(order.requiredSections).toContain("Rückverfolgbarkeit");
+    expect(order.agentBranch).toMatch(/req-014/i);
+    expect(order.targetSpecPath).toMatch(/SPEC-014/);
+  });
+
+  it("both providers produce the same dispatchKey for the same repo/req/sha", () => {
+    const opts = {
+      repository: "org/repo",
+      requirementId: "REQ-999",
+      sourceSha: "f".repeat(40),
+      requirementPath: "docs/requirements/REQ-999.md",
+    };
+    const copilotKey = buildSpecDispatchOrder({ ...opts, provider: "github-copilot" }).dispatchKey;
+    const claudeKey = buildSpecDispatchOrder({ ...opts, provider: "claude-code" }).dispatchKey;
+    expect(copilotKey).toBe(claudeKey);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// SPEC-014 TAC-02/TAC-10: materialized PR boundary — full state machine path
+// ---------------------------------------------------------------------------
+
+describe("SPEC-014 TAC-02/TAC-10: outbox-to-materialized-PR full state path", () => {
+  it("transitions dispatched → pr-open → pr-merged monotonically with spec validation", async () => {
+    const path = join(tmpdir(), `spec-gen-e2e-test-${Date.now()}.json`);
+    const store = new SpecGenFileStore(path);
+    const fixedKey = buildSpecDispatchKey("munichdeveloper/Immogent", "REQ-014", "c".repeat(40));
+
+    try {
+      // Step 1: Persist dispatched record (simulates successful dispatch)
+      let data = emptyStore();
+      data = upsertStoreRecord(data, makeRecord({
+        dispatchKey: fixedKey,
+        status: "dispatched",
+        branch: "harness/spec-gen-req-014-cccccccc",
+      }));
+      await store.save(data);
+
+      // Step 2: PR opened — update to pr-open
+      data = await store.load();
+      data = upsertStoreRecord(data, makeRecord({
+        dispatchKey: fixedKey,
+        status: "pr-open",
+        specPullRequest: 101,
+        specPrHeadSha: "d".repeat(40),
+        branch: "harness/spec-gen-req-014-cccccccc",
+      }));
+      await store.save(data);
+
+      let loaded = await store.load();
+      expect(findStoreRecord(loaded, fixedKey)!.status).toBe("pr-open");
+      expect(findStoreRecord(loaded, fixedKey)!.specPullRequest).toBe(101);
+
+      // Step 3: Validate spec content before marking merged
+      const specContent = [
+        "# SPEC-014",
+        "REQ-014 is traceable here.",
+        "## Architektur",
+        "## Technische Entscheidungen",
+        "## Technische Akzeptanzkriterien",
+        "## Rückverfolgbarkeit",
+        "## Risiken",
+        "## Offene Fragen",
+      ].join("\n");
+      const validation = validateSpecContent(
+        specContent,
+        ["Architektur", "Technische Entscheidungen", "Technische Akzeptanzkriterien", "Rückverfolgbarkeit", "Risiken", "Offene Fragen"],
+        "REQ-014",
+      );
+      expect(validation.valid).toBe(true);
+
+      // Step 4: PR merged — update to pr-merged (materialized boundary)
+      data = await store.load();
+      data = upsertStoreRecord(data, makeRecord({
+        dispatchKey: fixedKey,
+        status: "pr-merged",
+        specPullRequest: 101,
+        specPrHeadSha: "d".repeat(40),
+        specMergeCommitSha: "e".repeat(40),
+        specMergedAt: "2026-08-24T12:00:00Z",
+        branch: "harness/spec-gen-req-014-cccccccc",
+      }));
+      await store.save(data);
+
+      loaded = await store.load();
+      const final = findStoreRecord(loaded, fixedKey)!;
+      expect(final.status).toBe("pr-merged");
+      expect(final.specMergeCommitSha).toBe("e".repeat(40));
+      expect(final.specMergedAt).toBe("2026-08-24T12:00:00Z");
+    } finally {
+      await rm(path, { force: true });
+    }
+  });
+
+  it("outbox prevents duplicate dispatch for the same dispatchKey (exactly-once)", () => {
+    let data = emptyStore();
+    const key = buildSpecDispatchKey("org/repo", "REQ-014", "a".repeat(40));
+    data = upsertStoreRecord(data, makeRecord({ dispatchKey: key, status: "dispatched" }));
+
+    // Second dispatch attempt: key already present with dispatched status
+    const existing = findStoreRecord(data, key);
+    expect(existing).toBeDefined();
+    expect(existing!.status).toBe("dispatched");
+    // Caller checks: status !== "prepared" → skip dispatch
+    expect(existing!.status !== "prepared").toBe(true);
+  });
+
+  it("allows re-dispatch after cancellation (cancelled < dispatched is blocked)", () => {
+    // After cancellation, a fresh dispatchKey (different SHA) is used.
+    const key1 = buildSpecDispatchKey("org/repo", "REQ-014", "a".repeat(40));
+    const key2 = buildSpecDispatchKey("org/repo", "REQ-014", "b".repeat(40));
+    let data = emptyStore();
+    data = upsertStoreRecord(data, makeRecord({ dispatchKey: key1, status: "cancelled" }));
+    // New SHA produces a different key — no conflict
+    data = upsertStoreRecord(data, makeRecord({ dispatchKey: key2, status: "dispatched", requirementId: "REQ-014" }));
+    expect(data.records).toHaveLength(2);
+    expect(findStoreRecord(data, key2)!.status).toBe("dispatched");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// SPEC-014 TAC-09: failure audit event fields
+// ---------------------------------------------------------------------------
+
+describe("SPEC-014 TAC-09: failure audit event required fields", () => {
+  it("buildSpecDispatchOrder exposes all fields needed for the audit event", () => {
+    const order = buildSpecDispatchOrder({
+      repository: "org/repo",
+      requirementId: "REQ-014",
+      sourceSha: "f".repeat(40),
+      requirementPath: "docs/requirements/REQ-014.md",
+      provider: "github-copilot",
+    });
+    // TAC-09: actor/role are harness-provided; the order supplies provider, req/spec, sha
+    expect(order.provider).toBe("github-copilot");
+    expect(order.requirementId).toBe("REQ-014");
+    expect(order.targetSpecPath).toMatch(/SPEC-014/);
+    expect(order.sourceSha).toBe("f".repeat(40));
+    expect(order.dispatchKey).toBeTruthy();
+  });
+});

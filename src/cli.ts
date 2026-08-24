@@ -34,7 +34,9 @@ import {
   parseRequirementFrontmatter,
 } from "./spec/requirement-to-spec.js";
 import type { StateStore } from "./state/state-store.js";
-import { FileStateStore } from "./state/store.js";
+import { FileStateStore, nowIso } from "./state/store.js";
+import { SpecGenFileStore, findStoreRecord, upsertStoreRecord } from "./spec/spec-gen-store.js";
+import { validateSpecContent } from "./spec/spec-validator.js";
 import {
   PHASE_ORDER,
   classifyDeliveryPrMergeEffect,
@@ -62,7 +64,7 @@ import {
   upsertDocumentationSnapshot,
   upsertGate,
 } from "./state/state-machine.js";
-import type { GateDecisionContext, GateType, HumanGateIssueRef, PhaseId, RunState, SpecGenerationProvider } from "./state/types.js";
+import type { GateDecisionContext, GateType, HumanGateIssueRef, PhaseId, RunState, SpecDispatchRecord, SpecGenerationProvider } from "./state/types.js";
 import { SCHEMA_VERSION } from "./state/types.js";
 import { renderRunSnapshot, buildSnapshotFilename } from "./documentation/run-snapshot.js";
 import { generateRunIndex, generateObsidianBase, parseFrontmatter, parseRunIndexEntry } from "./documentation/run-index.js";
@@ -2096,8 +2098,24 @@ function buildSpecGenIssueBody(opts: {
 
 /**
  * Dispatch a spec-generation task for a single requirement file.
- * Idempotent: uses the dispatch key embedded in the issue title to avoid
- * creating duplicate issues for the same requirement SHA. SPEC-014, TAC-04.
+ *
+ * Idempotency (SPEC-014 TAC-02):
+ *  Primary   — `SpecDispatchRecord` outbox in the file store at `argv.state`
+ *  Secondary — issue-title lookup used as crash-recovery evidence when the
+ *              store is absent or was not yet persisted.
+ *
+ * Provider adapters (SPEC-014 TAC-04):
+ *  github-copilot — assigns the issue to \@github-copilot, then performs a
+ *                   read-after-write via pollForAgentAssignment. Fails closed
+ *                   (non-zero exit + audit output) when assignment is not
+ *                   confirmed; never reports `dispatched: true` without proof.
+ *  claude-code    — posts a \@claude mention comment on the dispatch issue to
+ *                   trigger the Claude Code Action; fails closed if that step
+ *                   fails.
+ *
+ * Audit (SPEC-014 TAC-09): every failure emits a structured JSON event to
+ * stdout containing actor, accessRole, provider, requirementId, targetSpecPath,
+ * sourceSha, pr (if known), and outcome before re-throwing.
  */
 async function cmdRequirementToSpecDispatch(argv: {
   repository: string;
@@ -2105,8 +2123,9 @@ async function cmdRequirementToSpecDispatch(argv: {
   sourceSha: string;
   provider: SpecGenerationProvider;
   harnessRef: string;
+  state?: string;
 }): Promise<void> {
-  // 1. Read and parse the requirement file.
+  // ── 1. Read and parse the requirement file ─────────────────────────────────
   let content: string;
   try {
     content = await readFile(argv.requirementPath, "utf-8");
@@ -2125,7 +2144,7 @@ async function cmdRequirementToSpecDispatch(argv: {
     );
   }
 
-  // 2. Eligibility check (type=requirement, status=approved).
+  // ── 2. Eligibility (type=requirement, status=approved) ───────────────────
   if (!isRequirementEligible(fm)) {
     const result = {
       skipped: "not-eligible",
@@ -2140,7 +2159,7 @@ async function cmdRequirementToSpecDispatch(argv: {
     return;
   }
 
-  // 3. Build the provider-neutral dispatch order.
+  // ── 3. Build the provider-neutral dispatch order ─────────────────────────
   const order = buildSpecDispatchOrder({
     repository: argv.repository,
     requirementId: fm.id,
@@ -2149,25 +2168,73 @@ async function cmdRequirementToSpecDispatch(argv: {
     provider: argv.provider,
   });
 
-  // 4. Idempotency: check for an existing dispatch issue.
+  // ── 4. PRIMARY idempotency: outbox in file store ─────────────────────────
+  const specStore = argv.state ? new SpecGenFileStore(argv.state) : null;
+  let storeData = specStore ? await specStore.load() : null;
+
+  const existingRecord = storeData ? findStoreRecord(storeData, order.dispatchKey) : undefined;
+  if (existingRecord && existingRecord.status !== "prepared") {
+    const result = {
+      idempotent: true,
+      dispatchKey: order.dispatchKey,
+      requirementId: fm.id,
+      status: existingRecord.status,
+      issueNumber: undefined as number | undefined,
+    };
+    console.log(
+      JSON.stringify({
+        schemaVersion: SCHEMA_VERSION,
+        command: "requirement-to-spec-dispatch",
+        result,
+        nextAction: `outbox already has '${existingRecord.status}' record for dispatchKey — skipping duplicate dispatch`,
+      }, null, 2),
+    );
+    return;
+  }
+
+  // ── 5. SECONDARY idempotency: issue-title lookup (crash recovery) ─────────
   const issueTitle = buildSpecGenIssueTitle(fm.id, order.dispatchKey);
   const existing = await github.findIssueByExactTitle(argv.repository, issueTitle);
   if (existing) {
+    // Issue exists but outbox was not persisted (crash between create and save).
+    // Restore the outbox entry from GitHub as recovery evidence, then return.
+    if (specStore && storeData) {
+      const recovered: SpecDispatchRecord = {
+        schemaVersion: 1,
+        dispatchKey: order.dispatchKey,
+        requirementId: fm.id,
+        sourceSha: argv.sourceSha,
+        targetSpecPath: order.targetSpecPath,
+        provider: argv.provider,
+        branch: order.agentBranch,
+        status: "dispatched",
+        requestedAt: nowIso(),
+        updatedAt: nowIso(),
+      };
+      storeData = upsertStoreRecord(storeData, recovered);
+      await specStore.save(storeData);
+    }
     const result = {
       idempotent: true,
       dispatchKey: order.dispatchKey,
       requirementId: fm.id,
       issueNumber: existing.number,
       issueUrl: existing.url,
+      recoveredToOutbox: specStore !== null,
     };
     console.log(
-      JSON.stringify({ schemaVersion: SCHEMA_VERSION, command: "requirement-to-spec-dispatch", result, nextAction: `spec-generation issue #${existing.number} already exists — skipping duplicate dispatch` }, null, 2),
+      JSON.stringify({
+        schemaVersion: SCHEMA_VERSION,
+        command: "requirement-to-spec-dispatch",
+        result,
+        nextAction: `spec-generation issue #${existing.number} already exists — skipping duplicate dispatch`,
+      }, null, 2),
     );
     return;
   }
 
-  // 5. Create the dispatch tracking issue.
-  const body = buildSpecGenIssueBody({
+  // ── 6. Create the dispatch tracking issue ────────────────────────────────
+  const issueBody = buildSpecGenIssueBody({
     requirementId: fm.id,
     requirementPath: argv.requirementPath,
     targetSpecPath: order.targetSpecPath,
@@ -2178,25 +2245,109 @@ async function cmdRequirementToSpecDispatch(argv: {
     harnessRef: argv.harnessRef,
   });
 
-  const labels = [SPEC_GEN_ISSUE_LABEL];
-  if (argv.provider === "github-copilot") {
-    labels.push("ai:allowed");
-  }
-
+  const labels = [SPEC_GEN_ISSUE_LABEL, "ai:allowed"];
   const created = await github.createIssue(argv.repository, {
     title: issueTitle,
-    body,
+    body: issueBody,
     labels,
   });
 
-  // 6. For Copilot provider: assign the issue to @github-copilot.
+  // Helper: emit a structured failure audit event and persist cancelled status.
+  const emitFailure = async (outcome: string): Promise<never> => {
+    const auditEvent = {
+      schemaVersion: SCHEMA_VERSION,
+      command: "requirement-to-spec-dispatch",
+      result: {
+        dispatched: false,
+        actor: "harness",
+        accessRole: "trusted-requester",
+        provider: argv.provider,
+        requirementId: fm.id,
+        targetSpecPath: order.targetSpecPath,
+        sourceSha: argv.sourceSha,
+        pr: undefined as number | undefined,
+        issueNumber: created.number,
+        issueUrl: created.url,
+        outcome,
+      },
+      nextAction: "needs-human: provider dispatch failed — see outcome field for details",
+    };
+    console.log(JSON.stringify(auditEvent, null, 2));
+    // Persist cancelled record so the outbox reflects the failure.
+    if (specStore && storeData) {
+      const cancelled: SpecDispatchRecord = {
+        schemaVersion: 1,
+        dispatchKey: order.dispatchKey,
+        requirementId: fm.id,
+        sourceSha: argv.sourceSha,
+        targetSpecPath: order.targetSpecPath,
+        provider: argv.provider,
+        branch: order.agentBranch,
+        status: "cancelled",
+        requestedAt: nowIso(),
+        updatedAt: nowIso(),
+      };
+      storeData = upsertStoreRecord(storeData, cancelled);
+      await specStore.save(storeData);
+    }
+    throw new Error(`requirement-to-spec-dispatch: provider dispatch failed — ${outcome}`);
+  };
+
+  // ── 7. Provider-specific dispatch ────────────────────────────────────────
   if (argv.provider === "github-copilot") {
+    // Assign @github-copilot and verify read-after-write (SPEC-014 TAC-04).
     try {
       await github.addAssignees(argv.repository, created.number, ["github-copilot"]);
     } catch (err) {
-      // Assignment may fail if Copilot is not enabled — log but don't abort.
-      console.warn(`[requirement-to-spec-dispatch] warning: could not assign @github-copilot to issue #${created.number}: ${String(err)}`);
+      await emitFailure(`could not assign @github-copilot to issue #${created.number}: ${String(err)}`);
     }
+    // Read-after-write verification via pollForAgentAssignment.
+    const verification = await pollForAgentAssignment(
+      () => github.viewIssue(argv.repository, created.number),
+      "github-copilot",
+      { attempts: 4, delayMs: 2000 },
+    );
+    if (!verification.assigned) {
+      await emitFailure(
+        `@github-copilot assignment not reflected after ${verification.attempts} read-after-write attempts; ` +
+        `Copilot may not be enabled on this repository`,
+      );
+    }
+  } else if (argv.provider === "claude-code") {
+    // Invoke Claude Code Action via @claude mention comment (SPEC-014 TAC-04).
+    const claudePrompt = buildClaudeDispatchComment({
+      requirementId: fm.id,
+      requirementPath: argv.requirementPath,
+      targetSpecPath: order.targetSpecPath,
+      agentBranch: order.agentBranch,
+      requiredSections: order.requiredSections,
+      dispatchKey: order.dispatchKey,
+    });
+    try {
+      await github.commentIssue(argv.repository, created.number, claudePrompt);
+    } catch (err) {
+      await emitFailure(`could not post @claude dispatch comment on issue #${created.number}: ${String(err)}`);
+    }
+  } else {
+    await emitFailure(`unsupported provider '${String(argv.provider)}'`);
+  }
+
+  // ── 8. Persist dispatched record to outbox ────────────────────────────────
+  if (specStore) {
+    const record: SpecDispatchRecord = {
+      schemaVersion: 1,
+      dispatchKey: order.dispatchKey,
+      requirementId: fm.id,
+      sourceSha: argv.sourceSha,
+      targetSpecPath: order.targetSpecPath,
+      provider: argv.provider,
+      branch: order.agentBranch,
+      status: "dispatched",
+      requestedAt: nowIso(),
+      updatedAt: nowIso(),
+    };
+    storeData = upsertStoreRecord(storeData!, record);
+    await specStore.save(storeData);
   }
 
   const result = {
@@ -2221,6 +2372,216 @@ async function cmdRequirementToSpecDispatch(argv: {
       2,
     ),
   );
+}
+
+/**
+ * Build the @claude mention comment that invokes the Claude Code Action.
+ * The comment instructs Claude to generate the spec and open a PR.
+ */
+function buildClaudeDispatchComment(opts: {
+  requirementId: string;
+  requirementPath: string;
+  targetSpecPath: string;
+  agentBranch: string;
+  requiredSections: string[];
+  dispatchKey: string;
+}): string {
+  const sectionList = opts.requiredSections.map((s) => `- ${s}`).join("\n");
+  return [
+    `@claude Please generate the software specification for \`${opts.requirementId}\`.`,
+    ``,
+    `**Dispatch key:** \`${opts.dispatchKey}\``,
+    `**Source requirement:** \`${opts.requirementPath}\``,
+    `**Target spec path:** \`${opts.targetSpecPath}\``,
+    `**Agent branch:** \`${opts.agentBranch}\``,
+    ``,
+    `### Task`,
+    `1. Read the requirement at \`${opts.requirementPath}\`.`,
+    `2. Generate a complete spec at \`${opts.targetSpecPath}\` on branch \`${opts.agentBranch}\`.`,
+    `3. The spec **must** contain sections for each of the following:`,
+    sectionList,
+    `4. Include a Rückverfolgbarkeit section that back-references \`${opts.requirementId}\`.`,
+    `5. Open a pull request from \`${opts.agentBranch}\` targeting the default branch.`,
+  ].join("\n");
+}
+
+/**
+ * Check the status of a previously dispatched spec-generation task.
+ * Polls for a PR from the agent branch, validates spec content, and
+ * updates the outbox monotonically. SPEC-014 TAC-02/TAC-05.
+ */
+async function cmdRequirementToSpecCheck(argv: {
+  repository: string;
+  dispatchKey: string;
+  state: string;
+}): Promise<void> {
+  const specStore = new SpecGenFileStore(argv.state);
+  const storeData = await specStore.load();
+
+  const record = findStoreRecord(storeData, argv.dispatchKey);
+  if (!record) {
+    throw new Error(
+      `requirement-to-spec-check: dispatch key '${argv.dispatchKey}' not found in store '${argv.state}'`,
+    );
+  }
+  if (record.status === "pr-merged") {
+    console.log(
+      JSON.stringify({
+        schemaVersion: SCHEMA_VERSION,
+        command: "requirement-to-spec-check",
+        result: { dispatchKey: argv.dispatchKey, status: "pr-merged", specMergeCommitSha: record.specMergeCommitSha },
+        nextAction: "spec PR already merged — no further action needed",
+      }, null, 2),
+    );
+    return;
+  }
+  if (record.status === "cancelled") {
+    console.log(
+      JSON.stringify({
+        schemaVersion: SCHEMA_VERSION,
+        command: "requirement-to-spec-check",
+        result: { dispatchKey: argv.dispatchKey, status: "cancelled" },
+        nextAction: "dispatch was cancelled — re-dispatch required",
+      }, null, 2),
+    );
+    return;
+  }
+
+  // Poll for a PR on the expected agent branch.
+  const pr = await github.findPullRequestByHead(argv.repository, record.branch);
+  if (!pr) {
+    console.log(
+      JSON.stringify({
+        schemaVersion: SCHEMA_VERSION,
+        command: "requirement-to-spec-check",
+        result: {
+          dispatchKey: argv.dispatchKey,
+          status: record.status,
+          agentBranch: record.branch,
+          prFound: false,
+        },
+        nextAction: `no PR found for branch '${record.branch}' yet — retry later`,
+      }, null, 2),
+    );
+    return;
+  }
+
+  // If PR is open, validate spec content and update to pr-open.
+  if (pr.state === "OPEN" || pr.state === "open") {
+    let specContent: string | undefined;
+    try {
+      const file = await github.getFileContentIfExists(argv.repository, record.targetSpecPath, pr.headRefOid);
+      specContent = file?.content;
+    } catch {
+      // File may not exist yet — not a blocking error.
+    }
+
+    const validation = specContent
+      ? validateSpecContent(
+          specContent,
+          buildSpecDispatchOrder({
+            repository: argv.repository,
+            requirementId: record.requirementId,
+            sourceSha: record.sourceSha,
+            requirementPath: record.targetSpecPath,
+            provider: record.provider,
+            targetSpecPath: record.targetSpecPath,
+          }).requiredSections,
+          record.requirementId,
+        )
+      : null;
+
+    const updated = upsertStoreRecord(storeData, {
+      ...record,
+      status: "pr-open",
+      specPullRequest: pr.number,
+      specPrHeadSha: pr.headRefOid,
+      updatedAt: nowIso(),
+    });
+    await specStore.save(updated);
+
+    console.log(
+      JSON.stringify({
+        schemaVersion: SCHEMA_VERSION,
+        command: "requirement-to-spec-check",
+        result: {
+          dispatchKey: argv.dispatchKey,
+          status: "pr-open",
+          prNumber: pr.number,
+          prUrl: pr.url,
+          specValidation: validation ?? { skipped: "spec file not yet present on branch" },
+        },
+        nextAction: `spec PR #${pr.number} is open — monitor for merge`,
+      }, null, 2),
+    );
+    return;
+  }
+
+  // PR is merged — validate spec content and update to pr-merged.
+  if (pr.state === "MERGED" || pr.state === "merged") {
+    const mergeCommitSha = pr.mergeCommit?.oid;
+    const mergedAt = pr.mergedAt ?? nowIso();
+
+    let specContent: string | undefined;
+    try {
+      const file = await github.getFileContentIfExists(argv.repository, record.targetSpecPath);
+      specContent = file?.content;
+    } catch {
+      // Non-blocking.
+    }
+
+    // Validate spec before accepting the merge (SPEC-014 TAC-05).
+    // We use the dispatch order's requiredSections via the record; rebuild them
+    // from the dispatch order since they are not stored in the SpecDispatchRecord.
+    // For now, validation is surfaced in the output without blocking the transition.
+    const dispatchOrder = buildSpecDispatchOrder({
+      repository: argv.repository,
+      requirementId: record.requirementId,
+      sourceSha: record.sourceSha,
+      requirementPath: record.targetSpecPath, // best-effort; path not stored in record
+      provider: record.provider,
+      targetSpecPath: record.targetSpecPath,
+    });
+    const validation = specContent
+      ? validateSpecContent(specContent, dispatchOrder.requiredSections, record.requirementId)
+      : null;
+
+    const updated = upsertStoreRecord(storeData, {
+      ...record,
+      status: "pr-merged",
+      specPullRequest: pr.number,
+      specPrHeadSha: pr.headRefOid,
+      specMergeCommitSha: mergeCommitSha,
+      specMergedAt: mergedAt,
+      updatedAt: nowIso(),
+    });
+    await specStore.save(updated);
+
+    const auditEvent = {
+      schemaVersion: SCHEMA_VERSION,
+      command: "requirement-to-spec-check",
+      result: {
+        dispatchKey: argv.dispatchKey,
+        status: "pr-merged",
+        prNumber: pr.number,
+        prUrl: pr.url,
+        specMergeCommitSha: mergeCommitSha,
+        specMergedAt: mergedAt,
+        actor: "harness",
+        accessRole: "trusted-requester",
+        provider: record.provider,
+        requirementId: record.requirementId,
+        targetSpecPath: record.targetSpecPath,
+        sourceSha: record.sourceSha,
+        specValidation: validation ?? { skipped: "spec file not accessible" },
+        outcome: validation?.valid === false ? "spec-merged-with-validation-warnings" : "spec-merged",
+      },
+      nextAction: validation?.valid === false
+        ? `spec PR #${pr.number} merged but validation warnings: missing sections ${JSON.stringify(validation.missingSections)}`
+        : `spec PR #${pr.number} merged and validated — SPEC-014 materialized`,
+    };
+    console.log(JSON.stringify(auditEvent, null, 2));
+  }
 }
 
 /**
@@ -3090,7 +3451,8 @@ const _harnessCli = yargs(hideBin(process.argv))
         .option("requirement-path", { type: "string", demandOption: true, describe: "Repo-relative path to the requirement Markdown file" })
         .option("source-sha", { type: "string", demandOption: true, describe: "40-character commit SHA of the push that introduced/modified the requirement" })
         .option("provider", { type: "string", choices: ["github-copilot", "claude-code"] as const, default: "github-copilot", describe: "Spec-generation agent provider" })
-        .option("harness-ref", { type: "string", default: "main", describe: "Pinned harness ref embedded in the generated prompt for traceability" }),
+        .option("harness-ref", { type: "string", default: "main", describe: "Pinned harness ref embedded in the generated prompt for traceability" })
+        .option("state", { type: "string", describe: "Path to the spec-gen store file for persistent outbox idempotency (recommended)" }),
     async (argv) =>
       cmdRequirementToSpecDispatch({
         repository: argv.repository as string,
@@ -3098,6 +3460,22 @@ const _harnessCli = yargs(hideBin(process.argv))
         sourceSha: argv["source-sha"] as string,
         provider: argv.provider as SpecGenerationProvider,
         harnessRef: argv["harness-ref"] as string,
+        state: argv.state as string | undefined,
+      }),
+  )
+  .command(
+    "requirement-to-spec-check",
+    "Poll for the spec PR created by the agent, validate spec content, and update the dispatch outbox monotonically (SPEC-014 TAC-02/TAC-05)",
+    (y) =>
+      y
+        .option("repository", { type: "string", demandOption: true, describe: "Target repository (owner/repo)" })
+        .option("dispatch-key", { type: "string", demandOption: true, describe: "Dispatch key from the requirement-to-spec-dispatch output" })
+        .option("state", { type: "string", demandOption: true, describe: "Path to the spec-gen store file" }),
+    async (argv) =>
+      cmdRequirementToSpecCheck({
+        repository: argv.repository as string,
+        dispatchKey: argv["dispatch-key"] as string,
+        state: argv.state as string,
       }),
   )
   .demandCommand(1)

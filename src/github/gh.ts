@@ -587,6 +587,34 @@ export const github = {
   },
 
   /**
+   * Find the first open or merged PR whose HEAD branch matches the given ref.
+   * Returns undefined when no matching PR exists.
+   * SPEC-014 TAC-02: used to adopt the spec PR created by the agent.
+   */
+  async findPullRequestByHead(
+    repository: string,
+    headBranch: string,
+  ): Promise<{ number: number; headRefOid: string; headRefName: string; state: string; mergedAt: string | null; mergeCommit: { oid: string } | null; url: string } | undefined> {
+    const out = await runGh([
+      "pr", "list", "--repo", repository,
+      "--head", headBranch,
+      "--state", "all",
+      "--json", "number,headRefOid,headRefName,state,mergedAt,mergeCommit,url",
+      "--limit", "1",
+    ]);
+    const results = JSON.parse(out) as Array<{
+      number: number;
+      headRefOid: string;
+      headRefName: string;
+      state: string;
+      mergedAt: string | null;
+      mergeCommit: { oid: string } | null;
+      url: string;
+    }>;
+    return results[0];
+  },
+
+  /**
    * Merge a pull request. Returns the merge commit SHA.
    * TAC-11: used to merge the implementation PR into the delivery branch after
    * CI is green and all reviews are resolved.
