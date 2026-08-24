@@ -1756,12 +1756,19 @@ describe("TAC-18 cmdPersistRunDocumentation integration via injected adapter", (
     expect(content).toContain("src/audit/journalParser.js");
   });
 
-  it("harness-process-audit-receiver workflow exists and calls process-audit-automation", async () => {
+  it("harness-process-audit-receiver satisfies the production managed-receiver preflight", async () => {
     const { readFileSync } = await import("fs");
+    const { validateReceiverContent } = await import("../src/github/gh.js");
     const content = readFileSync(".github/workflows/harness-process-audit-receiver.yml", "utf8");
     expect(content).toContain("repository_dispatch");
     expect(content).toContain("process_audit");
     expect(content).toContain("process-audit-automation.yml");
+    expect(validateReceiverContent(
+      content,
+      "v0.2.2",
+      ".github/workflows/harness-process-audit-receiver.yml",
+      "munichdeveloper/pi-spec-harness",
+    )).toBeUndefined();
   });
 
   // --- Preflight blocks on missing recorder (finding #1) -----------------
