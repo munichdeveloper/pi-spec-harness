@@ -891,7 +891,7 @@ describe("renderReviewFixReference (TAC-12)", () => {
   });
 
   it("matches the checked-in managed workflow reference", async () => {
-    const workflow = await readFile(".github/workflows/harness-review-fix.yml", "utf8");
+    const workflow = (await readFile(".github/workflows/harness-review-fix.yml", "utf8")).replace(/\r\n/g, "\n");
     expect(workflow).toBe(renderReviewFixReference());
     expect(workflow).toContain("resolve-review-fix-comment:");
     expect(workflow).toContain('gh api "repos/$REPOSITORY/pulls/$PULL_REQUEST_NUMBER" --jq \'.head.sha\'');

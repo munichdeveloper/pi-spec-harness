@@ -57,6 +57,7 @@ import {
   upsertGate,
 } from "./state/state-machine.js";
 import type { GateDecisionContext, GateType, HumanGateIssueRef, PhaseId, RunState } from "./state/types.js";
+import { detectStalledRuns } from "./watchdog/stall-detection.js";
 import { SCHEMA_VERSION } from "./state/types.js";
 import { renderRunSnapshot, buildSnapshotFilename } from "./documentation/run-snapshot.js";
 import { generateRunIndex, generateObsidianBase, parseFrontmatter, parseRunIndexEntry } from "./documentation/run-index.js";
@@ -1798,8 +1799,8 @@ async function cmdIssueVerify(
  * TAC-07/TAC-09.
  */
 async function cmdAgentAssign(
-  argv: StoreArgs & { assignee?: string; baseRef?: string },
-): Promise<void> {
+  argv: StoreArgs & { assignee?: string; baseRef?: string; quiet?: boolean },
+): Promise<{ outcome: "dispatched" | "already-in-progress" | "failed" }> {
   const store = await resolveExistingStore(argv);
   let state = await store.load();
 
@@ -1842,8 +1843,8 @@ async function cmdAgentAssign(
     }
     await store.save(state);
     const next = computeNextAction(state);
-    printResult("agent-assign", { available: false, assignee }, next.detail);
-    return;
+    if (!argv.quiet) printResult("agent-assign", { available: false, assignee }, next.detail);
+    return { outcome: "failed" };
   }
 
   const issueBeforeAssignment = await github.viewIssue(argv.repository, state.issue);
@@ -1890,8 +1891,8 @@ async function cmdAgentAssign(
     }
     await store.save(state);
     const next = computeNextAction(state);
-    printResult("agent-assign", { available: true, assigned: false, assignee }, next.detail);
-    return;
+    if (!argv.quiet) printResult("agent-assign", { available: true, assigned: false, assignee }, next.detail);
+    return { outcome: "failed" };
   }
 
   const reconciled = recordVerifiedAgentAssignment(state, {
@@ -1912,11 +1913,60 @@ async function cmdAgentAssign(
   }
   await store.save(state);
   const next = computeNextAction(state);
-  printResult(
-    "agent-assign",
-    { available: true, assigned: true, assignee, baseRef, issueNumber: state.issue, verificationAttempts: verification.attempts },
-    next.detail,
-  );
+  if (!argv.quiet) {
+    printResult(
+      "agent-assign",
+      { available: true, assigned: true, assignee, baseRef, issueNumber: state.issue, verificationAttempts: verification.attempts },
+      next.detail,
+    );
+  }
+  return { outcome: "dispatched" };
+}
+
+async function cmdWatchdogScan(argv: { repository: string; staleAfterMinutes: number; maxNudges: number; dryRun?: boolean }): Promise<void> {
+  const issues = await github.findIssuesWithLabels(argv.repository, [RUN_ISSUE_LABEL]);
+  const parsed = issues.flatMap((issue) => {
+    try { return [{ issueNumber: issue.number, state: parseStateFromBody(issue.body) }]; }
+    catch { return []; }
+  });
+  const findings = detectStalledRuns(parsed.map((entry) => entry.state), new Date().toISOString(), {
+    staleAfterMinutes: argv.staleAfterMinutes,
+    maxNudges: argv.maxNudges,
+  });
+  let nudged = 0;
+  let escalated = 0;
+  if (!argv.dryRun) {
+    for (const finding of findings) {
+      const entry = parsed.find((candidate) => candidate.state.runId === finding.runId);
+      if (!entry) continue;
+      const store = new IssueStateStore(argv.repository, entry.issueNumber);
+      if (finding.disposition === "escalate") {
+        let state = await store.load();
+        const gateId = "watchdog-exhausted";
+        const existing = state.gates.find((gate) => gate.id === gateId);
+        if (!existing || (existing.result !== "pending" && existing.result !== "needs-human")) {
+          state = upsertGate(state, { id: gateId, type: "human", question: `The stall watchdog exhausted ${argv.maxNudges} nudges for '${finding.actionKey}'. Decide how this run should continue.` });
+          state = prepareHumanGateIssue({
+            runState: state, gateId, title: "Stall Watchdog Exhausted",
+            question: state.gates.find((gate) => gate.id === gateId)?.question ?? "",
+            context: [`Run: ${state.runId}`, `Action: ${finding.actionKey}`, `Nudges: ${finding.nudgeCount}`],
+            runIssue: { repository: argv.repository, number: entry.issueNumber, url: `https://github.com/${argv.repository}/issues/${entry.issueNumber}` },
+          });
+          state = await publishHumanGateIssue(state, gateId, (checkpoint) => store.save(checkpoint));
+          await store.save(state);
+          escalated++;
+        }
+        continue;
+      }
+      const assignment = await cmdAgentAssign({ repository: argv.repository, runId: finding.runId, quiet: true });
+      let state = await store.load();
+      const dispatchedAt = new Date().toISOString();
+      state = { ...state, watchdog: { nudges: [...(state.watchdog?.nudges ?? []), { actionKey: finding.actionKey, dispatchedAt, outcome: assignment.outcome }] }, updatedAt: dispatchedAt };
+      await store.save(state);
+      nudged++;
+    }
+  }
+  printResult("watchdog-scan", { scanned: parsed.length, stalled: findings.length, nudged, skipped: parsed.length - findings.length, escalated, dryRun: argv.dryRun ?? false, findings }, findings.length === 0 ? "No stalled runs found." : `${findings.length} stalled run(s) found.`);
 }
 
 /**
@@ -2701,14 +2751,30 @@ const _harnessCli = yargs(hideBin(process.argv))
       storeOptions(y)
         .option("assignee", { type: "string", describe: `Agent login to assign (default: ${DEFAULT_CODING_AGENT})` })
         .option("base-ref", { type: "string", describe: "Delivery branch to set as baseRef (default: state.branch)" }),
-    async (argv) =>
-      cmdAgentAssign({
+    async (argv) => {
+      await cmdAgentAssign({
         state: argv.state,
         repository: argv.repository,
         runId: argv.runId,
         assignee: argv.assignee as string | undefined,
         baseRef: argv["base-ref"] as string | undefined,
-      }),
+      });
+    },
+  )
+  .command(
+    "watchdog-scan",
+    "Deterministically scan open harness runs and nudge overdue automatic work",
+    (y) => y
+      .option("repository", { type: "string", demandOption: true, describe: "owner/repo" })
+      .option("stale-after-minutes", { type: "number", default: 45 })
+      .option("max-nudges", { type: "number", default: 3 })
+      .option("dry-run", { type: "boolean", default: false }),
+    async (argv) => cmdWatchdogScan({
+      repository: argv.repository as string,
+      staleAfterMinutes: argv["stale-after-minutes"] as number,
+      maxNudges: argv["max-nudges"] as number,
+      dryRun: argv["dry-run"] as boolean,
+    }),
   )
   .command(
     "impl-pr-merge",

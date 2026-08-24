@@ -107,6 +107,45 @@ export interface WorkflowTemplateDefinition {
   renderReference(options?: Record<string, unknown>): string;
 }
 
+export const STALL_WATCHDOG_REFERENCE_PATH = ".github/workflows/harness-stall-watchdog.yml";
+export const STALL_WATCHDOG_REFERENCE_MARKER = "# Managed by pi-spec-harness: stall-watchdog-reference v1";
+export const DEFAULT_STALL_WATCHDOG_WORKFLOW_REF = "main";
+
+export interface StallWatchdogReferenceOptions {
+  harnessRef?: string;
+  reusableRepository?: string;
+  staleAfterMinutes?: number;
+  maxNudges?: number;
+}
+
+export function renderStallWatchdogReference(options: StallWatchdogReferenceOptions = {}): string {
+  const harnessRef = options.harnessRef ?? DEFAULT_STALL_WATCHDOG_WORKFLOW_REF;
+  const reusableRepository = options.reusableRepository ?? DEFAULT_REUSABLE_WORKFLOW_REPOSITORY;
+  const staleAfterMinutes = options.staleAfterMinutes ?? 45;
+  const maxNudges = options.maxNudges ?? 3;
+  return `${STALL_WATCHDOG_REFERENCE_MARKER}
+name: Harness Stall Watchdog
+
+on:
+  schedule:
+    - cron: "*/30 * * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  watchdog:
+    uses: ${reusableRepository}/.github/workflows/stall-watchdog.yml@${harnessRef}
+    with:
+      repository: \${{ github.repository }}
+      harness-ref: '${harnessRef}'
+      stale-after-minutes: ${staleAfterMinutes}
+      max-nudges: ${maxNudges}
+`;
+}
+
 // ---------------------------------------------------------------------------
 // SPEC-009: Review-fix reference workflow template
 // ---------------------------------------------------------------------------
@@ -340,6 +379,14 @@ jobs:
 }
 
 export const WORKFLOW_TEMPLATE_CATALOG: WorkflowTemplateDefinition[] = [
+  {
+    name: "stall-watchdog",
+    targetPath: STALL_WATCHDOG_REFERENCE_PATH,
+    marker: STALL_WATCHDOG_REFERENCE_MARKER,
+    reusableWorkflowRepoPath: ".github/workflows/stall-watchdog.yml",
+    defaultRef: DEFAULT_STALL_WATCHDOG_WORKFLOW_REF,
+    renderReference: (options) => renderStallWatchdogReference(options as StallWatchdogReferenceOptions | undefined),
+  },
   {
     name: "bug-triage",
     targetPath: BUG_WORKFLOW_REFERENCE_PATH,

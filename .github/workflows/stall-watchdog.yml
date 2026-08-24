@@ -1,0 +1,50 @@
+name: Stall Watchdog
+
+on:
+  workflow_call:
+    inputs:
+      repository:
+        required: true
+        type: string
+      harness-ref:
+        required: true
+        type: string
+      stale-after-minutes:
+        required: false
+        default: 45
+        type: number
+      max-nudges:
+        required: false
+        default: 3
+        type: number
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: harness-watchdog-${{ inputs.repository }}
+  cancel-in-progress: false
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: munichdeveloper/pi-spec-harness
+          ref: ${{ inputs.harness-ref }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Scan stalled runs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          npm run harness -- watchdog-scan
+          --repository "${{ inputs.repository }}"
+          --stale-after-minutes "${{ inputs.stale-after-minutes }}"
+          --max-nudges "${{ inputs.max-nudges }}"

@@ -328,6 +328,14 @@ export interface RunState {
    * SPEC-012, decision 2.
    */
   documentationSnapshot?: DocumentationSnapshotCheckpoint;
+  /** Append-only history of deterministic stall-watchdog actions (SPEC-011). */
+  watchdog?: {
+    nudges: Array<{
+      actionKey: string;
+      dispatchedAt: string;
+      outcome: "dispatched" | "already-in-progress" | "failed";
+    }>;
+  };
 }
 
 export interface CommandResult<TResult = unknown> {
