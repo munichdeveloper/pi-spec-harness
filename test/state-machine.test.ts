@@ -20,13 +20,17 @@ import {
   upsertGate,
 } from "../src/state/state-machine.js";
 
-function baseRun() {
-  return initRunState({
+function baseRunOptions() {
+  return {
     runId: "test-run-001",
     repository: "munichdeveloper/Immogent",
     requirement: "REQ-001",
     spec: "SPEC-011",
-  });
+  };
+}
+
+function baseRun() {
+  return initRunState(baseRunOptions());
 }
 
 describe("state-machine", () => {
@@ -110,7 +114,13 @@ describe("state-machine", () => {
   });
 
   it("invalidates a canonical delivery merge approval when the bound head changes", () => {
-    let state = bindDeliveryPullRequest(baseRun(), 60, "a".repeat(40));
+    // This test verifies the legacy label-authorizes-auto-merge policy where
+    // a pre-existing passed gate is required. Use explicit policy so the test
+    // is not affected by the SPEC-015 merge-as-approval default. TAC-07.
+    let state = bindDeliveryPullRequest(
+      initRunState({ ...baseRunOptions(), prApprovalPolicy: "label-authorizes-auto-merge" }),
+      60, "a".repeat(40),
+    );
     state = upsertGate(state, { id: "delivery-merge-approval", type: "human", question: "Merge?" });
     state = resolveGate(state, "delivery-merge-approval", {
       result: "passed",

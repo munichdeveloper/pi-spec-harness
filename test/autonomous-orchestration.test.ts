@@ -541,8 +541,10 @@ describe("TAC-04 orchestrator", () => {
   it("event order: merge-first — persisted evidence is pending until approval arrives", async () => {
     const approvedHeadSha = sha("a");
     const gateId = `merge-approval-pr47-sha${approvedHeadSha.slice(0, 8)}`;
+    // Use legacy label policy so the gate-required behavior is testable here.
+    // SPEC-015 TAC-07: legacy runs must continue to work unchanged.
     let state: RunState = {
-      ...baseRun(),
+      ...baseRun({ prApprovalPolicy: "label-authorizes-auto-merge" }),
       phase: "merge",
       deliveryPullRequest: 47,
       deliveryHeadSha: approvedHeadSha,

@@ -11,12 +11,16 @@ import {
   PROCESS_AUDIT_RECEIVER_MARKER,
   PROCESS_AUDIT_RECEIVER_PATH,
   DEFAULT_PROCESS_AUDIT_RECEIVER_WORKFLOW_REF,
+  REQUIREMENT_TO_SPEC_REFERENCE_MARKER,
+  REQUIREMENT_TO_SPEC_REFERENCE_PATH,
+  DEFAULT_REQUIREMENT_TO_SPEC_WORKFLOW_REF,
   SPEC_TO_ISSUE_REFERENCE_MARKER,
   SPEC_TO_ISSUE_REFERENCE_PATH,
   WORKFLOW_TEMPLATE_CATALOG,
   findWorkflowTemplate,
   renderLabelApprovalBundlingReference,
   renderProcessAuditReceiver,
+  renderRequirementToSpecReference,
   renderReviewFixReference,
   renderSpecToIssueReference,
   resolveWorkflowInstallPlan,
@@ -218,5 +222,76 @@ describe("SPEC-005: process-audit-receiver catalog entry (Finding 1)", () => {
     const rendered = renderProcessAuditReceiver();
     expect(decideWorkflowInstall(undefined, rendered, PROCESS_AUDIT_RECEIVER_MARKER)).toBe("create");
     expect(decideWorkflowInstall(rendered, rendered, PROCESS_AUDIT_RECEIVER_MARKER)).toBe("noop");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// SPEC-014: requirement-to-spec catalog entry
+// ---------------------------------------------------------------------------
+
+describe("SPEC-014: requirement-to-spec catalog entry", () => {
+  it("TAC-08: is registered in the catalog with the correct path, marker and reusable workflow path", () => {
+    const entry = findWorkflowTemplate("requirement-to-spec");
+    expect(entry).toBeDefined();
+    expect(entry!.targetPath).toBe(REQUIREMENT_TO_SPEC_REFERENCE_PATH);
+    expect(entry!.marker).toBe(REQUIREMENT_TO_SPEC_REFERENCE_MARKER);
+    expect(entry!.reusableWorkflowRepoPath).toBe(".github/workflows/requirement-to-spec.yml");
+    expect(entry!.defaultRef).toBe(DEFAULT_REQUIREMENT_TO_SPEC_WORKFLOW_REF);
+  });
+
+  it("is a valid installable template", () => {
+    expect(() => resolveWorkflowInstallPlan({ installWorkflows: "requirement-to-spec" })).not.toThrow();
+    expect(resolveWorkflowInstallPlan({ installWorkflows: "requirement-to-spec" })).toEqual(["requirement-to-spec"]);
+  });
+
+  it("renders a minimal reference with default options", () => {
+    const rendered = renderRequirementToSpecReference();
+    expect(rendered).toContain(REQUIREMENT_TO_SPEC_REFERENCE_MARKER);
+    expect(rendered).toContain("push:");
+    expect(rendered).toContain("docs/requirements/**/*.md");
+    expect(rendered).toContain(`requirement-to-spec.yml@${DEFAULT_REQUIREMENT_TO_SPEC_WORKFLOW_REF}`);
+    expect(rendered).toContain(`harness-ref: '${DEFAULT_REQUIREMENT_TO_SPEC_WORKFLOW_REF}'`);
+    expect(rendered).toContain("provider: 'github-copilot'");
+  });
+
+  it("renders a reference with claude-code provider", () => {
+    const rendered = renderRequirementToSpecReference({ provider: "claude-code", harnessRef: "v1.0.0" });
+    expect(rendered).toContain("provider: 'claude-code'");
+    expect(rendered).toContain("requirement-to-spec.yml@v1.0.0");
+    expect(rendered).toContain("harness-ref: 'v1.0.0'");
+  });
+
+  it("renders with configurable requirement-path-glob and default-branch", () => {
+    const rendered = renderRequirementToSpecReference({
+      requirementPathGlob: "requirements/**/*.md",
+      defaultBranch: "trunk",
+    });
+    expect(rendered).toContain("requirements/**/*.md");
+    expect(rendered).toContain("branches: [trunk]");
+  });
+
+  it("minimal permissions: only contents:read and issues:write (no secrets:inherit)", () => {
+    const rendered = renderRequirementToSpecReference();
+    expect(rendered).toContain("contents: read");
+    expect(rendered).toContain("issues: write");
+    expect(rendered).not.toContain("secrets: inherit");
+    expect(rendered).not.toContain("contents: write");
+  });
+
+  it("uses non-cancelling concurrency to avoid dropping queued runs", () => {
+    const rendered = renderRequirementToSpecReference();
+    expect(rendered).toContain("cancel-in-progress: false");
+  });
+
+  it("rendered reference is parseable by decideWorkflowInstall", () => {
+    const rendered = renderRequirementToSpecReference();
+    expect(decideWorkflowInstall(undefined, rendered, REQUIREMENT_TO_SPEC_REFERENCE_MARKER)).toBe("create");
+    expect(decideWorkflowInstall(rendered, rendered, REQUIREMENT_TO_SPEC_REFERENCE_MARKER)).toBe("noop");
+  });
+
+  it("catalog entry renderReference() matches renderRequirementToSpecReference() for identical params", () => {
+    const entry = findWorkflowTemplate("requirement-to-spec")!;
+    const options = { harnessRef: "v1.2.3", provider: "claude-code" };
+    expect(entry.renderReference(options)).toBe(renderRequirementToSpecReference(options));
   });
 });

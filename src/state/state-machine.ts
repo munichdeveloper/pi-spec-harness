@@ -1,5 +1,5 @@
 import { nowIso } from "./store.js";
-import type { CanonicalRunId, GateDecisionContext, GateRecord, GateResult, GateType, IterationRecord, PhaseId, ReviewAutomationScope, ReviewRecord, ReviewRemediationDispatch, ReviewThreadRecord, ReviewThreadStatus, RunState } from "./types.js";
+import type { CanonicalRunId, GateDecisionContext, GateRecord, GateResult, GateType, IterationRecord, PhaseId, PrApprovalPolicy, ReviewAutomationScope, ReviewRecord, ReviewRemediationDispatch, ReviewThreadRecord, ReviewThreadStatus, RunState, SpecDispatchRecord, SpecGenerationClassification } from "./types.js";
 import { SCHEMA_VERSION } from "./types.js";
 
 export const PHASE_ORDER: PhaseId[] = [
@@ -45,6 +45,12 @@ export interface InitRunOptions {
   deliveryPullRequest?: number;
   /** Delivery PR HEAD SHA if already known at init time. */
   deliveryHeadSha?: string;
+  /**
+   * PR approval policy for this run. Defaults to `"merge-is-approval"` for
+   * new runs (SPEC-015). Set to `"label-authorizes-auto-merge"` to retain the
+   * legacy gate-label requirement.
+   */
+  prApprovalPolicy?: PrApprovalPolicy;
 }
 
 export function initRunState(options: InitRunOptions): RunState {
@@ -61,6 +67,7 @@ export function initRunState(options: InitRunOptions): RunState {
     specPath: options.specPath,
     deliveryPullRequest: options.deliveryPullRequest,
     deliveryHeadSha: options.deliveryHeadSha,
+    prApprovalPolicy: options.prApprovalPolicy ?? "merge-is-approval",
     phase: "requirement",
     createdAt: timestamp,
     updatedAt: timestamp,
@@ -254,7 +261,7 @@ export function classifyDeliveryPrMergeEffect(
 
 export function recordDeliveryMergeEffect(
   state: RunState,
-  effect: { pullRequest: number; approvedHeadSha: string; mergeCommitSha: string; mergedAt: string },
+  effect: { pullRequest: number; approvedHeadSha: string; mergeCommitSha: string; mergedAt: string; mergedBy?: string },
 ): RunState {
   if (!Number.isInteger(effect.pullRequest) || effect.pullRequest <= 0) {
     throw new Error("delivery pull request number must be a positive integer");
@@ -299,7 +306,30 @@ export function recordDeliveryMergeEffect(
     return state;
   }
 
-  const mergeGate = findPassedMergeApprovalGate(state);
+  // SPEC-015: for `merge-is-approval` runs the merge event itself is the
+  // approval decision. Auto-create and immediately pass the canonical gate so
+  // that downstream `hasPersistedDeliveryMergeEvidence` checks continue to
+  // work without requiring a pre-existing label approval. TAC-01/TAC-03.
+  let workingState = state;
+  if (isMergeAsApproval(state) && !findPassedMergeApprovalGate(state)) {
+    const gateId = `delivery-merge-approval-pr${effect.pullRequest}`;
+    workingState = upsertGate(workingState, {
+      id: gateId,
+      type: "merge",
+      question: `Delivery PR #${effect.pullRequest} merged at ${approvedHeadSha}`,
+    });
+    workingState = resolveGate(workingState, gateId, {
+      result: "passed",
+      decision: {
+        approved: true,
+        by: effect.mergedBy ?? "merge-event",
+        at: effect.mergedAt,
+        note: "merge-as-approval: merge event is the delivery approval",
+      },
+    });
+  }
+
+  const mergeGate = findPassedMergeApprovalGate(workingState);
   if (!mergeGate) {
     throw new Error("cannot record delivery merge effect without a passed merge approval gate");
   }
@@ -311,7 +341,7 @@ export function recordDeliveryMergeEffect(
     `merge-commit:${effect.mergeCommitSha.toLowerCase()}`,
     `merged-at:${effect.mergedAt}`,
   ].filter((item, index, items) => items.indexOf(item) === index);
-  const withEvidence = resolveGate(state, mergeGate.id, { evidence: mergeEvidence });
+  const withEvidence = resolveGate(workingState, mergeGate.id, { evidence: mergeEvidence });
   return {
     ...withEvidence,
     deliveryMergeCommitSha: effect.mergeCommitSha.toLowerCase(),
@@ -678,11 +708,14 @@ export function computeNextAction(state: RunState): NextAction {
 
   if (state.phase === "merge" && !hasPersistedDeliveryMergeEvidence(state)) {
     const mergeGate = findPassedMergeApprovalGate(state);
+    const mergeIsApproval = isMergeAsApproval(state);
     return {
       action: "await-technical-gate",
       detail: mergeGate
         ? `Delivery PR merge effect for gate '${mergeGate.id}' is not yet persisted; wait for the bound PR merge to be verified before completing the run.`
-        : "Delivery PR merge approval and persisted merge effect are both required before completing the run.",
+        : mergeIsApproval
+          ? "Delivery PR merge event is required (merge-as-approval policy); the merge itself will record approval and complete this phase."
+          : "Delivery PR merge approval and persisted merge effect are both required before completing the run.",
       gate: mergeGate,
     };
   }
@@ -946,4 +979,99 @@ export function detectSelfHosting(
   targetRepository: string,
 ): boolean {
   return harnessSourceRepository.toLowerCase() === targetRepository.toLowerCase();
+}
+
+// ---------------------------------------------------------------------------
+// SPEC-015: PR approval policy helpers (pure functions)
+// ---------------------------------------------------------------------------
+
+/**
+ * Resolve the effective PR approval policy for a run.
+ * - Runs with an explicit `prApprovalPolicy` field honour that value.
+ * - Legacy runs (field absent) default to `"label-authorizes-auto-merge"` to
+ *   preserve prior behavior. SPEC-015, TAC-07.
+ */
+export function effectivePrApprovalPolicy(state: RunState): PrApprovalPolicy {
+  return state.prApprovalPolicy ?? "label-authorizes-auto-merge";
+}
+
+/**
+ * Return true when the run uses `"merge-is-approval"` and therefore does NOT
+ * require a separate gate-label before entering the merge phase.
+ * SPEC-015, TAC-01.
+ */
+export function isMergeAsApproval(state: RunState): boolean {
+  return effectivePrApprovalPolicy(state) === "merge-is-approval";
+}
+
+// ---------------------------------------------------------------------------
+// SPEC-014: Spec-generation outbox helpers (pure functions)
+// ---------------------------------------------------------------------------
+
+/**
+ * Build the stable deduplication key for one spec-generation dispatch.
+ * Key = `<repository>:<req-id>:<source-sha>` (lower-cased).
+ * SPEC-014, decision 2.
+ */
+export function buildSpecDispatchKey(repository: string, requirementId: string, sourceSha: string): string {
+  return `${repository.toLowerCase()}:${requirementId.toLowerCase()}:${sourceSha.toLowerCase()}`;
+}
+
+/**
+ * Classify a requirement against the current spec-generation outbox.
+ * Pure — no I/O, no GitHub calls. SPEC-014, TAC-01 / decision 1.
+ *
+ * - `"eligible"`: no prior dispatch exists for this repository/req/sha triple.
+ * - `"already-dispatched"`: a dispatch is pending or in progress for this exact key.
+ * - `"already-materialized"`: the spec PR was already merged.
+ * - `"blocked"`: a dispatch exists for the same req but a different (older) SHA
+ *   that is not yet merged; caller must cancel it first.
+ */
+export function classifyRequirementForSpecGeneration(
+  outbox: SpecDispatchRecord[] | undefined,
+  repository: string,
+  requirementId: string,
+  sourceSha: string,
+): SpecGenerationClassification {
+  if (!outbox || outbox.length === 0) return "eligible";
+
+  const key = buildSpecDispatchKey(repository, requirementId, sourceSha);
+
+  for (const record of outbox) {
+    if (record.dispatchKey === key) {
+      if (record.status === "pr-merged") return "already-materialized";
+      return "already-dispatched";
+    }
+    // Same req, different SHA and not yet merged → must cancel old draft first.
+    const sameReq =
+      record.requirementId.toLowerCase() === requirementId.toLowerCase() &&
+      record.dispatchKey.startsWith(`${repository.toLowerCase()}:${requirementId.toLowerCase()}:`);
+    if (sameReq && record.status !== "pr-merged" && record.status !== "cancelled") {
+      return "blocked";
+    }
+  }
+
+  return "eligible";
+}
+
+/**
+ * Upsert a spec-dispatch record into the run-state outbox.
+ * A matching `dispatchKey` is updated in-place (idempotent);
+ * a new key is appended. Pure; no I/O. SPEC-014, decision 2.
+ */
+export function upsertSpecDispatch(state: RunState, record: SpecDispatchRecord): RunState {
+  const existing = (state.specGenerationOutbox ?? []).findIndex((r) => r.dispatchKey === record.dispatchKey);
+  const outbox =
+    existing >= 0
+      ? (state.specGenerationOutbox ?? []).map((r, i) => (i === existing ? record : r))
+      : [...(state.specGenerationOutbox ?? []), record];
+  return { ...state, specGenerationOutbox: outbox, updatedAt: nowIso() };
+}
+
+/**
+ * Find a spec-dispatch record by its dispatch key.
+ * SPEC-014, decision 2.
+ */
+export function findSpecDispatch(state: RunState, dispatchKey: string): SpecDispatchRecord | undefined {
+  return (state.specGenerationOutbox ?? []).find((r) => r.dispatchKey === dispatchKey);
 }
