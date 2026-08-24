@@ -1,16 +1,13 @@
+# Managed by pi-spec-harness: process-audit-receiver-reference v1
 name: Harness Process Audit Receiver
 
-# SPEC-005 process_audit receiver for the harness repository.
+# SPEC-005 process_audit receiver.
 #
 # Receives `repository_dispatch` events of type `process_audit` dispatched by
 # the harness run-documentation-finalizer (or any other SPEC-005-compliant
-# harness producer) and delegates to the reusable process-audit-automation
-# workflow for validated, idempotent, conflict-safe journal recording.
-#
-# For target repositories that use the harness: install via
-# `harness install process-audit-receiver` — the installed file calls the
-# remote reusable workflow at a pinned, immutable harness ref so it works
-# without any additional files in the target repository.
+# harness producer) and delegates to the immutable reusable workflow release.
+# The harness repository intentionally uses the same managed receiver contract
+# as every consumer repository so the documentation finalizer can attest it.
 
 on:
   repository_dispatch:
@@ -21,16 +18,10 @@ permissions:
 
 jobs:
   record:
-    uses: ./.github/workflows/process-audit-automation.yml
+    uses: munichdeveloper/pi-spec-harness/.github/workflows/process-audit-automation.yml@v0.2.2
     with:
-      # Pass the envelope-v1 audit object as a JSON string.
-      # toJson() serialises the already-parsed GitHub event object; the
-      # payload value is never interpolated into shell commands.
       audit-payload-json: ${{ toJson(github.event.client_payload.audit) }}
-      journal-dir: docs/process-audit/journal
-      # Use github.sha so that the recorder scripts are always the same
-      # version as the workflow files currently executing, avoiding a
-      # dependency on the mutable 'main' branch ref.
-      harness-ref: ${{ github.sha }}
+      journal-dir: 'docs/process-audit/journal'
+      harness-ref: 'v0.2.2'
     permissions:
       contents: write
