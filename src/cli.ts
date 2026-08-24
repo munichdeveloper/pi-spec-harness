@@ -30,7 +30,6 @@ import { DEFAULT_CODING_AGENT, extractReferencedIssueNumbers, normalizeAgentLogi
 import { confirmReviewRemediationDispatch, prepareReviewRemediationDispatch, processReviewEvent, validateSelfHostingRef } from "./review/review-fix.js";
 import {
   buildSpecDispatchOrder,
-  deriveSpecPath,
   isRequirementEligible,
   parseRequirementFrontmatter,
 } from "./spec/requirement-to-spec.js";
