@@ -73,6 +73,7 @@ describe("state-machine", () => {
       pullRequest: 60,
       approvedHeadSha,
       mergeCommitSha: "b".repeat(40),
+      mergedBy: "human-user",
       mergedAt: "2026-08-22T16:31:56Z",
     });
 
@@ -81,7 +82,13 @@ describe("state-machine", () => {
   });
 
   it("marks an approved delivery merge without persisted effect for reconciliation", () => {
-    let state = bindDeliveryPullRequest(baseRun(), 60, "a".repeat(40));
+    // Use explicit legacy policy: a pre-existing passed gate is required.
+    // SPEC-015 TAC-07: label-authorizes-auto-merge must not be affected by
+    // the new merge-is-approval default.
+    let state = bindDeliveryPullRequest(
+      initRunState({ ...baseRunOptions(), prApprovalPolicy: "label-authorizes-auto-merge" }),
+      60, "a".repeat(40),
+    );
     state = upsertGate(state, { id: "delivery-merge-approval", type: "human", question: "Merge?" });
     expect(needsDeliveryMergeReconciliation(state)).toBe(false);
 
@@ -95,6 +102,7 @@ describe("state-machine", () => {
       pullRequest: 60,
       approvedHeadSha: "a".repeat(40),
       mergeCommitSha: "b".repeat(40),
+      mergedBy: "human-user",
       mergedAt: "2026-08-22T16:31:56Z",
     });
     expect(needsDeliveryMergeReconciliation(state)).toBe(false);
@@ -134,6 +142,7 @@ describe("state-machine", () => {
       pullRequest: 60,
       approvedHeadSha: "b".repeat(40),
       mergeCommitSha: "c".repeat(40),
+      mergedBy: "human-user",
       mergedAt: "2026-08-22T16:31:56Z",
     })).toThrow(/passed merge approval gate/);
   });
@@ -316,6 +325,7 @@ describe("state-machine", () => {
       pullRequest: 47,
       approvedHeadSha,
       mergeCommitSha,
+      mergedBy: "human-user",
       mergedAt: "2026-08-18T13:19:11Z",
     });
 
@@ -323,6 +333,7 @@ describe("state-machine", () => {
       pullRequest: 47,
       approvedHeadSha,
       mergeCommitSha,
+      mergedBy: "human-user",
       mergedAt: "2026-08-18T13:19:11Z",
     })).toBe(state);
     expect(state.deliveryMergeCommitSha).toBe(mergeCommitSha);

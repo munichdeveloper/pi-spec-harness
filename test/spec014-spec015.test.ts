@@ -106,6 +106,7 @@ describe("SPEC-015: prApprovalPolicy", () => {
         pullRequest: 42,
         approvedHeadSha: headSha,
         mergeCommitSha: sha("b"),
+      mergedBy: "human-user",
         mergedAt: "2026-08-24T10:00:00Z",
       }),
     ).toThrow(/passed merge approval gate/);
@@ -113,8 +114,10 @@ describe("SPEC-015: prApprovalPolicy", () => {
 
   it("TAC-02: unmerged PR is never treated as approved (no persisted evidence = pending)", () => {
     const state = bindDeliveryPullRequest(baseRun("merge-is-approval"), 42, sha("a"));
-    // No recordDeliveryMergeEffect called → no evidence.
-    expect(needsDeliveryMergeReconciliation(state)).toBe(false);
+    // No recordDeliveryMergeEffect called → no evidence, so not yet approved.
+    // For merge-is-approval runs the reconciler must poll GitHub to detect the
+    // merge event, so needsDeliveryMergeReconciliation returns true (pending check).
+    expect(needsDeliveryMergeReconciliation(state)).toBe(true);
     expect(state.deliveryMergeCommitSha).toBeUndefined();
   });
 
@@ -127,6 +130,7 @@ describe("SPEC-015: prApprovalPolicy", () => {
         pullRequest: 42,
         approvedHeadSha: sha("f"), // valid hex but wrong head
         mergeCommitSha: sha("b"),
+      mergedBy: "human-user",
         mergedAt: "2026-08-24T10:00:00Z",
       }),
     ).toThrow(/expected approved head/);
@@ -139,6 +143,7 @@ describe("SPEC-015: prApprovalPolicy", () => {
       pullRequest: 42,
       approvedHeadSha: headSha,
       mergeCommitSha: sha("b"),
+      mergedBy: "human-user",
       mergedAt: "2026-08-24T10:00:00Z",
     };
     state = recordDeliveryMergeEffect(state, effect);
@@ -162,6 +167,7 @@ describe("SPEC-015: prApprovalPolicy", () => {
       pullRequest: 42,
       approvedHeadSha: headSha,
       mergeCommitSha: sha("b"),
+      mergedBy: "human-user",
       mergedAt: "2026-08-24T10:00:00Z",
     });
 
@@ -399,5 +405,155 @@ describe("SPEC-014: buildSpecDispatchOrder", () => {
       provider: "claude-code",
     });
     expect(order.provider).toBe("claude-code");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Additional production-path tests (remediation of remaining feedback items)
+// ---------------------------------------------------------------------------
+
+describe("SPEC-014: deriveSpecPath separator (REQ-014-agent-generated-software-spec)", () => {
+  it("produces the correct slug-separated filename for a composite REQ id", () => {
+    const path = deriveSpecPath("REQ-014-agent-generated-software-spec");
+    // Must be SPEC-014-agent-generated-software-spec.md, not SPEC-014agent-...
+    expect(path).toBe("docs/specifications/SPEC-014-agent-generated-software-spec.md");
+    expect(path).not.toMatch(/SPEC-014[^-]/);
+  });
+});
+
+describe("SPEC-014: upsertSpecDispatch monotonicity", () => {
+  it("allows a forward status transition (prepared → dispatched)", () => {
+    let state = baseRun();
+    const key = buildDispatchKey("munichdeveloper/Immogent", "REQ-014", sha("1"));
+    const prepared: SpecDispatchRecord = {
+      dispatchKey: key, requirementId: "REQ-014", sourceSha: sha("1"),
+      repository: "munichdeveloper/Immogent", requirementPath: "docs/requirements/REQ-014.md",
+      targetSpecPath: "docs/specifications/SPEC-014.md", agentBranch: "harness/spec-gen-req-014",
+      provider: "github-copilot", status: "prepared", dispatchedAt: "2026-08-24T10:00:00Z",
+    };
+    state = upsertSpecDispatch(state, prepared);
+    const dispatched = { ...prepared, status: "dispatched" as const };
+    state = upsertSpecDispatch(state, dispatched);
+    expect(findSpecDispatch(state, key)?.status).toBe("dispatched");
+  });
+
+  it("rejects a backward status transition (pr-merged → dispatched)", () => {
+    let state = baseRun();
+    const key = buildDispatchKey("munichdeveloper/Immogent", "REQ-014", sha("1"));
+    const merged: SpecDispatchRecord = {
+      dispatchKey: key, requirementId: "REQ-014", sourceSha: sha("1"),
+      repository: "munichdeveloper/Immogent", requirementPath: "docs/requirements/REQ-014.md",
+      targetSpecPath: "docs/specifications/SPEC-014.md", agentBranch: "harness/spec-gen-req-014",
+      provider: "github-copilot", status: "pr-merged", dispatchedAt: "2026-08-24T10:00:00Z",
+    };
+    state = upsertSpecDispatch(state, merged);
+    const stale = { ...merged, status: "dispatched" as const };
+    expect(() => upsertSpecDispatch(state, stale)).toThrow(/status downgrade/);
+  });
+
+  it("allows same-status upsert (idempotent)", () => {
+    let state = baseRun();
+    const key = buildDispatchKey("munichdeveloper/Immogent", "REQ-014", sha("1"));
+    const record: SpecDispatchRecord = {
+      dispatchKey: key, requirementId: "REQ-014", sourceSha: sha("1"),
+      repository: "munichdeveloper/Immogent", requirementPath: "docs/requirements/REQ-014.md",
+      targetSpecPath: "docs/specifications/SPEC-014.md", agentBranch: "harness/spec-gen-req-014",
+      provider: "github-copilot", status: "dispatched", dispatchedAt: "2026-08-24T10:00:00Z",
+    };
+    state = upsertSpecDispatch(state, record);
+    state = upsertSpecDispatch(state, record);
+    expect(findSpecDispatch(state, key)?.status).toBe("dispatched");
+  });
+});
+
+describe("SPEC-015: mergedBy actor validation", () => {
+  it("rejects a Bot actor by type", () => {
+    const headSha = sha("a");
+    const state = bindDeliveryPullRequest(baseRun("merge-is-approval"), 42, headSha);
+    expect(() =>
+      recordDeliveryMergeEffect(state, {
+        pullRequest: 42,
+        approvedHeadSha: headSha,
+        mergeCommitSha: sha("b"),
+        mergedAt: "2026-08-24T10:00:00Z",
+        mergedBy: "auto-merge-bot",
+        mergedByType: "Bot",
+      }),
+    ).toThrow(/non-human actor/);
+  });
+
+  it("rejects a login ending in [bot] even without explicit type", () => {
+    const headSha = sha("a");
+    const state = bindDeliveryPullRequest(baseRun("merge-is-approval"), 42, headSha);
+    expect(() =>
+      recordDeliveryMergeEffect(state, {
+        pullRequest: 42,
+        approvedHeadSha: headSha,
+        mergeCommitSha: sha("b"),
+        mergedAt: "2026-08-24T10:00:00Z",
+        mergedBy: "github-actions[bot]",
+      }),
+    ).toThrow(/non-human actor/);
+  });
+
+  it("accepts a User actor and records the login in the gate decision", () => {
+    const headSha = sha("a");
+    let state = bindDeliveryPullRequest(baseRun("merge-is-approval"), 42, headSha);
+    state = recordDeliveryMergeEffect(state, {
+      pullRequest: 42,
+      approvedHeadSha: headSha,
+      mergeCommitSha: sha("b"),
+      mergedAt: "2026-08-24T10:00:00Z",
+      mergedBy: "alice",
+      mergedByType: "User",
+    });
+    const gate = state.gates.find((g) => isMergeApprovalGate(g));
+    expect(gate?.decision?.by).toBe("alice");
+  });
+
+  it("rejects an empty mergedBy login", () => {
+    const headSha = sha("a");
+    const state = bindDeliveryPullRequest(baseRun("merge-is-approval"), 42, headSha);
+    expect(() =>
+      recordDeliveryMergeEffect(state, {
+        pullRequest: 42,
+        approvedHeadSha: headSha,
+        mergeCommitSha: sha("b"),
+        mergedAt: "2026-08-24T10:00:00Z",
+        mergedBy: "",
+      }),
+    ).toThrow(/non-empty mergedBy login/);
+  });
+});
+
+describe("SPEC-015: needsDeliveryMergeReconciliation for merge-is-approval runs", () => {
+  it("returns true for a bound merge-is-approval run awaiting merge (no gate needed)", () => {
+    const state = bindDeliveryPullRequest(baseRun("merge-is-approval"), 42, sha("a"));
+    // No gate required — reconciler should poll to detect the merge event.
+    expect(needsDeliveryMergeReconciliation(state)).toBe(true);
+  });
+
+  it("returns false once merge evidence is persisted", () => {
+    const headSha = sha("a");
+    let state = bindDeliveryPullRequest(baseRun("merge-is-approval"), 42, headSha);
+    state = recordDeliveryMergeEffect(state, {
+      pullRequest: 42,
+      approvedHeadSha: headSha,
+      mergeCommitSha: sha("b"),
+      mergedAt: "2026-08-24T10:00:00Z",
+      mergedBy: "alice",
+    });
+    expect(needsDeliveryMergeReconciliation(state)).toBe(false);
+  });
+
+  it("still requires a pre-existing gate for label-authorizes-auto-merge runs", () => {
+    let state = bindDeliveryPullRequest(
+      initRunState({ ...{ runId: "r", repository: "o/r", requirement: "REQ-001", spec: "SPEC-001" }, prApprovalPolicy: "label-authorizes-auto-merge" }),
+      42, sha("a"),
+    );
+    expect(needsDeliveryMergeReconciliation(state)).toBe(false);
+    state = upsertGate(state, { id: "delivery-merge-approval", type: "human", question: "Merge?" });
+    state = resolveGate(state, "delivery-merge-approval", { result: "passed", decision: { approved: true, by: "alice", at: "2026-08-24T10:00:00Z" } });
+    expect(needsDeliveryMergeReconciliation(state)).toBe(true);
   });
 });

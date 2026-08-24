@@ -219,11 +219,14 @@ export function findPassedMergeApprovalGate(state: RunState): GateRecord | undef
 export function needsDeliveryMergeReconciliation(state: RunState): boolean {
   const deliveryPullRequest = state.deliveryPullRequest ?? state.pullRequest;
   const deliveryHeadSha = state.deliveryHeadSha ?? state.pullRequestHeadSha;
+  // For `merge-is-approval` runs the gate is auto-created by recordDeliveryMergeEffect
+  // itself, so we must not gate reconciliation on a pre-existing passed gate.
+  const approvalReady = isMergeAsApproval(state) || Boolean(findPassedMergeApprovalGate(state));
   return Boolean(
     deliveryPullRequest !== undefined &&
     deliveryHeadSha &&
     !state.deliveryMergeCommitSha &&
-    findPassedMergeApprovalGate(state),
+    approvalReady,
   );
 }
 
@@ -261,7 +264,20 @@ export function classifyDeliveryPrMergeEffect(
 
 export function recordDeliveryMergeEffect(
   state: RunState,
-  effect: { pullRequest: number; approvedHeadSha: string; mergeCommitSha: string; mergedAt: string; mergedBy?: string },
+  effect: {
+    pullRequest: number;
+    approvedHeadSha: string;
+    mergeCommitSha: string;
+    mergedAt: string;
+    /** Login of the GitHub user who merged the PR. Required; must not be a Bot or App actor. */
+    mergedBy: string;
+    /**
+     * Actor type from GitHub's API (e.g. "User", "Bot", "App").
+     * When provided and not "User", the merge is rejected as unauthorised.
+     * SPEC-015, TAC-02.
+     */
+    mergedByType?: string;
+  },
 ): RunState {
   if (!Number.isInteger(effect.pullRequest) || effect.pullRequest <= 0) {
     throw new Error("delivery pull request number must be a positive integer");
@@ -271,6 +287,22 @@ export function recordDeliveryMergeEffect(
   }
   if (!/^[0-9a-f]{40}$/i.test(effect.mergeCommitSha)) {
     throw new Error("delivery merge commit SHA must be a full 40-character Git SHA");
+  }
+
+  // SPEC-015 TAC-02: reject Bot/App mergers — only human User actors may
+  // constitute a merge-as-approval decision.
+  const mergerLogin = effect.mergedBy.trim();
+  if (!mergerLogin) {
+    throw new Error("delivery merge effect requires a non-empty mergedBy login");
+  }
+  const isBotByType =
+    effect.mergedByType !== undefined &&
+    effect.mergedByType !== "User";
+  const isBotByLogin = mergerLogin.endsWith("[bot]");
+  if (isBotByType || isBotByLogin) {
+    throw new Error(
+      `delivery PR #${effect.pullRequest} was merged by a non-human actor '${mergerLogin}' (type: ${effect.mergedByType ?? "unknown"}); merge-as-approval requires a human User`,
+    );
   }
 
   const deliveryPullRequest = state.deliveryPullRequest ?? state.pullRequest;
@@ -322,7 +354,7 @@ export function recordDeliveryMergeEffect(
       result: "passed",
       decision: {
         approved: true,
-        by: effect.mergedBy ?? "merge-event",
+        by: effect.mergedBy,
         at: effect.mergedAt,
         note: "merge-as-approval: merge event is the delivery approval",
       },
@@ -1059,8 +1091,29 @@ export function classifyRequirementForSpecGeneration(
  * A matching `dispatchKey` is updated in-place (idempotent);
  * a new key is appended. Pure; no I/O. SPEC-014, decision 2.
  */
+/**
+ * Monotonic status ordering for spec-dispatch records.
+ * A stale or delayed write may not downgrade a record to an earlier status.
+ * SPEC-014, TAC-06 (idempotency / checkpoint ordering).
+ */
+const SPEC_DISPATCH_STATUS_ORDER: Record<SpecDispatchRecord["status"], number> = {
+  prepared: 0,
+  dispatched: 1,
+  "pr-open": 2,
+  "pr-merged": 3,
+  cancelled: 4,
+};
+
 export function upsertSpecDispatch(state: RunState, record: SpecDispatchRecord): RunState {
   const existing = (state.specGenerationOutbox ?? []).findIndex((r) => r.dispatchKey === record.dispatchKey);
+  if (existing >= 0) {
+    const current = (state.specGenerationOutbox as SpecDispatchRecord[])[existing];
+    if (SPEC_DISPATCH_STATUS_ORDER[record.status] < SPEC_DISPATCH_STATUS_ORDER[current.status]) {
+      throw new Error(
+        `upsertSpecDispatch: refusing status downgrade from '${current.status}' to '${record.status}' for key '${record.dispatchKey}'`,
+      );
+    }
+  }
   const outbox =
     existing >= 0
       ? (state.specGenerationOutbox ?? []).map((r, i) => (i === existing ? record : r))

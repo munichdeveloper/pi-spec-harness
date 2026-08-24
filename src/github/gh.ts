@@ -305,7 +305,7 @@ export const github = {
 
   async viewPullRequest(repository: string, number: number) {
     const out = await runGh(["pr", "view", String(number), "--repo", repository, "--json",
-      "number,title,body,state,url,mergeable,mergeStateStatus,reviewDecision,statusCheckRollup,headRefOid,baseRefName,headRefName,mergedAt,mergeCommit"]);
+      "number,title,body,state,url,mergeable,mergeStateStatus,reviewDecision,statusCheckRollup,headRefOid,baseRefName,headRefName,mergedAt,mergeCommit,mergedBy"]);
     return JSON.parse(out) as Record<string, unknown>;
   },
 

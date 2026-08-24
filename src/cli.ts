@@ -28,6 +28,12 @@ import { runSpecToIssuePipeline } from "./spec/spec-to-issue-pipeline.js";
 import { IssueStateStore, RUN_ISSUE_LABEL, ensureRunIssue, findRunIssue, findRunIssueByImplementationIssue, findRunIssuesByPullRequest, parseStateFromBody } from "./state/issue-store.js";
 import { DEFAULT_CODING_AGENT, extractReferencedIssueNumbers, normalizeAgentLogin, pollForAgentAssignment, recordVerifiedAgentAssignment } from "./agent/assignment.js";
 import { confirmReviewRemediationDispatch, prepareReviewRemediationDispatch, processReviewEvent, validateSelfHostingRef } from "./review/review-fix.js";
+import {
+  buildSpecDispatchOrder,
+  deriveSpecPath,
+  isRequirementEligible,
+  parseRequirementFrontmatter,
+} from "./spec/requirement-to-spec.js";
 import type { StateStore } from "./state/state-store.js";
 import { FileStateStore } from "./state/store.js";
 import {
@@ -46,6 +52,7 @@ import {
   formatCanonicalRunId,
   initRunState,
   isManagedReviewAutomationCandidate,
+  isMergeAsApproval,
   needsGateReconciliation,
   needsDeliveryMergeReconciliation,
   recordDeliveryMergeEffect,
@@ -56,7 +63,7 @@ import {
   upsertDocumentationSnapshot,
   upsertGate,
 } from "./state/state-machine.js";
-import type { GateDecisionContext, GateType, HumanGateIssueRef, PhaseId, RunState } from "./state/types.js";
+import type { GateDecisionContext, GateType, HumanGateIssueRef, PhaseId, RunState, SpecGenerationProvider } from "./state/types.js";
 import { SCHEMA_VERSION } from "./state/types.js";
 import { renderRunSnapshot, buildSnapshotFilename } from "./documentation/run-snapshot.js";
 import { generateRunIndex, generateObsidianBase, parseFrontmatter, parseRunIndexEntry } from "./documentation/run-index.js";
@@ -1486,17 +1493,23 @@ async function cmdReconcile(argv: { repository: string }): Promise<void> {
           headRefOid?: string;
           mergedAt?: string | null;
           mergeCommit?: { oid?: string } | null;
+          mergedBy?: { login?: string; __typename?: string } | null;
         };
 
         if (prData.state === "MERGED") {
           if (!prData.headRefOid || !prData.mergedAt || !prData.mergeCommit?.oid) {
             throw new Error(`merged delivery PR #${deliveryPr} exposes incomplete merge evidence`);
           }
+          if (!prData.mergedBy?.login) {
+            throw new Error(`merged delivery PR #${deliveryPr} did not expose a mergedBy login`);
+          }
           state = recordDeliveryMergeEffect(state, {
             pullRequest: deliveryPr,
             approvedHeadSha: prData.headRefOid,
             mergeCommitSha: prData.mergeCommit.oid,
             mergedAt: prData.mergedAt,
+            mergedBy: prData.mergedBy.login,
+            mergedByType: prData.mergedBy.__typename,
           });
           await store.save(state);
           const orchestration = await orchestrate(store);
@@ -2023,6 +2036,193 @@ async function cmdImplPrMerge(argv: StoreArgs): Promise<void> {
   );
 }
 
+// ---------------------------------------------------------------------------
+// SPEC-014: requirement-to-spec-dispatch
+// ---------------------------------------------------------------------------
+
+/**
+ * Issue title prefix used to find existing dispatch issues for deduplication.
+ * The full title format is:
+ *   `[harness:spec-gen] <requirementId>: Generate spec (<dispatchKey>)`
+ */
+const SPEC_GEN_ISSUE_TITLE_PREFIX = "[harness:spec-gen]";
+
+/** Issue label applied to all spec-generation dispatch tracking issues. */
+const SPEC_GEN_ISSUE_LABEL = "harness:spec-gen";
+
+function buildSpecGenIssueTitle(requirementId: string, dispatchKey: string): string {
+  return `${SPEC_GEN_ISSUE_TITLE_PREFIX} ${requirementId}: Generate spec (${dispatchKey})`;
+}
+
+function buildSpecGenIssueBody(opts: {
+  requirementId: string;
+  requirementPath: string;
+  targetSpecPath: string;
+  agentBranch: string;
+  requiredSections: string[];
+  provider: SpecGenerationProvider;
+  dispatchKey: string;
+  harnessRef: string;
+}): string {
+  const sectionList = opts.requiredSections.map((s) => `- ${s}`).join("\n");
+  const providerNote =
+    opts.provider === "github-copilot"
+      ? "This issue is assigned to @github-copilot for automated spec generation."
+      : "This issue is intended for Claude Code automated spec generation.";
+
+  return [
+    `## Spec-generation dispatch (SPEC-014)`,
+    ``,
+    `**Dispatch key:** \`${opts.dispatchKey}\``,
+    `**Requirement:** \`${opts.requirementId}\` at \`${opts.requirementPath}\``,
+    `**Target spec:** \`${opts.targetSpecPath}\``,
+    `**Agent branch:** \`${opts.agentBranch}\``,
+    `**Provider:** ${opts.provider}`,
+    `**Harness ref:** ${opts.harnessRef}`,
+    ``,
+    `${providerNote}`,
+    ``,
+    `### Task`,
+    ``,
+    `1. Read the requirement document at \`${opts.requirementPath}\`.`,
+    `2. Generate a complete spec at \`${opts.targetSpecPath}\` on branch \`${opts.agentBranch}\`.`,
+    `3. The spec **must** contain sections for each of the following (in any order):`,
+    sectionList,
+    `4. Include a Rückverfolgbarkeit (traceability) section that back-references \`${opts.requirementId}\`.`,
+    `5. Open a pull request from \`${opts.agentBranch}\` targeting the default branch.`,
+    ``,
+    `> Auto-generated by pi-spec-harness \`${opts.harnessRef}\`.`,
+  ].join("\n");
+}
+
+/**
+ * Dispatch a spec-generation task for a single requirement file.
+ * Idempotent: uses the dispatch key embedded in the issue title to avoid
+ * creating duplicate issues for the same requirement SHA. SPEC-014, TAC-04.
+ */
+async function cmdRequirementToSpecDispatch(argv: {
+  repository: string;
+  requirementPath: string;
+  sourceSha: string;
+  provider: SpecGenerationProvider;
+  harnessRef: string;
+}): Promise<void> {
+  // 1. Read and parse the requirement file.
+  let content: string;
+  try {
+    content = await readFile(argv.requirementPath, "utf-8");
+  } catch (err) {
+    throw new Error(
+      `requirement-to-spec-dispatch: cannot read requirement file '${argv.requirementPath}': ${String(err)}`,
+    );
+  }
+
+  let fm: ReturnType<typeof parseRequirementFrontmatter>;
+  try {
+    fm = parseRequirementFrontmatter(content);
+  } catch (err) {
+    throw new Error(
+      `requirement-to-spec-dispatch: invalid frontmatter in '${argv.requirementPath}': ${String(err)}`,
+    );
+  }
+
+  // 2. Eligibility check (type=requirement, status=approved).
+  if (!isRequirementEligible(fm)) {
+    const result = {
+      skipped: "not-eligible",
+      requirementId: fm.id,
+      type: fm.type,
+      status: fm.status,
+      requirementPath: argv.requirementPath,
+    };
+    console.log(
+      JSON.stringify({ schemaVersion: SCHEMA_VERSION, command: "requirement-to-spec-dispatch", result, nextAction: "no dispatch — requirement is not eligible (type must be 'requirement', status must be 'approved')" }, null, 2),
+    );
+    return;
+  }
+
+  // 3. Build the provider-neutral dispatch order.
+  const order = buildSpecDispatchOrder({
+    repository: argv.repository,
+    requirementId: fm.id,
+    sourceSha: argv.sourceSha,
+    requirementPath: argv.requirementPath,
+    provider: argv.provider,
+  });
+
+  // 4. Idempotency: check for an existing dispatch issue.
+  const issueTitle = buildSpecGenIssueTitle(fm.id, order.dispatchKey);
+  const existing = await github.findIssueByExactTitle(argv.repository, issueTitle);
+  if (existing) {
+    const result = {
+      idempotent: true,
+      dispatchKey: order.dispatchKey,
+      requirementId: fm.id,
+      issueNumber: existing.number,
+      issueUrl: existing.url,
+    };
+    console.log(
+      JSON.stringify({ schemaVersion: SCHEMA_VERSION, command: "requirement-to-spec-dispatch", result, nextAction: `spec-generation issue #${existing.number} already exists — skipping duplicate dispatch` }, null, 2),
+    );
+    return;
+  }
+
+  // 5. Create the dispatch tracking issue.
+  const body = buildSpecGenIssueBody({
+    requirementId: fm.id,
+    requirementPath: argv.requirementPath,
+    targetSpecPath: order.targetSpecPath,
+    agentBranch: order.agentBranch,
+    requiredSections: order.requiredSections,
+    provider: argv.provider,
+    dispatchKey: order.dispatchKey,
+    harnessRef: argv.harnessRef,
+  });
+
+  const labels = [SPEC_GEN_ISSUE_LABEL];
+  if (argv.provider === "github-copilot") {
+    labels.push("ai:allowed");
+  }
+
+  const created = await github.createIssue(argv.repository, {
+    title: issueTitle,
+    body,
+    labels,
+  });
+
+  // 6. For Copilot provider: assign the issue to @github-copilot.
+  if (argv.provider === "github-copilot") {
+    try {
+      await github.addAssignees(argv.repository, created.number, ["github-copilot"]);
+    } catch {
+      // Assignment may fail if Copilot is not enabled — log but don't abort.
+    }
+  }
+
+  const result = {
+    dispatched: true,
+    dispatchKey: order.dispatchKey,
+    requirementId: fm.id,
+    provider: argv.provider,
+    targetSpecPath: order.targetSpecPath,
+    agentBranch: order.agentBranch,
+    issueNumber: created.number,
+    issueUrl: created.url,
+  };
+  console.log(
+    JSON.stringify(
+      {
+        schemaVersion: SCHEMA_VERSION,
+        command: "requirement-to-spec-dispatch",
+        result,
+        nextAction: `spec-generation dispatched to issue #${created.number}; provider '${argv.provider}' should open a PR on branch '${order.agentBranch}'`,
+      },
+      null,
+      2,
+    ),
+  );
+}
+
 /**
  * Persist the GitHub-verified merge effect of the bound delivery PR.
  * A passed merge-approval gate authorises the SHA, but the run may complete
@@ -2073,6 +2273,7 @@ async function cmdDeliveryPrMergeEffect(
     headRefOid?: string;
     mergedAt?: string | null;
     mergeCommit?: { oid?: string } | null;
+    mergedBy?: { login?: string; __typename?: string } | null;
   };
 
   if (prData.state !== "MERGED") {
@@ -2098,8 +2299,14 @@ async function cmdDeliveryPrMergeEffect(
   if (!prData.mergeCommit?.oid) {
     throw new Error(`delivery PR #${deliveryPr} did not expose a merge commit SHA`);
   }
+  if (!prData.mergedBy?.login) {
+    throw new Error(`delivery PR #${deliveryPr} did not expose a mergedBy login`);
+  }
 
-  if (!findPassedMergeApprovalGate(state)) {
+  // For `label-authorizes-auto-merge` runs a pre-existing passed gate is
+  // required before the merge can be recorded. For `merge-is-approval` runs
+  // the gate is created by `recordDeliveryMergeEffect` itself — skip the guard.
+  if (!isMergeAsApproval(state) && !findPassedMergeApprovalGate(state)) {
     const next = computeNextAction(state);
     printResult(
       "delivery-pr-merge-effect",
@@ -2118,6 +2325,8 @@ async function cmdDeliveryPrMergeEffect(
     approvedHeadSha: prData.headRefOid,
     mergeCommitSha: prData.mergeCommit.oid,
     mergedAt: prData.mergedAt,
+    mergedBy: prData.mergedBy.login,
+    mergedByType: prData.mergedBy.__typename,
   });
 
   await store.save(state);
@@ -2871,6 +3080,25 @@ const _harnessCli = yargs(hideBin(process.argv))
     "Find all open harness gates in a repository and apply any pending label decisions (missed-event recovery)",
     (y) => y.option("repository", { type: "string", demandOption: true, describe: "owner/repo to reconcile" }),
     async (argv) => cmdReconcile({ repository: argv.repository as string }),
+  )
+  .command(
+    "requirement-to-spec-dispatch",
+    "Parse a requirement file, verify eligibility, and dispatch a spec-generation task to the configured provider (SPEC-014)",
+    (y) =>
+      y
+        .option("repository", { type: "string", demandOption: true, describe: "Target repository (owner/repo)" })
+        .option("requirement-path", { type: "string", demandOption: true, describe: "Repo-relative path to the requirement Markdown file" })
+        .option("source-sha", { type: "string", demandOption: true, describe: "40-character commit SHA of the push that introduced/modified the requirement" })
+        .option("provider", { type: "string", choices: ["github-copilot", "claude-code"] as const, default: "github-copilot", describe: "Spec-generation agent provider" })
+        .option("harness-ref", { type: "string", default: "main", describe: "Pinned harness ref embedded in the generated prompt for traceability" }),
+    async (argv) =>
+      cmdRequirementToSpecDispatch({
+        repository: argv.repository as string,
+        requirementPath: argv["requirement-path"] as string,
+        sourceSha: argv["source-sha"] as string,
+        provider: argv.provider as SpecGenerationProvider,
+        harnessRef: argv["harness-ref"] as string,
+      }),
   )
   .demandCommand(1)
   .strict();

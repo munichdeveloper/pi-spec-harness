@@ -123,7 +123,7 @@ export function deriveSpecPath(requirementId: string, specDir = "docs/specificat
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "");
   const specId = `SPEC-${numericPart}`;
-  const filename = slugPart.length > 0 ? `${specId}${slugPart}.md` : `${specId}.md`;
+  const filename = slugPart.length > 0 ? `${specId}-${slugPart}.md` : `${specId}.md`;
   return `${specDir}/${filename}`;
 }
 
