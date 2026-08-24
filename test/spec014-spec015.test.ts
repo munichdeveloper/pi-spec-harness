@@ -106,7 +106,7 @@ describe("SPEC-015: prApprovalPolicy", () => {
         pullRequest: 42,
         approvedHeadSha: headSha,
         mergeCommitSha: sha("b"),
-      mergedBy: "human-user",
+        mergedBy: "human-user",
         mergedAt: "2026-08-24T10:00:00Z",
       }),
     ).toThrow(/passed merge approval gate/);
@@ -130,7 +130,7 @@ describe("SPEC-015: prApprovalPolicy", () => {
         pullRequest: 42,
         approvedHeadSha: sha("f"), // valid hex but wrong head
         mergeCommitSha: sha("b"),
-      mergedBy: "human-user",
+        mergedBy: "human-user",
         mergedAt: "2026-08-24T10:00:00Z",
       }),
     ).toThrow(/expected approved head/);

@@ -2194,8 +2194,9 @@ async function cmdRequirementToSpecDispatch(argv: {
   if (argv.provider === "github-copilot") {
     try {
       await github.addAssignees(argv.repository, created.number, ["github-copilot"]);
-    } catch {
+    } catch (err) {
       // Assignment may fail if Copilot is not enabled — log but don't abort.
+      console.warn(`[requirement-to-spec-dispatch] warning: could not assign @github-copilot to issue #${created.number}: ${String(err)}`);
     }
   }
 

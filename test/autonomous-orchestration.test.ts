@@ -560,7 +560,7 @@ describe("TAC-04 orchestrator", () => {
         pullRequest: 47,
         approvedHeadSha,
         mergeCommitSha: sha("c"),
-      mergedBy: "human-user",
+        mergedBy: "human-user",
         mergedAt: "2026-08-18T14:00:00Z",
       }),
     ).toThrow(/passed merge approval gate/);

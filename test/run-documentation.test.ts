@@ -82,7 +82,7 @@ function stateWithMergeEvidence() {
     pullRequest: 56,
     approvedHeadSha,
     mergeCommitSha: sha("b"),
-      mergedBy: "human-user",
+    mergedBy: "human-user",
     mergedAt: "2026-08-18T11:00:00Z",
   });
   return state;
