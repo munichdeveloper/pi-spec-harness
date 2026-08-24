@@ -183,6 +183,7 @@ describe("TAC-01 delivery and implementation PR binding", () => {
       pullRequest: 10,
       approvedHeadSha,
       mergeCommitSha: sha("c"),
+      mergedBy: "human-user",
       mergedAt: "2026-08-18T13:19:11Z",
     });
     // Now update the delivery head -- should invalidate the merge gate
@@ -519,6 +520,7 @@ describe("TAC-04 orchestrator", () => {
       pullRequest: 47,
       approvedHeadSha,
       mergeCommitSha: sha("c"),
+      mergedBy: "human-user",
       mergedAt: "2026-08-18T13:19:11Z",
     });
     states.push(state);
@@ -541,8 +543,10 @@ describe("TAC-04 orchestrator", () => {
   it("event order: merge-first — persisted evidence is pending until approval arrives", async () => {
     const approvedHeadSha = sha("a");
     const gateId = `merge-approval-pr47-sha${approvedHeadSha.slice(0, 8)}`;
+    // Use legacy label policy so the gate-required behavior is testable here.
+    // SPEC-015 TAC-07: legacy runs must continue to work unchanged.
     let state: RunState = {
-      ...baseRun(),
+      ...baseRun({ prApprovalPolicy: "label-authorizes-auto-merge" }),
       phase: "merge",
       deliveryPullRequest: 47,
       deliveryHeadSha: approvedHeadSha,
@@ -556,6 +560,7 @@ describe("TAC-04 orchestrator", () => {
         pullRequest: 47,
         approvedHeadSha,
         mergeCommitSha: sha("c"),
+        mergedBy: "human-user",
         mergedAt: "2026-08-18T14:00:00Z",
       }),
     ).toThrow(/passed merge approval gate/);
@@ -569,6 +574,7 @@ describe("TAC-04 orchestrator", () => {
       pullRequest: 47,
       approvedHeadSha,
       mergeCommitSha: sha("c"),
+      mergedBy: "human-user",
       mergedAt: "2026-08-18T14:00:00Z",
     });
 
@@ -627,6 +633,7 @@ describe("TAC-04 orchestrator", () => {
       pullRequest: 48,
       approvedHeadSha,
       mergeCommitSha: sha("d"),
+      mergedBy: "human-user",
       mergedAt: "2026-08-18T14:03:00Z",
     });
     states.push(state);

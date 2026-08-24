@@ -20,13 +20,17 @@ import {
   upsertGate,
 } from "../src/state/state-machine.js";
 
-function baseRun() {
-  return initRunState({
+function baseRunOptions() {
+  return {
     runId: "test-run-001",
     repository: "munichdeveloper/Immogent",
     requirement: "REQ-001",
     spec: "SPEC-011",
-  });
+  };
+}
+
+function baseRun() {
+  return initRunState(baseRunOptions());
 }
 
 describe("state-machine", () => {
@@ -69,6 +73,7 @@ describe("state-machine", () => {
       pullRequest: 60,
       approvedHeadSha,
       mergeCommitSha: "b".repeat(40),
+      mergedBy: "human-user",
       mergedAt: "2026-08-22T16:31:56Z",
     });
 
@@ -77,7 +82,13 @@ describe("state-machine", () => {
   });
 
   it("marks an approved delivery merge without persisted effect for reconciliation", () => {
-    let state = bindDeliveryPullRequest(baseRun(), 60, "a".repeat(40));
+    // Use explicit legacy policy: a pre-existing passed gate is required.
+    // SPEC-015 TAC-07: label-authorizes-auto-merge must not be affected by
+    // the new merge-is-approval default.
+    let state = bindDeliveryPullRequest(
+      initRunState({ ...baseRunOptions(), prApprovalPolicy: "label-authorizes-auto-merge" }),
+      60, "a".repeat(40),
+    );
     state = upsertGate(state, { id: "delivery-merge-approval", type: "human", question: "Merge?" });
     expect(needsDeliveryMergeReconciliation(state)).toBe(false);
 
@@ -91,6 +102,7 @@ describe("state-machine", () => {
       pullRequest: 60,
       approvedHeadSha: "a".repeat(40),
       mergeCommitSha: "b".repeat(40),
+      mergedBy: "human-user",
       mergedAt: "2026-08-22T16:31:56Z",
     });
     expect(needsDeliveryMergeReconciliation(state)).toBe(false);
@@ -110,7 +122,13 @@ describe("state-machine", () => {
   });
 
   it("invalidates a canonical delivery merge approval when the bound head changes", () => {
-    let state = bindDeliveryPullRequest(baseRun(), 60, "a".repeat(40));
+    // This test verifies the legacy label-authorizes-auto-merge policy where
+    // a pre-existing passed gate is required. Use explicit policy so the test
+    // is not affected by the SPEC-015 merge-as-approval default. TAC-07.
+    let state = bindDeliveryPullRequest(
+      initRunState({ ...baseRunOptions(), prApprovalPolicy: "label-authorizes-auto-merge" }),
+      60, "a".repeat(40),
+    );
     state = upsertGate(state, { id: "delivery-merge-approval", type: "human", question: "Merge?" });
     state = resolveGate(state, "delivery-merge-approval", {
       result: "passed",
@@ -124,6 +142,7 @@ describe("state-machine", () => {
       pullRequest: 60,
       approvedHeadSha: "b".repeat(40),
       mergeCommitSha: "c".repeat(40),
+      mergedBy: "human-user",
       mergedAt: "2026-08-22T16:31:56Z",
     })).toThrow(/passed merge approval gate/);
   });
@@ -306,6 +325,7 @@ describe("state-machine", () => {
       pullRequest: 47,
       approvedHeadSha,
       mergeCommitSha,
+      mergedBy: "human-user",
       mergedAt: "2026-08-18T13:19:11Z",
     });
 
@@ -313,6 +333,7 @@ describe("state-machine", () => {
       pullRequest: 47,
       approvedHeadSha,
       mergeCommitSha,
+      mergedBy: "human-user",
       mergedAt: "2026-08-18T13:19:11Z",
     })).toBe(state);
     expect(state.deliveryMergeCommitSha).toBe(mergeCommitSha);
@@ -372,5 +393,53 @@ describe("state-machine", () => {
     expect(rebound.gates.find((gate) => gate.id === "verification")?.result).toBe("pending");
     expect(rebound.gates.find((gate) => gate.id === "verification")?.evidence).toBeUndefined();
     expect(() => bindPullRequest(state, 42, "short")).toThrow(/full 40-character/);
+  });
+
+  it("marks actionable implementation-review threads outdated when the bound HEAD changes", () => {
+    const oldSha = "a".repeat(40);
+    let state = bindImplementationPullRequest(baseRun(), 90, oldSha);
+    state = {
+      ...state,
+      reviewThreads: [{
+        idempotencyKey: `owner/repo:pr90:review1:threadT1:sha${oldSha}`,
+        repository: state.repository,
+        pullRequest: 90,
+        reviewId: 1,
+        threadId: "T1",
+        reviewedHeadSha: oldSha,
+        reviewer: "copilot-pull-request-reviewer",
+        reviewerType: "Bot",
+        status: "actionable",
+        classifiedAt: "2026-08-24T10:00:00Z",
+        auditedAt: "2026-08-24T10:00:00Z",
+      }],
+    };
+
+    const rebound = bindImplementationPullRequest(state, 90, "b".repeat(40));
+    expect(rebound.reviewThreads?.[0]?.status).toBe("outdated");
+  });
+
+  it("reconciles stale review threads even when PR and current HEAD were already bound", () => {
+    const currentSha = "b".repeat(40);
+    let state = bindImplementationPullRequest(baseRun(), 90, currentSha);
+    state = {
+      ...state,
+      reviewThreads: [{
+        idempotencyKey: `owner/repo:pr90:review1:threadT1:sha${"a".repeat(40)}`,
+        repository: state.repository,
+        pullRequest: 90,
+        reviewId: 1,
+        threadId: "T1",
+        reviewedHeadSha: "a".repeat(40),
+        reviewer: "copilot-pull-request-reviewer",
+        reviewerType: "Bot",
+        status: "actionable",
+        classifiedAt: "2026-08-24T10:00:00Z",
+        auditedAt: "2026-08-24T10:00:00Z",
+      }],
+    };
+
+    const reconciled = bindImplementationPullRequest(state, 90, currentSha);
+    expect(reconciled.reviewThreads?.[0]?.status).toBe("outdated");
   });
 });

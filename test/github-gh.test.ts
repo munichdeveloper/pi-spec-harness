@@ -1,5 +1,21 @@
 import { describe, expect, it } from "vitest";
-import { parsePaginatedIssues, parsePaginatedLabelEvents } from "../src/github/gh.js";
+import {
+  buildMergePullRequestArgs,
+  parsePaginatedIssues,
+  parsePaginatedLabelEvents,
+} from "../src/github/gh.js";
+
+describe("GitHub pull-request merge command", () => {
+  it("uses the supported CLI flags and binds the merge to the reviewed head", () => {
+    expect(buildMergePullRequestArgs("owner/repo", "delivery/spec-014", "abc123")).toEqual([
+      "api",
+      "repos/owner/repo/merges",
+      "--method", "POST",
+      "-f", "base=delivery/spec-014",
+      "-f", "head=abc123",
+    ]);
+  });
+});
 
 describe("GitHub pagination parsing", () => {
   it("flattens all timeline pages and sorts label events chronologically", () => {
