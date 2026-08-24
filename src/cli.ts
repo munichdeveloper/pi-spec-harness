@@ -2020,7 +2020,12 @@ async function cmdImplPrMerge(argv: StoreArgs): Promise<void> {
   if (!prData.headRefOid) {
     throw new Error(`implementation PR #${implPr} did not expose a head SHA`);
   }
-  const mergeSha = await github.mergePullRequest(argv.repository, implPr, "merge", prData.headRefOid);
+  if (!prData.baseRefName || prData.baseRefName !== state.branch) {
+    throw new Error(
+      `implementation PR #${implPr} targets '${prData.baseRefName ?? "unknown"}', expected delivery branch '${state.branch}'`,
+    );
+  }
+  const mergeSha = await github.mergePullRequest(argv.repository, implPr, prData.baseRefName, prData.headRefOid);
 
   // TAC-11: Rebind delivery head with the post-merge SHA and invalidate evidence
   if (state.deliveryPullRequest) {

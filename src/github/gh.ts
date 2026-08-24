@@ -51,23 +51,16 @@ export function buildAgentAssignmentArgs(
 
 export function buildMergePullRequestArgs(
   repository: string,
-  prNumber: number,
-  method: "merge" | "squash" | "rebase",
+  baseRef: string,
   expectedHeadSha: string,
 ): string[] {
   return [
     "api",
-    `repos/${repository}/pulls/${prNumber}/merge-async`,
-    "--method", "PUT",
-    "-H", "X-GitHub-Api-Version: 2026-03-10",
-    "-f", `merge_method=${method}`,
-    "-f", "merge_action=default",
-    "-f", `sha=${expectedHeadSha}`,
+    `repos/${repository}/merges`,
+    "--method", "POST",
+    "-f", `base=${baseRef}`,
+    "-f", `head=${expectedHeadSha}`,
   ];
-}
-
-function wait(milliseconds: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
 async function runGh(args: string[]): Promise<string> {
@@ -643,23 +636,15 @@ export const github = {
   async mergePullRequest(
     repository: string,
     prNumber: number,
-    method: "merge" | "squash" | "rebase" = "merge",
+    baseRef: string,
     expectedHeadSha: string,
   ): Promise<string> {
-    await runGh(buildMergePullRequestArgs(repository, prNumber, method, expectedHeadSha));
-    for (let attempt = 0; attempt < 15; attempt += 1) {
-      const out = await runGh([
-        "pr", "view", String(prNumber),
-        "--repo", repository,
-        "--json", "state,mergeCommit",
-      ]);
-      const result = JSON.parse(out) as { state: string; mergeCommit: { oid: string } | null };
-      if (result.state === "MERGED" && result.mergeCommit?.oid) {
-        return result.mergeCommit.oid;
-      }
-      await wait(2_000);
+    const out = await runGh(buildMergePullRequestArgs(repository, baseRef, expectedHeadSha));
+    const result = JSON.parse(out) as { sha?: string };
+    if (!result.sha) {
+      throw new GhError(`merge of PR #${prNumber} into '${baseRef}' did not expose a commit SHA`);
     }
-    throw new GhError(`asynchronous merge of PR #${prNumber} was not confirmed within 30 seconds`);
+    return result.sha;
   },
 
   /**
