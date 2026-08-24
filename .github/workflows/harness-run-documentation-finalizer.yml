@@ -23,9 +23,9 @@ permissions:
 
 jobs:
   finalize:
-    uses: munichdeveloper/pi-spec-harness/.github/workflows/run-documentation-finalizer.yml@v0.2.4
+    uses: munichdeveloper/pi-spec-harness/.github/workflows/run-documentation-finalizer.yml@aca192d94f3db79747c000a7b0f9438acac48b5a
     with:
-      harness-ref: 'v0.2.4'
+      harness-ref: 'aca192d94f3db79747c000a7b0f9438acac48b5a'
       default-branch: 'main'
       generated-directory: 'docs/runs/generated'
       index-path: 'docs/runs/RUN-INDEX.md'

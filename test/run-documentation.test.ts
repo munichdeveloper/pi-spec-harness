@@ -1765,7 +1765,7 @@ describe("TAC-18 cmdPersistRunDocumentation integration via injected adapter", (
     expect(content).toContain("process-audit-automation.yml");
     expect(validateReceiverContent(
       content,
-      "v0.2.4",
+      "aca192d94f3db79747c000a7b0f9438acac48b5a",
       ".github/workflows/harness-process-audit-receiver.yml",
       "munichdeveloper/pi-spec-harness",
     )).toBeUndefined();

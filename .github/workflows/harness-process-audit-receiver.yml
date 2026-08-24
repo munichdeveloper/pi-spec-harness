@@ -18,10 +18,10 @@ permissions:
 
 jobs:
   record:
-    uses: munichdeveloper/pi-spec-harness/.github/workflows/process-audit-automation.yml@v0.2.4
+    uses: munichdeveloper/pi-spec-harness/.github/workflows/process-audit-automation.yml@aca192d94f3db79747c000a7b0f9438acac48b5a
     with:
       audit-payload-json: ${{ toJson(github.event.client_payload.audit) }}
       journal-dir: 'docs/process-audit/journal'
-      harness-ref: 'v0.2.4'
+      harness-ref: 'aca192d94f3db79747c000a7b0f9438acac48b5a'
     permissions:
       contents: write
