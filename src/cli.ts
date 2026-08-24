@@ -2017,7 +2017,10 @@ async function cmdImplPrMerge(argv: StoreArgs): Promise<void> {
   state = resolveGate(state, gateId, { result: "passed", evidence });
 
   // TAC-11: Merge the PR
-  const mergeSha = await github.mergePullRequest(argv.repository, implPr);
+  if (!prData.headRefOid) {
+    throw new Error(`implementation PR #${implPr} did not expose a head SHA`);
+  }
+  const mergeSha = await github.mergePullRequest(argv.repository, implPr, "merge", prData.headRefOid);
 
   // TAC-11: Rebind delivery head with the post-merge SHA and invalidate evidence
   if (state.deliveryPullRequest) {

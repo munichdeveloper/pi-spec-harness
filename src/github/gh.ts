@@ -49,6 +49,20 @@ export function buildAgentAssignmentArgs(
   ];
 }
 
+export function buildMergePullRequestArgs(
+  repository: string,
+  prNumber: number,
+  method: "merge" | "squash" | "rebase",
+  expectedHeadSha: string,
+): string[] {
+  return [
+    "pr", "merge", String(prNumber),
+    "--repo", repository,
+    `--${method}`,
+    "--match-head-commit", expectedHeadSha,
+  ];
+}
+
 async function runGh(args: string[]): Promise<string> {
   try {
     const { stdout } = await execFile("gh", args, { maxBuffer: 20 * 1024 * 1024 });
@@ -623,15 +637,20 @@ export const github = {
     repository: string,
     prNumber: number,
     method: "merge" | "squash" | "rebase" = "merge",
+    expectedHeadSha: string,
   ): Promise<string> {
+    await runGh(buildMergePullRequestArgs(repository, prNumber, method, expectedHeadSha));
     const out = await runGh([
-      "pr", "merge", String(prNumber),
+      "pr", "view", String(prNumber),
       "--repo", repository,
-      `--${method}`,
       "--json", "mergeCommit",
       "--jq", ".mergeCommit.oid",
     ]);
-    return out.trim();
+    const mergeSha = out.trim();
+    if (!mergeSha) {
+      throw new GhError(`merged PR #${prNumber} did not expose a merge commit`);
+    }
+    return mergeSha;
   },
 
   /**
