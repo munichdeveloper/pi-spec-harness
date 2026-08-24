@@ -10,12 +10,9 @@ on:
         type: string
   issues:
     types: [labeled]
-  pull_request:
-    types: [closed]
-
 # Non-cancelling concurrency: a waiting run must not be dropped.
 concurrency:
-  group: harness-run-documentation-finalizer-${{ github.repository }}-${{ inputs.issue-number || github.event.issue.number || github.event.pull_request.number }}
+  group: harness-run-documentation-finalizer-${{ github.repository }}-${{ inputs.issue-number || github.event.issue.number }}
   cancel-in-progress: false
 
 permissions:
@@ -26,11 +23,11 @@ permissions:
 
 jobs:
   finalize:
-    uses: munichdeveloper/pi-spec-harness/.github/workflows/run-documentation-finalizer.yml@v0.2.2
+    uses: munichdeveloper/pi-spec-harness/.github/workflows/run-documentation-finalizer.yml@v0.2.4
     with:
-      harness-ref: 'v0.2.2'
+      harness-ref: 'v0.2.4'
       default-branch: 'main'
       generated-directory: 'docs/runs/generated'
       index-path: 'docs/runs/RUN-INDEX.md'
       obsidian-base-path: 'docs/runs/Runs.base'
-      issue-number: ${{ inputs.issue-number || github.event.issue.number || github.event.pull_request.number }}
+      issue-number: ${{ inputs.issue-number || github.event.issue.number }}
