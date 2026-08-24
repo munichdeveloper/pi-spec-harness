@@ -56,11 +56,16 @@ export function buildMergePullRequestArgs(
   expectedHeadSha: string,
 ): string[] {
   return [
-    "pr", "merge", String(prNumber),
-    "--repo", repository,
-    `--${method}`,
-    "--match-head-commit", expectedHeadSha,
+    "api",
+    `repos/${repository}/pulls/${prNumber}/merge`,
+    "--method", "PUT",
+    "-f", `merge_method=${method}`,
+    "-f", `sha=${expectedHeadSha}`,
   ];
+}
+
+function wait(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
 async function runGh(args: string[]): Promise<string> {
@@ -640,17 +645,19 @@ export const github = {
     expectedHeadSha: string,
   ): Promise<string> {
     await runGh(buildMergePullRequestArgs(repository, prNumber, method, expectedHeadSha));
-    const out = await runGh([
-      "pr", "view", String(prNumber),
-      "--repo", repository,
-      "--json", "mergeCommit",
-      "--jq", ".mergeCommit.oid",
-    ]);
-    const mergeSha = out.trim();
-    if (!mergeSha) {
-      throw new GhError(`merged PR #${prNumber} did not expose a merge commit`);
+    for (let attempt = 0; attempt < 15; attempt += 1) {
+      const out = await runGh([
+        "pr", "view", String(prNumber),
+        "--repo", repository,
+        "--json", "state,mergeCommit",
+      ]);
+      const result = JSON.parse(out) as { state: string; mergeCommit: { oid: string } | null };
+      if (result.state === "MERGED" && result.mergeCommit?.oid) {
+        return result.mergeCommit.oid;
+      }
+      await wait(2_000);
     }
-    return mergeSha;
+    throw new GhError(`asynchronous merge of PR #${prNumber} was not confirmed within 30 seconds`);
   },
 
   /**

@@ -8,10 +8,11 @@ import {
 describe("GitHub pull-request merge command", () => {
   it("uses the supported CLI flags and binds the merge to the reviewed head", () => {
     expect(buildMergePullRequestArgs("owner/repo", 90, "merge", "abc123")).toEqual([
-      "pr", "merge", "90",
-      "--repo", "owner/repo",
-      "--merge",
-      "--match-head-commit", "abc123",
+      "api",
+      "repos/owner/repo/pulls/90/merge",
+      "--method", "PUT",
+      "-f", "merge_method=merge",
+      "-f", "sha=abc123",
     ]);
   });
 });
