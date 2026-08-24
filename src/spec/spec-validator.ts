@@ -16,9 +16,9 @@ export interface SpecValidationResult {
 /**
  * Validate a generated spec document for required sections and REQ traceability.
  *
- * Section detection: a section is considered present when its name appears
- * anywhere in the document text (case-insensitive).  This is intentionally
- * lenient to handle heading levels and minor formatting variation.
+ * Section detection requires a Markdown ATX heading (levels 1–6). This keeps
+ * prose, checklists, prompts, and code examples from satisfying a mandatory
+ * section accidentally while still accepting different heading levels.
  *
  * Traceability detection: the exact `requirementId` string must appear
  * literally in the document (case-insensitive).
@@ -32,13 +32,14 @@ export function validateSpecContent(
   requiredSections: string[],
   requirementId: string,
 ): SpecValidationResult {
-  const lower = content.toLowerCase();
-
   const missingSections = requiredSections.filter(
-    (section) => !lower.includes(section.toLowerCase()),
+    (section) => {
+      const escaped = section.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      return !new RegExp(`^#{1,6}\\s+${escaped}\\s*:?[ \\t]*$`, "im").test(content);
+    },
   );
 
-  const traceable = lower.includes(requirementId.toLowerCase());
+  const traceable = content.toLowerCase().includes(requirementId.toLowerCase());
 
   return {
     valid: missingSections.length === 0 && traceable,

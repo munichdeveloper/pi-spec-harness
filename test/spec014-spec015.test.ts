@@ -766,6 +766,18 @@ describe("SPEC-014: validateSpecContent", () => {
     expect(result.missingSections).toContain("Rückverfolgbarkeit");
   });
 
+  it("does not accept section names mentioned only in prose", () => {
+    const content = [
+      "# SPEC-014",
+      "REQ-014 ist hier referenziert.",
+      "Architektur, Technische Entscheidungen und Technische Akzeptanzkriterien folgen.",
+      "Rückverfolgbarkeit, Risiken und Offene Fragen fehlen noch.",
+    ].join("\n");
+    const result = validateSpecContent(content, requiredSections, "REQ-014");
+    expect(result.valid).toBe(false);
+    expect(result.missingSections).toEqual(requiredSections);
+  });
+
   it("returns traceable:false when requirementId is absent", () => {
     const content = requiredSections.map((s) => `## ${s}`).join("\n");
     const result = validateSpecContent(content, requiredSections, "REQ-014");
