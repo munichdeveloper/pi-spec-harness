@@ -7,17 +7,18 @@ owner: engineering
 risk: medium
 requirements:
   - REQ-011
-implementation_assignee: "@codex"
+implementation_assignee: "@github-copilot"
 created: 2026-08-13
 updated: 2026-08-23
 ---
 
 # SPEC-011: Deterministischer Stall-Watchdog für hängende Runs
 
-> Rollenhinweis: Der Harness-Agent (Codex) implementiert Änderungen in diesem
-> Repository. GitHub Copilot wird über die Repository-Einstellungen automatisch
-> als Reviewer tätig; die ältere Copilot-Assignee-Konvention gilt nur für
-> ausdrücklich so konfigurierte Zielrepository-Läufe.
+> Rollenhinweis: Der Harness-Agent (Codex) erarbeitet und steuert Harness-Issues
+> gemeinsam mit dem Product Owner. Er kann selbst implementieren oder die
+> Implementierung ausdrücklich an einen Coding Agent wie GitHub Copilot
+> delegieren. Copilots automatische Reviewer-Rolle aus den Repository-
+> Einstellungen ist davon getrennt und benötigt keine manuelle Anforderung.
 
 ## Zusammenfassung
 
