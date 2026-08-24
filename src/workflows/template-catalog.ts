@@ -214,7 +214,7 @@ jobs:
 
 export const PROCESS_AUDIT_RECEIVER_PATH = ".github/workflows/harness-process-audit-receiver.yml";
 export const PROCESS_AUDIT_RECEIVER_MARKER = "# Managed by pi-spec-harness: process-audit-receiver-reference v1";
-export const DEFAULT_PROCESS_AUDIT_RECEIVER_WORKFLOW_REF = "v0.2.2";
+export const DEFAULT_PROCESS_AUDIT_RECEIVER_WORKFLOW_REF = "v0.2.4";
 
 export interface ProcessAuditReceiverOptions {
   harnessRef?: string;
@@ -272,7 +272,7 @@ jobs:
 
 export const RUN_DOCUMENTATION_FINALIZER_PATH = ".github/workflows/harness-run-documentation-finalizer.yml";
 export const RUN_DOCUMENTATION_FINALIZER_MARKER = "# Managed by pi-spec-harness: run-documentation-finalizer-reference v1";
-export const DEFAULT_RUN_DOCUMENTATION_FINALIZER_WORKFLOW_REF = "v0.2.2";
+export const DEFAULT_RUN_DOCUMENTATION_FINALIZER_WORKFLOW_REF = "v0.2.4";
 
 export interface RunDocumentationFinalizerOptions {
   harnessRef?: string;
@@ -311,13 +311,10 @@ on:
         type: string
   issues:
     types: [labeled]
-  pull_request:
-    types: [closed]
-
 # Non-cancelling concurrency: a waiting run must not be dropped.
 # TAC-16: cancel-in-progress must be false.
 concurrency:
-  group: harness-run-documentation-finalizer-\${{ github.repository }}-\${{ inputs.issue-number || github.event.issue.number || github.event.pull_request.number }}
+  group: harness-run-documentation-finalizer-\${{ github.repository }}-\${{ inputs.issue-number || github.event.issue.number }}
   cancel-in-progress: false
 
 # TAC-16: minimal permissions only; no secrets: inherit.
@@ -336,7 +333,7 @@ jobs:
       generated-directory: '${generatedDirectory}'
       index-path: '${indexPath}'
       obsidian-base-path: '${obsidianBasePath}'${legacyDirsJson.length > 0 ? `\n      legacy-directories: '${legacyDirsJson}'` : ""}
-      issue-number: \${{ inputs.issue-number || github.event.issue.number || github.event.pull_request.number }}
+      issue-number: \${{ inputs.issue-number || github.event.issue.number }}
 `;
 }
 
