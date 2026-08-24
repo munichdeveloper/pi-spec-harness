@@ -2,7 +2,7 @@
 id: REQ-015
 type: requirement
 title: Genau eine menschliche Aktion pro PR-Freigabe
-status: proposed
+status: approved
 owner: product
 risk: high
 created: 2026-08-24

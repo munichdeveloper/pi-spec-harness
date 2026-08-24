@@ -2,7 +2,7 @@
 id: SPEC-014
 type: software-spec
 title: Requirement-to-Spec Agent Pipeline
-status: proposed
+status: approved
 owner: engineering
 risk: medium
 requirements:

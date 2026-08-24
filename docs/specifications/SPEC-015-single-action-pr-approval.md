@@ -2,7 +2,7 @@
 id: SPEC-015
 type: software-spec
 title: Merge-as-Approval für geschützte Pull Requests
-status: proposed
+status: approved
 owner: engineering
 risk: high
 requirements:

@@ -2,7 +2,7 @@
 id: REQ-014
 type: requirement
 title: Agent-generierte Software Spec aus einem freigegebenen Requirement
-status: proposed
+status: approved
 owner: product
 risk: medium
 created: 2026-08-24
