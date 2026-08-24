@@ -8,6 +8,12 @@
  */
 
 import { parseFrontmatter } from "./spec-parser.js";
+import { buildSpecDispatchKey } from "../state/state-machine.js";
+import type { SpecGenerationProvider } from "../state/types.js";
+
+// Re-export canonical type and key-builder so callers only need one import.
+export type { SpecGenerationProvider };
+export { buildSpecDispatchKey as buildDispatchKey };
 
 // ---------------------------------------------------------------------------
 // Requirement frontmatter types
@@ -27,8 +33,6 @@ export interface RequirementFrontmatter {
 // ---------------------------------------------------------------------------
 // Provider-neutral dispatch contract  (SPEC-014, decision 2 / TAC-04)
 // ---------------------------------------------------------------------------
-
-export type SpecGenerationProvider = "github-copilot" | "claude-code";
 
 /**
  * The provider-neutral spec-generation dispatch order.
@@ -106,11 +110,11 @@ export function isRequirementEligible(fm: RequirementFrontmatter): boolean {
 
 /**
  * Derive the canonical spec output path from a requirement id.
- * Convention: `docs/specifications/SPEC-NNN-<slug>.md`
+ * Convention: `<specDir>/SPEC-NNN.md`
  * The NNN portion mirrors the numeric part of the REQ id.
  * SPEC-014, decision 3.
  */
-export function deriveSpecPath(requirementId: string, specGlob = "docs/specifications"): string {
+export function deriveSpecPath(requirementId: string, specDir = "docs/specifications"): string {
   const numericMatch = requirementId.match(/(\d+)/);
   const numericPart = numericMatch ? numericMatch[1].padStart(3, "0") : "000";
   const slugPart = requirementId
@@ -120,16 +124,7 @@ export function deriveSpecPath(requirementId: string, specGlob = "docs/specifica
     .replace(/^-+|-+$/g, "");
   const specId = `SPEC-${numericPart}`;
   const filename = slugPart.length > 0 ? `${specId}${slugPart}.md` : `${specId}.md`;
-  return `${specGlob}/${filename}`;
-}
-
-/**
- * Build the stable dispatch key for a spec-generation order.
- * Key = `<repository>:<req-id>:<source-sha>` (all lower-cased).
- * SPEC-014, decision 2.
- */
-export function buildDispatchKey(repository: string, requirementId: string, sourceSha: string): string {
-  return `${repository.toLowerCase()}:${requirementId.toLowerCase()}:${sourceSha.toLowerCase()}`;
+  return `${specDir}/${filename}`;
 }
 
 /**
@@ -147,9 +142,11 @@ export function buildSpecDispatchOrder(opts: {
   provider?: SpecGenerationProvider;
 }): SpecDispatchOrder {
   const targetSpecPath = opts.targetSpecPath ?? deriveSpecPath(opts.requirementId);
-  const agentBranch = opts.agentBranch ?? `harness/spec-gen-${opts.requirementId.toLowerCase()}-${opts.sourceSha.slice(0, 8)}`;
+  const agentBranch =
+    opts.agentBranch ??
+    `harness/spec-gen-${opts.requirementId.toLowerCase()}-${opts.sourceSha.slice(0, 8)}`;
   const provider = opts.provider ?? "github-copilot";
-  const dispatchKey = buildDispatchKey(opts.repository, opts.requirementId, opts.sourceSha);
+  const dispatchKey = buildSpecDispatchKey(opts.repository, opts.requirementId, opts.sourceSha);
 
   return {
     dispatchKey,
