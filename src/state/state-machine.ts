@@ -98,6 +98,14 @@ export function reconcileInit(existing: RunState, options: InitRunOptions): RunS
     );
   }
 
+  if (options.prApprovalPolicy !== undefined && existing.prApprovalPolicy !== options.prApprovalPolicy) {
+    return {
+      ...existing,
+      prApprovalPolicy: options.prApprovalPolicy,
+      updatedAt: nowIso(),
+    };
+  }
+
   return existing;
 }
 

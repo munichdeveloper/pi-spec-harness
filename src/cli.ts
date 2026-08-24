@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { readFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
 import { createHash } from "node:crypto";
 import yargs, { type Argv } from "yargs";
 import { hideBin } from "yargs/helpers";
@@ -385,10 +386,11 @@ async function cmdInit(argv: CmdInitArgs): Promise<void> {
 
   if (argv.state) {
     store = new FileStateStore(argv.state);
-    try {
+    if (existsSync(argv.state)) {
       const existing = await store.load();
       state = reconcileInit(existing, initOptions);
-    } catch {
+      if (state !== existing) await store.save(state);
+    } else {
       state = initial;
       await store.save(state);
     }
@@ -399,6 +401,7 @@ async function cmdInit(argv: CmdInitArgs): Promise<void> {
     store = await ensureRunIssue(argv.repository, argv.runId, initial);
     const existing = await store.load();
     state = reconcileInit(existing, initOptions);
+    if (state !== existing) await store.save(state);
   }
 
   let bugWorkflow:

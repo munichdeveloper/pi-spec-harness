@@ -395,6 +395,20 @@ describe("state-machine", () => {
     expect(() => bindPullRequest(state, 42, "short")).toThrow(/full 40-character/);
   });
 
+  it("explicitly migrates an existing run approval policy without changing immutable fields", () => {
+    const legacy = { ...baseRun(), prApprovalPolicy: undefined };
+    const migrated = reconcileInit(legacy, {
+      runId: legacy.runId,
+      repository: legacy.repository,
+      requirement: legacy.requirement,
+      spec: legacy.spec,
+      prApprovalPolicy: "merge-is-approval",
+    });
+    expect(migrated).not.toBe(legacy);
+    expect(migrated.prApprovalPolicy).toBe("merge-is-approval");
+    expect(migrated.repository).toBe(legacy.repository);
+  });
+
   it("marks actionable implementation-review threads outdated when the bound HEAD changes", () => {
     const oldSha = "a".repeat(40);
     let state = bindImplementationPullRequest(baseRun(), 90, oldSha);
