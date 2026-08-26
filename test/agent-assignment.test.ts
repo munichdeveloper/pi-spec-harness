@@ -36,7 +36,7 @@ describe("reactive coding-agent handoff", () => {
     expect(sleeps).toEqual([10, 20]);
   });
 
-  it("supersedes an assignment false-positive without manufacturing a human decision", () => {
+  it("records assignment evidence without silently superseding a human gate", () => {
     let state = initRunState({
       runId: "issue-62", repository: "owner/repo", requirement: "REQ-011", spec: "SPEC-011",
     });
@@ -48,9 +48,10 @@ describe("reactive coding-agent handoff", () => {
       issueUrl: "https://github.com/owner/repo/issues/62", verifiedAt: "2026-08-23T12:00:00Z",
     });
     const gate = result.state.gates.find((candidate) => candidate.id === "agent-assign-unverified");
-    expect(result.supersededGateIds).toEqual(["agent-assign-unverified"]);
-    expect(gate?.result).toBe("passed");
+    expect(result.supersededGateIds).toEqual([]);
+    expect(gate?.result).toBe("pending");
     expect(gate?.decision).toBeUndefined();
+    expect(gate?.supersession).toBeUndefined();
     expect(result.state.agentAssignment?.assignee).toBe("copilot-swe-agent[bot]");
   });
 

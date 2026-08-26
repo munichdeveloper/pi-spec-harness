@@ -1,6 +1,5 @@
 export const DEFAULT_CODING_AGENT = "copilot-swe-agent[bot]";
 
-import { resolveGate } from "../state/state-machine.js";
 import type { RunState } from "../state/types.js";
 
 export function normalizeAgentLogin(login: string): string {
@@ -16,20 +15,13 @@ export function recordVerifiedAgentAssignment(
   state: RunState,
   assignment: NonNullable<RunState["agentAssignment"]>,
 ): { state: RunState; supersededGateIds: string[] } {
-  let updated: RunState = { ...state, agentAssignment: assignment, updatedAt: assignment.verifiedAt };
-  const supersededGateIds: string[] = [];
-  for (const gateId of ["agent-assign-unavailable", "agent-assign-unverified"]) {
-    const gate = updated.gates.find((candidate) => candidate.id === gateId);
-    if (gate && (gate.result === "pending" || gate.result === "needs-human")) {
-      updated = resolveGate(updated, gateId, {
-        result: "passed",
-        cleanupPending: false,
-        evidence: [...(gate.evidence ?? []), assignment.issueUrl, `system-reconciled assignment to ${assignment.assignee}`],
-      });
-      supersededGateIds.push(gateId);
-    }
-  }
-  return { state: updated, supersededGateIds };
+  // Assignment evidence is recorded independently. An existing human gate is
+  // never silently converted into a pass: demonstrable false positives must
+  // use the named, audited gate-supersede operation (issue #83).
+  return {
+    state: { ...state, agentAssignment: assignment, updatedAt: assignment.verifiedAt },
+    supersededGateIds: [],
+  };
 }
 
 export async function pollForAgentAssignment<T extends { assignees: Array<{ login: string }> }>(
