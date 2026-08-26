@@ -17,9 +17,9 @@ permissions:
 jobs:
   review-fix-review:
     if: ${{ github.event_name == 'pull_request_review' }}
-    uses: munichdeveloper/pi-spec-harness/.github/workflows/review-fix.yml@v0.2.4
+    uses: munichdeveloper/pi-spec-harness/.github/workflows/review-fix.yml@df2561910e27e8a849d89b475b7a6db54252d45b
     with:
-      harness-ref: 'v0.2.4'
+      harness-ref: 'df2561910e27e8a849d89b475b7a6db54252d45b'
       pull-request: ${{ github.event.pull_request.number }}
       review-id: ${{ github.event.review.id || 0 }}
       reviewed-head-sha: ${{ github.event.review.commit_id || github.event.pull_request.head.sha }}
@@ -46,9 +46,9 @@ jobs:
   review-fix-comment:
     needs: resolve-review-fix-comment
     if: ${{ github.event_name == 'issue_comment' && github.event.issue.pull_request && needs.resolve-review-fix-comment.outputs.head_sha != '' }}
-    uses: munichdeveloper/pi-spec-harness/.github/workflows/review-fix.yml@v0.2.4
+    uses: munichdeveloper/pi-spec-harness/.github/workflows/review-fix.yml@df2561910e27e8a849d89b475b7a6db54252d45b
     with:
-      harness-ref: 'v0.2.4'
+      harness-ref: 'df2561910e27e8a849d89b475b7a6db54252d45b'
       pull-request: ${{ github.event.issue.number }}
       review-id: 0
       reviewed-head-sha: ${{ needs.resolve-review-fix-comment.outputs.head_sha }}
@@ -60,9 +60,9 @@ jobs:
       fix-agent: 'github-copilot'
   review-fix-pr-event:
     if: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.head.repo.full_name == github.repository }}
-    uses: munichdeveloper/pi-spec-harness/.github/workflows/review-fix.yml@v0.2.4
+    uses: munichdeveloper/pi-spec-harness/.github/workflows/review-fix.yml@df2561910e27e8a849d89b475b7a6db54252d45b
     with:
-      harness-ref: 'v0.2.4'
+      harness-ref: 'df2561910e27e8a849d89b475b7a6db54252d45b'
       pull-request: ${{ github.event.pull_request.number }}
       review-id: 0
       # Metadata only for binding/reconciliation. The reusable workflow must

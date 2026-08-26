@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
+import { DEFAULT_HARNESS_WORKFLOW_REF } from "../src/release.js";
 
 describe("GitHub workflow contracts", () => {
   it("calls the self run-documentation finalizer locally while pinning its implementation checkout", async () => {
@@ -9,7 +10,7 @@ describe("GitHub workflow contracts", () => {
     expect(workflow).toContain("workflow_dispatch:");
     expect(workflow).toContain("uses: ./.github/workflows/run-documentation-finalizer.yml");
     expect(workflow).not.toContain("uses: munichdeveloper/pi-spec-harness/.github/workflows/run-documentation-finalizer.yml@");
-    expect(workflow).toContain("harness-ref: 'aca192d94f3db79747c000a7b0f9438acac48b5a'");
+    expect(workflow).toContain(`harness-ref: '${DEFAULT_HARNESS_WORKFLOW_REF}'`);
     expect(workflow).not.toContain("concurrency:");
     expect(workflow).not.toContain("cancel-in-progress:");
     const reusable = await readFile(".github/workflows/run-documentation-finalizer.yml", "utf8");

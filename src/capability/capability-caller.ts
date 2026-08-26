@@ -1,8 +1,9 @@
 import { decideWorkflowInstall, type WorkflowInstallDecision } from "../workflows/install-decision.js";
+import { DEFAULT_HARNESS_WORKFLOW_REF } from "../release.js";
 
 export const CAPABILITY_CALLER_PATH = ".github/workflows/harness-capability-smoke.yml";
 export const CAPABILITY_CALLER_MARKER = "# Managed by pi-spec-harness: capability-smoke-reference v1";
-export const DEFAULT_CAPABILITY_SMOKE_WORKFLOW_REF = "main";
+export const DEFAULT_CAPABILITY_SMOKE_WORKFLOW_REF = DEFAULT_HARNESS_WORKFLOW_REF;
 
 export interface CapabilityCallerOptions {
   harnessRef?: string;
