@@ -46,12 +46,35 @@ Iterationsgrenze: `maxAutomaticIterations` (Default 3). Danach zwingt
 ## Zustandsregeln
 
 - `advance` schaltet höchstens eine Phase weiter.
-- Phasen dürfen weder übersprungen noch rückwärts gesetzt werden.
+- Normale Phasenwechsel dürfen weder übersprungen noch rückwärts gesetzt
+  werden. Ausschließlich `state-recover` darf einen nachweislich ungültigen
+  Legacy-Zustand auf die früheste gültige Phase zurücksetzen; dabei bleiben
+  Gates, Iterationen und die append-only `phaseHistory` erhalten.
 - Nicht-menschliche Gates mit `pending`, `needs-human` oder `failed`
   blockieren genauso wie offene Human-Gates.
 - Ein PR wird mit Nummer und vollständigem Head-SHA an den Run gebunden.
 - Ein neuer SHA desselben PR setzt bestehende Review-Evidence zurück.
 - Ein anderer PR kann nicht stillschweigend an denselben Run gebunden werden.
+- `implementation` darf erst verlassen werden, wenn entweder ein exakt
+  gebundener Implementierungs-PR samt aktuellem Head-SHA oder ein expliziter
+  direkter Commit als `implementationEvidence` gespeichert ist.
+- Der Eintritt in `merge` verlangt `verificationEvidence` und
+  `reviewEvidence` für genau den SHA der aktuellen Implementierung. Ein
+  Head-Wechsel invalidiert beide Nachweise.
+- Ein bereits zu weit fortgeschrittener Legacy-State liefert
+  `recover-invalid-state` statt `advance-phase`. Die Recovery verlangt
+  Begründung, Akteur, Zugriffsrolle, Evidence und einen Idempotenzschlüssel.
+
+Beispiel für eine explizite, idempotente Recovery:
+
+```bash
+npm run harness -- state-recover \
+  --repository owner/repo --run-id RUN-0080 \
+  --reason "Legacy run advanced without implementation evidence" \
+  --actor codex --access-role GITHUB_PERSONAL_ACCESS_TOKEN \
+  --evidence https://github.com/owner/repo/issues/84 \
+  --idempotency-key recover:run80:missing-implementation:v1
+```
 
 ## Bug-Track (SPEC-004)
 

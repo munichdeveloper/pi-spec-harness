@@ -87,6 +87,9 @@ main ←──── Delivery-PR (#10) ←──── Impl-PR (#42, Coding Agen
 |------|-----------|
 | `deliveryPullRequest` / `deliveryHeadSha` | PR des Delivery-Branch gegen `main`; nur nach SHA-spezifischem Human-Gate gemerged |
 | `implementationPullRequest` / `implementationHeadSha` | PR des Coding Agent gegen den Delivery-Branch; nach grüner CI und gelösten Reviews automatisch übernommen |
+| `implementationEvidence` | Expliziter Nachweis der PR-basierten oder direkten Implementierung; wird nicht aus Notizen abgeleitet |
+| `verificationEvidence` / `reviewEvidence` | Technische Prüfung und Review, jeweils an den exakten aktuellen Implementierungs-SHA gebunden |
+| `phaseHistory` | Append-only Historie normaler Übergänge und expliziter Legacy-Recoveries |
 
 Beide werden getrennt und mit vollständigen HEAD-SHAs im `RunState` geführt.
 Ändert sich eine HEAD-SHA, werden die zugehörigen Gate-Evidenzen automatisch

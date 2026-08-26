@@ -11,8 +11,12 @@ import {
   isMergeApprovalGate,
   needsDeliveryMergeReconciliation,
   recordDeliveryMergeEffect,
+  recordDirectImplementationEvidence,
+  recordReviewEvidence,
+  recordVerificationEvidence,
   initRunState,
   reconcileInit,
+  recoverInvalidRunState,
   resolveGate,
   startIteration,
   transitionPhase,
@@ -31,6 +35,18 @@ function baseRunOptions() {
 
 function baseRun() {
   return initRunState(baseRunOptions());
+}
+
+function withCurrentEvidence<T extends ReturnType<typeof baseRun>>(state: T): T {
+  const headSha = "d".repeat(40);
+  let evidenced = recordDirectImplementationEvidence(state, {
+    commitSha: headSha,
+    actor: "test-agent",
+    evidence: ["commit/direct"],
+  });
+  evidenced = recordVerificationEvidence(evidenced, { headSha, evidence: ["ci/run/green"] });
+  evidenced = recordReviewEvidence(evidenced, { headSha, evidence: ["review/approved"] });
+  return evidenced as T;
 }
 
 describe("state-machine", () => {
@@ -254,7 +270,7 @@ describe("state-machine", () => {
   });
 
   it("reports run-complete once phase is complete and no gates are open", () => {
-    let state = baseRun();
+    let state = withCurrentEvidence(baseRun());
     state = { ...state, phase: "complete" };
     expect(computeNextAction(state).action).toBe("run-complete");
   });
@@ -306,12 +322,12 @@ describe("state-machine", () => {
     const approvedHeadSha = "a".repeat(40);
     const mergeCommitSha = "b".repeat(40);
     const gateId = `merge-approval-pr47-sha${approvedHeadSha.slice(0, 8)}`;
-    let state = {
+    let state = withCurrentEvidence({
       ...baseRun(),
       phase: "merge" as const,
       deliveryPullRequest: 47,
       deliveryHeadSha: approvedHeadSha,
-    };
+    });
     expect(() => transitionPhase(state, "complete")).toThrow(/persisted delivery merge evidence/);
     state = upsertGate(state, { id: gateId, type: "human", question: "Approve delivery merge?" });
     state = resolveGate(state, gateId, {
@@ -393,6 +409,88 @@ describe("state-machine", () => {
     expect(rebound.gates.find((gate) => gate.id === "verification")?.result).toBe("pending");
     expect(rebound.gates.find((gate) => gate.id === "verification")?.evidence).toBeUndefined();
     expect(() => bindPullRequest(state, 42, "short")).toThrow(/full 40-character/);
+  });
+
+  it("blocks implementation until explicit evidence exists", () => {
+    const state = { ...baseRun(), phase: "implementation" as const };
+    expect(computeNextAction(state)).toMatchObject({ action: "await-technical-gate" });
+    expect(() => transitionPhase(state, "verification")).toThrow(/explicit current implementation evidence/);
+  });
+
+  it("models direct implementation explicitly and permits verification entry", () => {
+    const state = recordDirectImplementationEvidence(
+      { ...baseRun(), phase: "implementation" as const },
+      { commitSha: "c".repeat(40), actor: "codex", evidence: ["commit/c"], verifiedAt: "2026-08-26T12:00:00Z" },
+    );
+    expect(state.implementationEvidence).toMatchObject({ type: "direct", actor: "codex" });
+    expect(transitionPhase(state, "verification").phase).toBe("verification");
+  });
+
+  it("returns deterministic recovery for a legacy phase beyond implementation without evidence", () => {
+    const state = { ...baseRun(), phase: "merge" as const };
+    expect(computeNextAction(state)).toMatchObject({ action: "recover-invalid-state" });
+    expect(computeNextAction(state).detail).toContain("reconcile it to implementation");
+  });
+
+  it("recovers an invalid legacy state without losing gates, iterations or phase history", () => {
+    const state = {
+      ...baseRun(),
+      phase: "merge" as const,
+      gates: [{
+        id: "historic",
+        type: "runtime" as const,
+        result: "passed" as const,
+        createdAt: "2026-08-26T10:00:00Z",
+        updatedAt: "2026-08-26T10:00:00Z",
+        evidence: ["ci/old"],
+      }],
+      iterations: [{ index: 1, startedAt: "2026-08-26T10:00:00Z", finishedAt: "2026-08-26T10:01:00Z", result: "passed" as const }],
+      phaseHistory: [{ from: "documentation" as const, to: "merge" as const, at: "2026-08-26T10:02:00Z", kind: "advance" as const }],
+    };
+    const input = {
+      reason: "legacy state advanced without implementation evidence",
+      actor: "codex",
+      accessRole: "GITHUB_PERSONAL_ACCESS_TOKEN",
+      evidence: ["issue/84", "run/80"],
+      idempotencyKey: "recover:run80:missing-implementation:v1",
+      occurredAt: "2026-08-26T12:00:00Z",
+    };
+    const recovered = recoverInvalidRunState(state, input);
+    expect(recovered.phase).toBe("implementation");
+    expect(recovered.gates).toEqual(state.gates);
+    expect(recovered.iterations).toEqual(state.iterations);
+    expect(recovered.phaseHistory).toHaveLength(2);
+    expect(recovered.phaseHistory?.at(-1)).toMatchObject({
+      kind: "recovery",
+      from: "merge",
+      to: "implementation",
+      reason: input.reason,
+      actor: input.actor,
+      accessRole: input.accessRole,
+      evidence: input.evidence,
+      idempotencyKey: input.idempotencyKey,
+      at: input.occurredAt,
+    });
+    expect(recoverInvalidRunState(recovered, input)).toBe(recovered);
+  });
+
+  it("requires verification and review for the exact implementation head before merge", () => {
+    let state = bindImplementationPullRequest({ ...baseRun(), phase: "documentation" as const }, 84, "a".repeat(40));
+    state = recordVerificationEvidence(state, { headSha: "a".repeat(40), evidence: ["ci/84"] });
+    expect(computeNextAction(state)).toMatchObject({ action: "recover-invalid-state" });
+    expect(() => transitionPhase(state, "merge")).toThrow(/review evidence/);
+    state = recordReviewEvidence(state, { headSha: "a".repeat(40), evidence: ["review/84"] });
+    expect(transitionPhase(state, "merge").phase).toBe("merge");
+  });
+
+  it("invalidates stale verification and review evidence when implementation HEAD changes", () => {
+    let state = bindImplementationPullRequest(baseRun(), 84, "a".repeat(40));
+    state = recordVerificationEvidence(state, { headSha: "a".repeat(40), evidence: ["ci/old"] });
+    state = recordReviewEvidence(state, { headSha: "a".repeat(40), evidence: ["review/old"] });
+    const rebound = bindImplementationPullRequest(state, 84, "b".repeat(40));
+    expect(rebound.implementationEvidence).toMatchObject({ headSha: "b".repeat(40) });
+    expect(rebound.verificationEvidence).toBeUndefined();
+    expect(rebound.reviewEvidence).toBeUndefined();
   });
 
   it("explicitly migrates an existing run approval policy without changing immutable fields", () => {

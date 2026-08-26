@@ -22,6 +22,9 @@ import {
   computeNextAction,
   initRunState,
   recordDeliveryMergeEffect,
+  recordDirectImplementationEvidence,
+  recordReviewEvidence,
+  recordVerificationEvidence,
   reconcileInit,
   resolveGate,
   upsertDocumentationSnapshot,
@@ -66,6 +69,18 @@ function baseRun(overrides: Partial<Parameters<typeof initRunState>[0]> = {}) {
     branch: "fix/autonomous-spec-to-agent-handoff",
     ...overrides,
   });
+}
+
+function withCurrentEvidence<T extends RunState>(state: T): T {
+  const headSha = sha("f");
+  let evidenced = recordDirectImplementationEvidence(state, {
+    commitSha: headSha,
+    actor: "test-agent",
+    evidence: ["commit/direct"],
+  });
+  evidenced = recordVerificationEvidence(evidenced, { headSha, evidence: ["ci/run/green"] });
+  evidenced = recordReviewEvidence(evidenced, { headSha, evidence: ["review/approved"] });
+  return evidenced as T;
 }
 
 // ---------------------------------------------------------------------------
@@ -392,7 +407,7 @@ describe("TAC-04 orchestrator", () => {
   });
 
   it("preserves normal completion semantics when complete is the requested target phase", async () => {
-    const state = { ...baseRun(), phase: "complete" as const };
+    const state = withCurrentEvidence({ ...baseRun(), phase: "complete" as const });
     const store = {
       issueRef: undefined,
       async load() { return state; },
@@ -441,10 +456,10 @@ describe("TAC-04 orchestrator", () => {
   });
 
   it("returns run-complete when phase is already complete", async () => {
-    let state = {
+    let state = withCurrentEvidence({
       ...baseRun(),
       phase: "complete" as const,
-    };
+    });
 
     // Add a passed merge gate so complete is valid
     state = upsertGate(state, { id: `merge-approval-${"a".repeat(40)}`, type: "merge" });
@@ -492,12 +507,12 @@ describe("TAC-04 orchestrator", () => {
   it("does not complete on merge approval alone, but completes after persisted delivery merge effect", async () => {
     const approvedHeadSha = sha("a");
     const gateId = `merge-approval-pr47-sha${approvedHeadSha.slice(0, 8)}`;
-    let state: RunState = {
+    let state: RunState = withCurrentEvidence({
       ...baseRun(),
       phase: "merge",
       deliveryPullRequest: 47,
       deliveryHeadSha: approvedHeadSha,
-    };
+    });
     state = upsertGate(state, { id: gateId, type: "human", question: "Approve delivery merge?" });
     state = resolveGate(state, gateId, {
       result: "passed",
@@ -545,12 +560,12 @@ describe("TAC-04 orchestrator", () => {
     const gateId = `merge-approval-pr47-sha${approvedHeadSha.slice(0, 8)}`;
     // Use legacy label policy so the gate-required behavior is testable here.
     // SPEC-015 TAC-07: legacy runs must continue to work unchanged.
-    let state: RunState = {
+    let state: RunState = withCurrentEvidence({
       ...baseRun({ prApprovalPolicy: "label-authorizes-auto-merge" }),
       phase: "merge",
       deliveryPullRequest: 47,
       deliveryHeadSha: approvedHeadSha,
-    };
+    });
     state = upsertGate(state, { id: gateId, type: "human", question: "Approve delivery merge?" });
 
     // Delivery PR merged, but no gate passed yet → delivery-pr-merge-effect must remain pending
@@ -603,12 +618,12 @@ describe("TAC-04 orchestrator", () => {
   it("event order: approval-first — merge evidence recorded after delivery PR merges completes run", async () => {
     const approvedHeadSha = sha("b");
     const gateId = `merge-approval-pr48-sha${approvedHeadSha.slice(0, 8)}`;
-    let state: RunState = {
+    let state: RunState = withCurrentEvidence({
       ...baseRun(),
       phase: "merge",
       deliveryPullRequest: 48,
       deliveryHeadSha: approvedHeadSha,
-    };
+    });
     state = upsertGate(state, { id: gateId, type: "human", question: "Approve delivery merge?" });
     state = resolveGate(state, gateId, {
       result: "passed",

@@ -25,6 +25,9 @@ import {
   formatCanonicalRunId,
   initRunState,
   recordDeliveryMergeEffect,
+  recordDirectImplementationEvidence,
+  recordReviewEvidence,
+  recordVerificationEvidence,
   resolveGate,
   transitionPhase,
   upsertDocumentationSnapshot,
@@ -71,6 +74,14 @@ function baseState() {
 
 function stateWithMergeEvidence() {
   let state = baseState();
+  const implementationHeadSha = sha("f");
+  state = recordDirectImplementationEvidence(state, {
+    commitSha: implementationHeadSha,
+    actor: "test-agent",
+    evidence: ["commit/direct"],
+  });
+  state = recordVerificationEvidence(state, { headSha: implementationHeadSha, evidence: ["ci/run/green"] });
+  state = recordReviewEvidence(state, { headSha: implementationHeadSha, evidence: ["review/approved"] });
   const approvedHeadSha = sha("a");
   state = { ...state, phase: "merge" as const, deliveryPullRequest: 56, deliveryHeadSha: approvedHeadSha };
   const gateId = `merge-approval-pr56-sha${approvedHeadSha.slice(0, 8)}`;

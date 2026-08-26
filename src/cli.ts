@@ -65,7 +65,11 @@ import {
   needsGateReconciliation,
   needsDeliveryMergeReconciliation,
   recordDeliveryMergeEffect,
+  recordDirectImplementationEvidence,
+  recordReviewEvidence,
+  recordVerificationEvidence,
   reconcileInit,
+  recoverInvalidRunState,
   resolveGate,
   startIteration,
   transitionPhase,
@@ -1394,6 +1398,38 @@ async function cmdPhase(argv: StoreArgs & { phase: PhaseId }): Promise<void> {
   printResult("phase", { state, nextAction: next }, next.detail);
 }
 
+async function cmdStateRecover(argv: StoreArgs & {
+  reason: string;
+  actor: string;
+  accessRole: string;
+  evidence: string[];
+  idempotencyKey: string;
+}): Promise<void> {
+  const store = await resolveExistingStore(argv);
+  const state = await store.load();
+  const recovered = recoverInvalidRunState(state, argv);
+  if (recovered !== state) await store.save(recovered);
+  const next = computeNextAction(recovered);
+  printResult(
+    "state-recover",
+    { recovered: recovered !== state, from: state.phase, to: recovered.phase, idempotencyKey: argv.idempotencyKey },
+    next.detail,
+  );
+}
+
+async function cmdDirectImplementationEvidence(argv: StoreArgs & {
+  commitSha: string;
+  actor: string;
+  evidence: string[];
+}): Promise<void> {
+  const store = await resolveExistingStore(argv);
+  const state = await store.load();
+  const updated = recordDirectImplementationEvidence(state, argv);
+  await store.save(updated);
+  const next = computeNextAction(updated);
+  printResult("implementation-evidence-record", { type: "direct", commitSha: argv.commitSha, actor: argv.actor }, next.detail);
+}
+
 async function cmdPrBind(
   argv: StoreArgs & { pullRequest: number; headSha: string },
 ): Promise<void> {
@@ -2089,6 +2125,10 @@ async function cmdImplPrMerge(argv: StoreArgs): Promise<void> {
   const gateId = "impl-pr-ready";
   const failures: string[] = [];
   const evidence: string[] = [`https://github.com/${argv.repository}/pull/${implPr}`];
+  const boundImplementationHead = state.implementationHeadSha?.toLowerCase();
+  const currentHeadReviews = (state.reviews ?? []).filter(
+    (review) => review.pullRequest === implPr && review.reviewedHeadSha.toLowerCase() === boundImplementationHead,
+  );
 
   if (prData.reviewDecision && prData.reviewDecision !== "APPROVED" && prData.reviewDecision !== "") {
     failures.push(`review not approved (reviewDecision: '${prData.reviewDecision}')`);
@@ -2097,10 +2137,19 @@ async function cmdImplPrMerge(argv: StoreArgs): Promise<void> {
     failures.push(`PR not ready to merge (mergeStateStatus: '${prData.mergeStateStatus}')`);
   }
   const checks = prData.statusCheckRollup ?? [];
+  if (checks.length === 0) {
+    failures.push("no CI status checks found for the bound implementation head");
+  }
   const blockingChecks = findBlockingStatusChecks(checks);
   if (blockingChecks.length > 0) {
     failures.push(`${blockingChecks.length} CI check(s) are not successful: ${blockingChecks.join(", ")}`);
   }
+  if (prData.reviewDecision !== "APPROVED" && currentHeadReviews.length === 0) {
+    failures.push("no persisted review evidence found for the bound implementation head");
+  }
+  evidence.push(...currentHeadReviews.map((review) =>
+    `https://github.com/${argv.repository}/pull/${implPr}#pullrequestreview-${review.reviewId}`,
+  ));
 
   // Upsert gate (idempotent) and reflect current CI/review state
   state = upsertGate(state, { id: gateId, type: "runtime", question: `Implementation PR #${implPr} CI and review checks` });
@@ -2114,6 +2163,13 @@ async function cmdImplPrMerge(argv: StoreArgs): Promise<void> {
   }
 
   state = resolveGate(state, gateId, { result: "passed", evidence });
+
+  const verifiedImplementationHead = state.implementationHeadSha;
+  if (!verifiedImplementationHead) {
+    throw new Error(`implementation PR #${implPr} has no bound head SHA for verification evidence`);
+  }
+  state = recordVerificationEvidence(state, { headSha: verifiedImplementationHead, evidence });
+  state = recordReviewEvidence(state, { headSha: verifiedImplementationHead, evidence });
 
   // TAC-11: Merge the PR
   if (!prData.headRefOid) {
@@ -3376,6 +3432,46 @@ const _harnessCli = yargs(hideBin(process.argv))
         ] as const,
       }),
     async (argv) => cmdPhase({ state: argv.state, repository: argv.repository, runId: argv.runId, phase: argv.phase as PhaseId }),
+  )
+  .command(
+    "state-recover",
+    "Move an invalid legacy run back to its earliest valid phase without deleting history",
+    (y) =>
+      storeOptions(y)
+        .option("reason", { type: "string", demandOption: true })
+        .option("actor", { type: "string", demandOption: true })
+        .option("access-role", { type: "string", demandOption: true })
+        .option("evidence", { type: "array", string: true, demandOption: true })
+        .option("idempotency-key", { type: "string", demandOption: true }),
+    async (argv) =>
+      cmdStateRecover({
+        state: argv.state,
+        repository: argv.repository,
+        runId: argv.runId,
+        reason: argv.reason,
+        actor: argv.actor,
+        accessRole: argv.accessRole,
+        evidence: argv.evidence as string[],
+        idempotencyKey: argv.idempotencyKey,
+      }),
+  )
+  .command(
+    "implementation-evidence-record",
+    "Record an explicit direct implementation commit instead of inferring implementation from notes",
+    (y) =>
+      storeOptions(y)
+        .option("commit-sha", { type: "string", demandOption: true })
+        .option("actor", { type: "string", demandOption: true })
+        .option("evidence", { type: "array", string: true, demandOption: true }),
+    async (argv) =>
+      cmdDirectImplementationEvidence({
+        state: argv.state,
+        repository: argv.repository,
+        runId: argv.runId,
+        commitSha: argv.commitSha,
+        actor: argv.actor,
+        evidence: argv.evidence as string[],
+      }),
   )
   .command(
     "gate-acknowledge",
