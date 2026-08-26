@@ -197,4 +197,5 @@ Schreibrechten (`repo`-Scope) auf die Zielrepositories.
 ```bash
 npm install
 npm run check
+npm run release:smoke # kompletter Release-, Paket-, Clean-Install- und Upgrade-Nachweis
 ```
