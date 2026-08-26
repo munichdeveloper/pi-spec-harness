@@ -30,6 +30,7 @@ import {
   resolveWorkflowInstallPlan,
 } from "../src/workflows/template-catalog.js";
 import { decideWorkflowInstall } from "../src/workflows/install-decision.js";
+import { DEFAULT_HARNESS_WORKFLOW_REF } from "../src/release.js";
 
 describe("WORKFLOW_TEMPLATE_CATALOG", () => {
   it("TAC-01: includes the migrated bug-triage entry unchanged (path/marker/default ref)", () => {
@@ -96,13 +97,23 @@ describe("WORKFLOW_TEMPLATE_CATALOG", () => {
   });
 
   it("renders each reactive reference with its configured catalog default ref", () => {
-    expect(renderSpecToIssueReference()).toContain("spec-to-issue.yml@v0.2.2");
-    expect(renderSpecToIssueReference()).toContain("harness-ref: 'v0.2.2'");
-    expect(renderLabelApprovalBundlingReference()).toContain("label-approval-bundling.yml@v0.2.4");
-    expect(renderLabelApprovalBundlingReference()).toContain("harness-ref: 'v0.2.4'");
-    expect(renderBugWorkflowReference()).toContain("bug-triage.yml@v0.2.2");
-    expect(renderReviewFixReference()).toContain("review-fix.yml@v0.2.4");
-    expect(renderReviewFixReference()).toContain("harness-ref: 'v0.2.4'");
+    expect(renderSpecToIssueReference()).toContain(`spec-to-issue.yml@${DEFAULT_HARNESS_WORKFLOW_REF}`);
+    expect(renderSpecToIssueReference()).toContain(`harness-ref: '${DEFAULT_HARNESS_WORKFLOW_REF}'`);
+    expect(renderLabelApprovalBundlingReference()).toContain(`label-approval-bundling.yml@${DEFAULT_HARNESS_WORKFLOW_REF}`);
+    expect(renderLabelApprovalBundlingReference()).toContain(`harness-ref: '${DEFAULT_HARNESS_WORKFLOW_REF}'`);
+    expect(renderBugWorkflowReference()).toContain(`bug-triage.yml@${DEFAULT_HARNESS_WORKFLOW_REF}`);
+    expect(renderReviewFixReference()).toContain(`review-fix.yml@${DEFAULT_HARNESS_WORKFLOW_REF}`);
+    expect(renderReviewFixReference()).toContain(`harness-ref: '${DEFAULT_HARNESS_WORKFLOW_REF}'`);
+  });
+
+  it("release gate: every catalog default uses the same immutable full SHA", () => {
+    expect(DEFAULT_HARNESS_WORKFLOW_REF).toMatch(/^[0-9a-f]{40}$/);
+    for (const entry of WORKFLOW_TEMPLATE_CATALOG) {
+      expect(entry.defaultRef, entry.name).toBe(DEFAULT_HARNESS_WORKFLOW_REF);
+      const rendered = entry.renderReference();
+      expect(rendered, entry.name).toContain(`@${DEFAULT_HARNESS_WORKFLOW_REF}`);
+      expect(rendered, entry.name).not.toMatch(/@main(?:\s|$)/);
+    }
   });
 
   it("renders the trusted review-fix receiver with split triggers and checks permission", () => {

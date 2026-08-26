@@ -6,6 +6,7 @@ import {
   type BugWorkflowReferenceOptions,
 } from "../bug/workflow-reference.js";
 import type { SpecGenerationProvider } from "../state/types.js";
+import { DEFAULT_HARNESS_WORKFLOW_REF } from "../release.js";
 import {
   CAPABILITY_CALLER_MARKER,
   CAPABILITY_CALLER_PATH,
@@ -21,7 +22,7 @@ export const DEFAULT_REUSABLE_WORKFLOW_REPOSITORY = "munichdeveloper/pi-spec-har
 
 export const SPEC_TO_ISSUE_REFERENCE_PATH = ".github/workflows/harness-spec-to-issue.yml";
 export const SPEC_TO_ISSUE_REFERENCE_MARKER = "# Managed by pi-spec-harness: spec-to-issue-reference v1";
-export const DEFAULT_SPEC_TO_ISSUE_WORKFLOW_REF = "v0.2.2";
+export const DEFAULT_SPEC_TO_ISSUE_WORKFLOW_REF = DEFAULT_HARNESS_WORKFLOW_REF;
 
 export interface SpecToIssueReferenceOptions {
   harnessRef?: string;
@@ -61,7 +62,7 @@ jobs:
 
 export const LABEL_APPROVAL_BUNDLING_REFERENCE_PATH = ".github/workflows/harness-label-approval-bundling.yml";
 export const LABEL_APPROVAL_BUNDLING_REFERENCE_MARKER = "# Managed by pi-spec-harness: label-approval-bundling-reference v1";
-export const DEFAULT_LABEL_APPROVAL_BUNDLING_WORKFLOW_REF = "v0.2.4";
+export const DEFAULT_LABEL_APPROVAL_BUNDLING_WORKFLOW_REF = DEFAULT_HARNESS_WORKFLOW_REF;
 
 export interface LabelApprovalBundlingReferenceOptions {
   harnessRef?: string;
@@ -114,7 +115,7 @@ export interface WorkflowTemplateDefinition {
 
 export const REVIEW_FIX_REFERENCE_PATH = ".github/workflows/harness-review-fix.yml";
 export const REVIEW_FIX_REFERENCE_MARKER = "# Managed by pi-spec-harness: review-fix-reference v1";
-export const DEFAULT_REVIEW_FIX_WORKFLOW_REF = "v0.2.4";
+export const DEFAULT_REVIEW_FIX_WORKFLOW_REF = DEFAULT_HARNESS_WORKFLOW_REF;
 
 export interface ReviewFixReferenceOptions {
   harnessRef?: string;
@@ -214,7 +215,7 @@ jobs:
 
 export const PROCESS_AUDIT_RECEIVER_PATH = ".github/workflows/harness-process-audit-receiver.yml";
 export const PROCESS_AUDIT_RECEIVER_MARKER = "# Managed by pi-spec-harness: process-audit-receiver-reference v1";
-export const DEFAULT_PROCESS_AUDIT_RECEIVER_WORKFLOW_REF = "aca192d94f3db79747c000a7b0f9438acac48b5a";
+export const DEFAULT_PROCESS_AUDIT_RECEIVER_WORKFLOW_REF = DEFAULT_HARNESS_WORKFLOW_REF;
 
 export interface ProcessAuditReceiverOptions {
   harnessRef?: string;
@@ -272,7 +273,7 @@ jobs:
 
 export const RUN_DOCUMENTATION_FINALIZER_PATH = ".github/workflows/harness-run-documentation-finalizer.yml";
 export const RUN_DOCUMENTATION_FINALIZER_MARKER = "# Managed by pi-spec-harness: run-documentation-finalizer-reference v1";
-export const DEFAULT_RUN_DOCUMENTATION_FINALIZER_WORKFLOW_REF = "aca192d94f3db79747c000a7b0f9438acac48b5a";
+export const DEFAULT_RUN_DOCUMENTATION_FINALIZER_WORKFLOW_REF = DEFAULT_HARNESS_WORKFLOW_REF;
 
 export interface RunDocumentationFinalizerOptions {
   harnessRef?: string;
@@ -341,7 +342,7 @@ jobs:
 
 export const REQUIREMENT_TO_SPEC_REFERENCE_PATH = ".github/workflows/harness-requirement-to-spec.yml";
 export const REQUIREMENT_TO_SPEC_REFERENCE_MARKER = "# Managed by pi-spec-harness: requirement-to-spec-reference v1";
-export const DEFAULT_REQUIREMENT_TO_SPEC_WORKFLOW_REF = "v0.3.0";
+export const DEFAULT_REQUIREMENT_TO_SPEC_WORKFLOW_REF = DEFAULT_HARNESS_WORKFLOW_REF;
 
 export interface RequirementToSpecReferenceOptions {
   harnessRef?: string;
