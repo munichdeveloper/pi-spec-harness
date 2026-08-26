@@ -57,13 +57,6 @@ permissions:
   contents: read
   actions: write   # required for cache save/restore in the reusable workflow
 
-concurrency:
-  # AC-08: align to the same effective contract identifier as the reusable workflow.
-  # Bind to the actual pinned action ref + canonical allow list + contract version,
-  # not to an input that may differ from the pin actually executed.
-  group: harness-capability-smoke-\${{ github.repository }}-anthropics/claude-code-action@v1.0.94-Bash_Edit_Write-cv1
-  cancel-in-progress: false
-
 jobs:
   smoke:
     uses: ${reusableRepository}/.github/workflows/capability-smoke.yml@${harnessRef}

@@ -267,6 +267,11 @@ berechneten Fingerprint und die Schema-Version validiert.
 
 ### Capability-Smoke-Ablauf
 
+Die Serialisierung liegt ausschließlich im wiederverwendbaren Workflow. Der
+dünne Caller definiert bewusst keine eigene `concurrency`-Gruppe: Identische
+Gruppen auf Caller- und aufgerufener Ebene erzeugen bei GitHub einen
+verschachtelten Deadlock, noch bevor der erste Job startet.
+
 1. **Credential-Check** (TAC-11): Ist weder `ANTHROPIC_API_KEY` noch
    `CLAUDE_CODE_OAUTH_TOKEN` gesetzt, schlägt der Workflow mit einer klaren
    Meldung fehl, bevor `claude-code-action` aufgerufen wird.
@@ -311,6 +316,7 @@ oder über das GitHub-UI: **Actions → Harness Capability Smoke → Run workflo
 | `Capability smoke failed. bash_ok=false` | Bash-Befehl wurde blockiert | `settings.permissions.allow` prüfen |
 | `File content mismatch` | Edit-Tool hat Datei nicht korrekt geändert | Smoke wiederholen; ggf. Action-Pin prüfen |
 | `Cached attestation fingerprint … does not match` | Cache-Poisoning oder falscher Key | Cache manuell löschen und Smoke neu auslösen |
+| `deadlock was detected for concurrency group` | Veralteter Caller besitzt dieselbe Concurrency-Gruppe wie der Reusable Workflow | Caller mit der aktuellen Harness-Version neu installieren |
 
 ### Installation (TAC-12)
 

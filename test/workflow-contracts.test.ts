@@ -337,8 +337,22 @@ describe("SPEC-010 capability-smoke reusable workflow contracts", () => {
     expect(caller).toContain("push:");
     expect(caller).toContain("harness-capability-smoke.yml");
     expect(caller).toContain("harness-bug-triage.yml");
-    expect(caller).toContain("cancel-in-progress: false");
     expect(caller).toContain("secrets: inherit");
+  });
+
+  it("release regression: thin caller does not deadlock the reusable workflow concurrency", async () => {
+    const { renderCapabilityCallerReference } = await import("../src/capability/capability-caller.js");
+    const caller = renderCapabilityCallerReference();
+    const reusable = await readFile(".github/workflows/capability-smoke.yml", "utf8");
+
+    // GitHub cancels nested reusable workflows before job start when the
+    // top-level caller and called workflow acquire the same concurrency group.
+    // Serialization therefore belongs exclusively to the reusable workflow.
+    expect(caller).not.toContain("concurrency:");
+    expect(caller).not.toContain("harness-capability-smoke-${{ github.repository }}");
+    expect(reusable).toContain("concurrency:");
+    expect(reusable).toContain("harness-capability-smoke-${{ github.repository }}");
+    expect(reusable).toContain("cancel-in-progress: false");
   });
 
   it("TAC-12: capability-smoke is registered in WORKFLOW_TEMPLATE_CATALOG", async () => {
@@ -422,12 +436,11 @@ describe("SPEC-010 capability-smoke reusable workflow contracts", () => {
     expect(concurrencySlice).not.toContain("inputs.claude-code-action-version");
   });
 
-  it("AC-08: thin caller concurrency matches the same effective contract identifier as the reusable workflow", async () => {
+  it("AC-08: thin caller delegates the effective capability contract to the reusable workflow", async () => {
     const { renderCapabilityCallerReference } = await import("../src/capability/capability-caller.js");
     const caller = renderCapabilityCallerReference();
-    // Caller concurrency must use the same full action pin, not a variable input
-    expect(caller).toContain("anthropics/claude-code-action@v1.0.94");
-    // Must NOT use the input variable as the differentiator
+    expect(caller).toContain("claude-code-action-version: v1.0.94");
+    expect(caller).not.toContain("concurrency:");
     expect(caller).not.toContain("inputs.claude-code-action-version");
     expect(caller).not.toContain("vars.HARNESS_CLAUDE_CODE_ACTION_VERSION");
   });
