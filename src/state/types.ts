@@ -22,7 +22,7 @@ export type PhaseId =
   | "merge"
   | "complete";
 
-export type GateResult = "pending" | "passed" | "failed" | "needs-human";
+export type GateResult = "pending" | "passed" | "failed" | "needs-human" | "superseded";
 
 export type GateType = "spec" | "issue" | "runtime" | "review" | "human" | "merge";
 
@@ -86,6 +86,20 @@ export interface GateRecord {
     by: string;
     at: string;
     note?: string;
+  };
+  /** Loss-safe record for a mechanically proven false-positive gate. */
+  supersession?: {
+    idempotencyKey: string;
+    classification: "automation-false-positive" | "operator-false-positive";
+    reason: string;
+    description: string;
+    actor: string;
+    accessRole: string;
+    evidence: string[];
+    occurredAt: string;
+    auditStatus: "prepared" | "confirmed";
+    auditConfirmedAt?: string;
+    completedAt?: string;
   };
 }
 

@@ -1123,7 +1123,7 @@ export const github = {
       occurred_at: string;
       process_instance: string;
       idempotency_key: string;
-      process_code: "DOCUMENTATION_UPDATE";
+      process_code: "DOCUMENTATION_UPDATE" | "PROCESS_RECONCILIATION";
       actor: string;
       access_role: string;
       supporting_access_roles: string[];

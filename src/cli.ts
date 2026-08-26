@@ -12,6 +12,13 @@ import {
   publishHumanGateIssue,
   postGateDecision,
 } from "./gates/human-gate.js";
+import {
+  buildGateSupersessionAuditEnvelope,
+  completeGateSupersession,
+  confirmGateSupersessionAudit,
+  prepareGateSupersession,
+  type GateSupersessionClassification,
+} from "./gates/gate-supersession.js";
 import { findBlockingStatusChecks, github, type StatusCheckRollupItem } from "./github/gh.js";
 import { orchestrate } from "./orchestrator.js";
 import { getSpecAssignee } from "./spec/spec-parser.js";
@@ -104,7 +111,7 @@ export interface WriterGithubAdapter {
     occurred_at: string;
     process_instance: string;
     idempotency_key: string;
-    process_code: "DOCUMENTATION_UPDATE";
+    process_code: "DOCUMENTATION_UPDATE" | "PROCESS_RECONCILIATION";
     actor: string;
     access_role: string;
     supporting_access_roles: string[];
@@ -1268,6 +1275,95 @@ async function cmdGateResolve(
   await store.save(state);
   const next = computeNextAction(state);
   printResult("gate-resolve", { state, nextAction: next }, next.detail);
+}
+
+export async function cmdGateSupersede(
+  argv: StoreArgs & {
+    gateId: string;
+    idempotencyKey: string;
+    classification: GateSupersessionClassification;
+    reason: string;
+    description: string;
+    actor: string;
+    accessRole: string;
+    evidence: string[];
+    auditRecorderRepository?: string;
+    auditJournalPath?: string;
+    defaultBranch?: string;
+  },
+  gh: WriterGithubAdapter = github,
+): Promise<void> {
+  const store = await resolveExistingStore(argv);
+  if (!store.issueRef || !argv.repository) {
+    throw new Error("gate-supersede requires the GitHub-issue backend (--repository + --run-id)");
+  }
+  const recorder = argv.auditRecorderRepository ?? argv.repository;
+  const journalPath = argv.auditJournalPath ?? "docs/process-audit/journal";
+  const defaultBranch = argv.defaultBranch ?? "main";
+  let state = await store.load();
+  state = prepareGateSupersession(state, {
+    gateId: argv.gateId,
+    idempotencyKey: argv.idempotencyKey,
+    classification: argv.classification,
+    reason: argv.reason,
+    description: argv.description,
+    actor: argv.actor,
+    accessRole: argv.accessRole,
+    evidence: argv.evidence,
+  });
+  // State correction is durable before any audit, comment, or label side effect.
+  await store.save(state);
+  let gate = findGate(state, argv.gateId);
+  if (!gate?.supersession) throw new Error(`gate '${argv.gateId}' lost its supersession checkpoint`);
+
+  if (gate.supersession.auditStatus !== "confirmed") {
+    await gh.dispatchProcessAuditEnvelopeV1(
+      recorder,
+      buildGateSupersessionAuditEnvelope({
+        state,
+        gateId: argv.gateId,
+        processInstance: formatCanonicalRunId(argv.repository, store.issueRef.number).processInstance,
+        trackingIssueNumber: store.issueRef.number,
+        trackingIssueUrl: store.issueRef.url,
+      }),
+    );
+    const confirmedAt = await gh.confirmAuditEventInJournal(
+      recorder,
+      journalPath,
+      gate.supersession.idempotencyKey,
+      defaultBranch,
+    );
+    state = confirmGateSupersessionAudit(state, argv.gateId, argv.idempotencyKey, confirmedAt);
+    await store.save(state);
+    gate = findGate(state, argv.gateId);
+  }
+
+  if (gate?.cleanupPending) {
+    const marker = `<!-- harness:gate-superseded:${state.runId}:${argv.gateId}:${argv.idempotencyKey} -->`;
+    const issue = await github.viewIssue(store.issueRef.repository, store.issueRef.number);
+    if (!issue.comments.some((comment) => comment.body.includes(marker))) {
+      await github.commentIssue(
+        store.issueRef.repository,
+        store.issueRef.number,
+        `${marker}\nHarness: Gate \`${argv.gateId}\` wurde als **${gate.supersession?.classification}** superseded. ` +
+          `Dies ist keine menschliche Freigabe oder Ablehnung. Audit: \`${argv.idempotencyKey}\`.`,
+      );
+    }
+    await github.removeLabels(store.issueRef.repository, store.issueRef.number, [
+      "status:needs-human",
+      "harness:gate-open",
+      "harness:gate-approved",
+      "harness:gate-rejected",
+    ]);
+    state = completeGateSupersession(state, argv.gateId);
+    await store.save(state);
+  }
+  const next = computeNextAction(state);
+  printResult(
+    "gate-supersede",
+    { gateId: argv.gateId, idempotencyKey: argv.idempotencyKey, state, nextAction: next },
+    next.detail,
+  );
 }
 
 async function cmdPhase(argv: StoreArgs & { phase: PhaseId }): Promise<void> {
@@ -3220,6 +3316,44 @@ const _harnessCli = yargs(hideBin(process.argv))
         gateId: argv.gateId,
         result: argv.result as "passed" | "failed",
         evidence: argv.evidence as string[] | undefined,
+      }),
+  )
+  .command(
+    "gate-supersede",
+    "Supersede a mechanically proven false-positive human gate with durable audit confirmation",
+    (y) =>
+      storeOptions(y)
+        .option("gate-id", { type: "string", demandOption: true })
+        .option("idempotency-key", { type: "string", demandOption: true })
+        .option("classification", {
+          type: "string",
+          demandOption: true,
+          choices: ["automation-false-positive", "operator-false-positive"] as const,
+        })
+        .option("reason", { type: "string", demandOption: true })
+        .option("description", { type: "string", demandOption: true })
+        .option("actor", { type: "string", demandOption: true })
+        .option("access-role", { type: "string", demandOption: true })
+        .option("evidence", { type: "array", string: true, demandOption: true })
+        .option("audit-recorder-repository", { type: "string" })
+        .option("audit-journal-path", { type: "string", default: "docs/process-audit/journal" })
+        .option("default-branch", { type: "string", default: "main" }),
+    async (argv) =>
+      cmdGateSupersede({
+        state: argv.state,
+        repository: argv.repository,
+        runId: argv.runId,
+        gateId: argv.gateId,
+        idempotencyKey: argv.idempotencyKey,
+        classification: argv.classification as GateSupersessionClassification,
+        reason: argv.reason,
+        description: argv.description,
+        actor: argv.actor,
+        accessRole: argv.accessRole,
+        evidence: argv.evidence as string[],
+        auditRecorderRepository: argv.auditRecorderRepository,
+        auditJournalPath: argv.auditJournalPath,
+        defaultBranch: argv.defaultBranch,
       }),
   )
   .command(

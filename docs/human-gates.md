@@ -59,6 +59,45 @@ Lesezugriff auf das Issue sieht denselben Stand.
    **demselben** Issue. Ein Run erzeugt über seine gesamte Lebensdauer also
    genau ein Issue, nicht eines pro Gate.
 
+## Nachweisbare False Positives superseden
+
+Ein technisch oder operativ nachweisbares False Positive wird weder als
+Freigabe noch als Ablehnung verbucht. Dafür existiert ausschließlich der
+benannte Befehl `gate-supersede`. Er verlangt Gate-ID, Klassifikation,
+Idempotenzschlüssel, Begründung, Beschreibung, kanonischen Akteur,
+Zugriffsrolle und Evidence. Kommentartext oder das Entfernen von Labels kann
+keine Supersession auslösen.
+
+Die Ausführung ist loss-safe geordnet:
+
+1. Das ursprüngliche Gate bleibt erhalten und erhält den terminalen Zustand
+   `superseded`, den strukturierten Supersession-Datensatz sowie
+   `cleanupPending: true`. Dieser State wird zuerst gespeichert.
+2. Ein vollständiger SPEC-005-Envelope mit
+   `process_code: PROCESS_RECONCILIATION` und `outcome: SUPERSEDED` wird an den
+   Audit Recorder gesendet und auf dessen Default Branch bestätigt.
+3. Erst nach der dauerhaften Audit-Bestätigung werden Kommentar und transiente
+   Gate-Labels idempotent bereinigt. Danach wird `cleanupPending` gelöscht.
+
+Wiederholungen mit demselben Idempotenzschlüssel setzen am gespeicherten
+Checkpoint fort. Ein anderer Schlüssel wird abgelehnt. Approval-, Merge-,
+Security-, Kosten-, Spec-, Migrations-, Deployment- und Production-Gates sind
+explizit geschützt und können diesen Pfad nicht verwenden.
+
+```bash
+npm run harness -- gate-supersede \
+  --repository munichdeveloper/pi-spec-harness \
+  --run-id issue-70 \
+  --gate-id agent-assign-unverified \
+  --idempotency-key gate-supersede:issue-70:agent-assign-unverified:v1 \
+  --classification automation-false-positive \
+  --actor CODEX \
+  --access-role CODEX_CHAT_SESSION \
+  --reason "Obsolete delegation attempt conflicts with the corrected responsibility model" \
+  --description "Preserve the false-positive gate and resume only after audit confirmation" \
+  --evidence https://github.com/munichdeveloper/pi-spec-harness/issues/82
+```
+
 ## Event-getrieben statt Chat-Polling
 
 Weil Zustand und Entscheidung vollständig im Issue leben, kann eine GitHub

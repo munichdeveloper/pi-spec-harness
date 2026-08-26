@@ -133,7 +133,7 @@ export function upsertGate(
 export function resolveGate(
   state: RunState,
   gateId: string,
-  update: Partial<Pick<GateRecord, "result" | "evidence" | "issue" | "decision" | "openedAt" | "context" | "publication" | "cleanupPending">>,
+  update: Partial<Pick<GateRecord, "result" | "evidence" | "issue" | "decision" | "openedAt" | "context" | "publication" | "cleanupPending" | "supersession">>,
 ): RunState {
   const timestamp = nowIso();
   const index = state.gates.findIndex((g) => g.id === gateId);
@@ -188,7 +188,11 @@ export function findUnacknowledgedRejectedGate(state: RunState): GateRecord | un
 }
 
 export function findPendingGateCleanup(state: RunState): GateRecord | undefined {
-  return state.gates.find((gate) => gate.type === "human" && gate.cleanupPending === true);
+  // Supersession cleanup is coupled to its audit-confirmation checkpoint and
+  // must only be resumed by gate-supersede, never by decision-label cleanup.
+  return state.gates.find(
+    (gate) => gate.type === "human" && gate.cleanupPending === true && gate.supersession === undefined,
+  );
 }
 
 export function findPendingGatePublication(state: RunState): GateRecord | undefined {
