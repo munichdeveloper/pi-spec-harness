@@ -1,5 +1,10 @@
 # Pi Spec Harness
 
+Aktueller Release-Kandidat: **v0.3.0**. Die installierten Workflow-Caller
+verwenden standardmäßig einen verifizierten vollständigen Commit-SHA; der
+Release-Tag wird erst nach erfolgreichem Clean-Install- und Upgrade-Smoke
+erstellt. Details: [Release Notes v0.3.0](docs/releases/v0.3.0.md).
+
 Ein **Pi-natives** Werkzeug für spezifikationsgetriebene Entwicklungsdurchläufe:
 persistenter Run-State, schema-geprüfte Gates, und -- als zentrale
 Design-Entscheidung -- **menschliche Entscheidungen laufen ausschließlich über
@@ -63,7 +68,8 @@ in dessen Body der komplette Run-State liegt (siehe
 [docs/human-gates.md](docs/human-gates.md)). Der Dateibackend (`--state
 <path>`) bleibt für rein lokale Tests verfügbar.
 
-Als Pi-Skill: dieses Repository via `pi install git:github.com/munichdeveloper/pi-spec-harness`
+Als Pi-Skill: dieses Repository nach Veröffentlichung versioniert via
+`pi install git:github.com/munichdeveloper/pi-spec-harness@v0.3.0`
 installieren (oder projektlokal `.agents/skills/pi-spec-harness/` verlinken).
 Siehe [`skills/pi-spec-harness/SKILL.md`](skills/pi-spec-harness/SKILL.md) für
 das vollständige Ablaufprotokoll.
@@ -148,7 +154,7 @@ npm run harness -- init \
   --requirement REQ-004 \
   --spec SPEC-004 \
   --install-bug-workflow \
-  --bug-workflow-ref v0.2.2
+  --bug-workflow-ref v0.3.0
 ```
 
 Die Referenzdatei enthält nur Trigger + `uses:` auf den zentralen reusable
