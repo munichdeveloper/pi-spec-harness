@@ -1,5 +1,5 @@
 import { nowIso } from "./store.js";
-import type { CanonicalRunId, GateDecisionContext, GateRecord, GateResult, GateType, IterationRecord, PhaseId, PrApprovalPolicy, ReviewAutomationScope, ReviewRecord, ReviewRemediationDispatch, ReviewThreadRecord, ReviewThreadStatus, RunState, SpecDispatchRecord, SpecGenerationClassification } from "./types.js";
+import type { CanonicalRunId, GateDecisionContext, GateRecord, GateResult, GateType, HeadBoundEvidence, IterationRecord, PhaseId, PrApprovalPolicy, ReviewAutomationScope, ReviewRecord, ReviewRemediationDispatch, ReviewThreadRecord, ReviewThreadStatus, RunState, SpecDispatchRecord, SpecGenerationClassification } from "./types.js";
 import { SCHEMA_VERSION } from "./types.js";
 
 export const PHASE_ORDER: PhaseId[] = [
@@ -450,6 +450,15 @@ export function transitionPhase(state: RunState, phase: PhaseId): RunState {
   if (iterationCapReached(state) && !iterationCapEscalationResolved(state) && phase !== "complete") {
     throw new Error("cannot advance phase after the automatic iteration cap was reached");
   }
+  if (state.phase === "implementation" && !hasCurrentImplementationEvidence(state)) {
+    throw new Error("cannot advance implementation without explicit current implementation evidence");
+  }
+  if (phase === "merge") {
+    const missing = missingCurrentDeliveryEvidence(state);
+    if (missing.length > 0) {
+      throw new Error(`cannot enter merge without current-head ${missing.join(" and ")} evidence`);
+    }
+  }
   if (
     phase === "complete" &&
     !hasPersistedDeliveryMergeEvidence(state)
@@ -467,7 +476,16 @@ export function transitionPhase(state: RunState, phase: PhaseId): RunState {
     }
   }
 
-  return { ...state, phase, updatedAt: nowIso() };
+  const transitionedAt = nowIso();
+  return {
+    ...state,
+    phase,
+    phaseHistory: [
+      ...(state.phaseHistory ?? []),
+      { from: state.phase, to: phase, at: transitionedAt, kind: "advance" },
+    ],
+    updatedAt: transitionedAt,
+  };
 }
 
 export function bindPullRequest(
@@ -603,9 +621,14 @@ export function bindImplementationPullRequest(
     (thread, index) => thread !== state.reviewThreads?.[index],
   ) ?? false;
   if (state.implementationPullRequest === pullRequest && state.implementationHeadSha === normalizedHeadSha) {
-    return reconciledStaleThreads
-      ? { ...state, reviewThreads: reconciledReviewThreads, updatedAt: nowIso() }
-      : state;
+    const evidenceCurrent = state.implementationEvidence?.type === "pull-request"
+      && state.implementationEvidence.pullRequest === pullRequest
+      && state.implementationEvidence.headSha === normalizedHeadSha;
+    if (evidenceCurrent) {
+      return reconciledStaleThreads
+        ? { ...state, reviewThreads: reconciledReviewThreads, updatedAt: nowIso() }
+        : state;
+    }
   }
   const headChanged =
     state.implementationPullRequest === pullRequest &&
@@ -623,9 +646,149 @@ export function bindImplementationPullRequest(
     ...state,
     implementationPullRequest: pullRequest,
     implementationHeadSha: normalizedHeadSha,
+    implementationEvidence: {
+      type: "pull-request",
+      pullRequest,
+      headSha: normalizedHeadSha,
+      verifiedAt: nowIso(),
+      evidence: [`https://github.com/${state.repository}/pull/${pullRequest}`],
+    },
+    verificationEvidence: headChanged ? undefined : state.verificationEvidence,
+    reviewEvidence: headChanged ? undefined : state.reviewEvidence,
     gates,
     reviewThreads: reconciledReviewThreads,
     updatedAt: nowIso(),
+  };
+}
+
+export function recordDirectImplementationEvidence(
+  state: RunState,
+  input: { commitSha: string; actor: string; evidence: string[]; verifiedAt?: string },
+): RunState {
+  if (!/^[0-9a-f]{40}$/i.test(input.commitSha)) {
+    throw new Error("direct implementation commit SHA must be a full 40-character Git SHA");
+  }
+  if (!input.actor.trim() || input.evidence.length === 0) {
+    throw new Error("direct implementation evidence requires actor and evidence");
+  }
+  const commitSha = input.commitSha.toLowerCase();
+  return {
+    ...state,
+    implementationEvidence: {
+      type: "direct",
+      commitSha,
+      actor: input.actor,
+      evidence: [...input.evidence],
+      verifiedAt: input.verifiedAt ?? nowIso(),
+    },
+    verificationEvidence: state.verificationEvidence?.headSha === commitSha ? state.verificationEvidence : undefined,
+    reviewEvidence: state.reviewEvidence?.headSha === commitSha ? state.reviewEvidence : undefined,
+    updatedAt: nowIso(),
+  };
+}
+
+function implementationEvidenceHead(state: RunState): string | undefined {
+  const evidence = state.implementationEvidence;
+  return evidence?.type === "pull-request" ? evidence.headSha : evidence?.commitSha;
+}
+
+export function hasCurrentImplementationEvidence(state: RunState): boolean {
+  const evidence = state.implementationEvidence;
+  if (!evidence) return false;
+  if (evidence.type === "pull-request") {
+    return evidence.pullRequest === state.implementationPullRequest
+      && evidence.headSha === state.implementationHeadSha;
+  }
+  return evidence.evidence.length > 0;
+}
+
+function recordHeadBoundEvidence(
+  state: RunState,
+  kind: "verificationEvidence" | "reviewEvidence",
+  input: { headSha: string; evidence: string[]; verifiedAt?: string },
+): RunState {
+  if (!/^[0-9a-f]{40}$/i.test(input.headSha) || input.evidence.length === 0) {
+    throw new Error(`${kind} requires a full head SHA and evidence`);
+  }
+  const expected = implementationEvidenceHead(state);
+  const headSha = input.headSha.toLowerCase();
+  if (!expected || expected !== headSha) {
+    throw new Error(`${kind} head '${headSha}' does not match current implementation evidence head '${expected ?? "missing"}'`);
+  }
+  const record: HeadBoundEvidence = {
+    headSha,
+    evidence: [...input.evidence],
+    verifiedAt: input.verifiedAt ?? nowIso(),
+  };
+  return { ...state, [kind]: record, updatedAt: nowIso() };
+}
+
+export function recordVerificationEvidence(
+  state: RunState,
+  input: { headSha: string; evidence: string[]; verifiedAt?: string },
+): RunState {
+  return recordHeadBoundEvidence(state, "verificationEvidence", input);
+}
+
+export function recordReviewEvidence(
+  state: RunState,
+  input: { headSha: string; evidence: string[]; verifiedAt?: string },
+): RunState {
+  return recordHeadBoundEvidence(state, "reviewEvidence", input);
+}
+
+export function missingCurrentDeliveryEvidence(state: RunState): string[] {
+  const missing: string[] = [];
+  const headSha = implementationEvidenceHead(state);
+  if (!hasCurrentImplementationEvidence(state)) missing.push("implementation");
+  if (!headSha || state.verificationEvidence?.headSha !== headSha) missing.push("verification");
+  if (!headSha || state.reviewEvidence?.headSha !== headSha) missing.push("review");
+  return missing;
+}
+
+export function recoverInvalidRunState(
+  state: RunState,
+  input: {
+    reason: string;
+    actor: string;
+    accessRole: string;
+    evidence: string[];
+    idempotencyKey: string;
+    occurredAt?: string;
+  },
+): RunState {
+  if (!input.reason.trim() || !input.actor.trim() || !input.accessRole.trim() || input.evidence.length === 0 || !input.idempotencyKey.trim()) {
+    throw new Error("state recovery requires reason, actor, access role, evidence and idempotency key");
+  }
+  if ((state.phaseHistory ?? []).some((entry) => entry.kind === "recovery" && entry.idempotencyKey === input.idempotencyKey)) {
+    return state;
+  }
+  const currentIndex = PHASE_ORDER.indexOf(state.phase);
+  let target: PhaseId | undefined;
+  if (!hasCurrentImplementationEvidence(state)) target = "implementation";
+  else if (missingCurrentDeliveryEvidence(state).length > 0) target = "verification";
+  if (!target || PHASE_ORDER.indexOf(target) >= currentIndex) {
+    throw new Error(`run '${state.runId}' has no recoverable invalid phase boundary from '${state.phase}'`);
+  }
+  const occurredAt = input.occurredAt ?? nowIso();
+  return {
+    ...state,
+    phase: target,
+    phaseHistory: [
+      ...(state.phaseHistory ?? []),
+      {
+        from: state.phase,
+        to: target,
+        at: occurredAt,
+        kind: "recovery",
+        reason: input.reason,
+        actor: input.actor,
+        accessRole: input.accessRole,
+        evidence: [...input.evidence],
+        idempotencyKey: input.idempotencyKey,
+      },
+    ],
+    updatedAt: occurredAt,
   };
 }
 
@@ -678,7 +841,8 @@ export interface NextAction {
     | "resolve-gate"
     | "cleanup-human-gate"
     | "publish-human-gate"
-    | "persist-run-documentation";
+    | "persist-run-documentation"
+    | "recover-invalid-state";
   detail: string;
   gate?: GateRecord;
 }
@@ -761,6 +925,30 @@ export function computeNextAction(state: RunState): NextAction {
       action: "escalate-iteration-cap",
       detail: `${state.maxAutomaticIterations} automatic iterations failed; escalate to a human gate before continuing.`,
     };
+  }
+
+  const implementationIndex = PHASE_ORDER.indexOf("implementation");
+  const currentPhaseIndex = PHASE_ORDER.indexOf(state.phase);
+  if (currentPhaseIndex > implementationIndex && !hasCurrentImplementationEvidence(state)) {
+    return {
+      action: "recover-invalid-state",
+      detail: `Run '${state.runId}' is in phase '${state.phase}' without current implementation evidence; reconcile it to implementation and preserve its history before continuing.`,
+    };
+  }
+  if (state.phase === "implementation" && !hasCurrentImplementationEvidence(state)) {
+    return {
+      action: "await-technical-gate",
+      detail: "Implementation evidence is required: bind and verify an implementation PR/head or record an explicit direct commit.",
+    };
+  }
+  if (state.phase === "documentation" || state.phase === "merge") {
+    const missing = missingCurrentDeliveryEvidence(state);
+    if (missing.length > 0) {
+      return {
+        action: "recover-invalid-state",
+        detail: `Run '${state.runId}' cannot continue from '${state.phase}'; current-head ${missing.join(", ")} evidence is missing. Reconcile to the earliest affected phase without deleting history.`,
+      };
+    }
   }
 
   if (state.phase === "merge" && !hasPersistedDeliveryMergeEvidence(state)) {

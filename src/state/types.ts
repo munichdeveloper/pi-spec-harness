@@ -180,6 +180,40 @@ export interface ReviewRecord {
   loopProtected?: boolean;
 }
 
+export type ImplementationEvidence =
+  | {
+      type: "pull-request";
+      pullRequest: number;
+      headSha: string;
+      verifiedAt: string;
+      evidence: string[];
+    }
+  | {
+      type: "direct";
+      commitSha: string;
+      verifiedAt: string;
+      actor: string;
+      evidence: string[];
+    };
+
+export interface HeadBoundEvidence {
+  headSha: string;
+  verifiedAt: string;
+  evidence: string[];
+}
+
+export interface PhaseHistoryRecord {
+  from: PhaseId;
+  to: PhaseId;
+  at: string;
+  kind: "advance" | "recovery";
+  reason?: string;
+  actor?: string;
+  accessRole?: string;
+  evidence?: string[];
+  idempotencyKey?: string;
+}
+
 export type ReviewAutomationScope =
   | "managed"
   | "recoverable-binding"
@@ -347,6 +381,12 @@ export interface RunState {
   implementationPullRequest?: number;
   /** Full HEAD SHA of the implementation PR at the last verified checkpoint. */
   implementationHeadSha?: string;
+  /** Explicit implementation proof; never inferred from notes or chat. */
+  implementationEvidence?: ImplementationEvidence;
+  /** Successful technical verification for the exact implementation head. */
+  verificationEvidence?: HeadBoundEvidence;
+  /** Completed review for the exact implementation head. */
+  reviewEvidence?: HeadBoundEvidence;
   /**
    * Explicit path to the bound requirement document (relative to repo root).
    * TAC-01: set at run start; glob / "newest file" selection is forbidden.
@@ -358,6 +398,8 @@ export interface RunState {
    */
   specPath?: string;
   phase: PhaseId;
+  /** Append-only phase history, including explicit backward recovery. */
+  phaseHistory?: PhaseHistoryRecord[];
   createdAt: string;
   updatedAt: string;
   gates: GateRecord[];
