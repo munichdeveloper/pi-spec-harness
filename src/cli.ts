@@ -30,6 +30,7 @@ import {
 } from "./bug/workflow-reference.js";
 import { findWorkflowTemplate, resolveWorkflowInstallPlan } from "./workflows/template-catalog.js";
 import { decideWorkflowInstall } from "./workflows/install-decision.js";
+import { provisionApprovalWorkflowLabels } from "./workflows/label-provisioning.js";
 import { upsertManagedBlock, renderHarnessContextBlock, AGENTS_MD_PATH } from "./agents-context/managed-block.js";
 import { buildIssueFromSpec } from "./spec/issue-from-spec.js";
 import { runSpecToIssuePipeline } from "./spec/spec-to-issue-pipeline.js";
@@ -515,6 +516,13 @@ async function cmdInit(argv: CmdInitArgs): Promise<void> {
       // TAC-06: no file write; caller-visible via result.conflicts[].
       conflicts.push(template.targetPath);
       continue;
+    }
+
+    if (name === "label-approval-bundling") {
+      await provisionApprovalWorkflowLabels(github, argv.repository, {
+        triggerLabel: argv.triggerLabel,
+        targetLabels: argv.targetLabels,
+      });
     }
 
     if (decision === "create") {

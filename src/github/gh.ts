@@ -306,6 +306,32 @@ export function validateReceiverContent(
  * from this one file.
  */
 export const github = {
+  async ensureLabelExists(
+    repository: string,
+    name: string,
+    opts: { color?: string; description?: string } = {},
+  ): Promise<void> {
+    try {
+      await runGh(["api", `repos/${repository}/labels/${encodeURIComponent(name)}`]);
+      return;
+    } catch (err) {
+      if (!(err instanceof GhError) || !/(?:HTTP\s+404|Not Found)/i.test(err.message)) {
+        throw err;
+      }
+    }
+    try {
+      await runGh([
+        "label", "create", name,
+        "--repo", repository,
+        "--color", opts.color ?? "5319E7",
+        "--description", opts.description ?? "",
+      ]);
+    } catch (err) {
+      // Another installer may have created the label after our exact lookup.
+      if (!(err instanceof GhError) || !/already exists/i.test(err.message)) throw err;
+    }
+  },
+
   async ensureLabel(
     repository: string,
     name: string,

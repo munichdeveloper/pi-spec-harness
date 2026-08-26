@@ -175,6 +175,16 @@ init`-Aufruf:
    angelegt) wird unverändert weiterverwendet -- es entsteht kein zweites
    Tracking-Issue.
 
+Bei Installation von `label-approval-bundling` provisioniert der Installer
+das konfigurierte Trigger-Label und sämtliche Ziel-Labels, bevor die
+Workflow-Datei aktiviert wird. Bereits vorhandene Labels bleiben samt Farbe
+und Beschreibung unverändert; wiederholte Installation ist ein No-op.
+`--trigger-label` und `--target-labels` werden vollständig berücksichtigt.
+Fehlt der Installationsrolle `issues:write`, bricht die Installation mit einem
+konkreten Capability-Fehler ab, statt einen technisch nicht auslösbaren
+Workflow zu hinterlassen. Der Installer setzt das Trigger-Label niemals auf
+ein Issue -- die menschliche Gate-Semantik bleibt unverändert.
+
 Referenzprojekte mit heute lokal gepflegten Äquivalenten (z. B. Immogents
 `spec-to-issue.yml` / `harness-approve-for-agent.yml` /
 `scripts/create_issue_from_spec.py`) werden durch die Einführung dieser
