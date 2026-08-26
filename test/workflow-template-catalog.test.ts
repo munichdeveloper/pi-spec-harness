@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
   BUG_WORKFLOW_REFERENCE_MARKER,
@@ -30,7 +31,7 @@ import {
   resolveWorkflowInstallPlan,
 } from "../src/workflows/template-catalog.js";
 import { decideWorkflowInstall } from "../src/workflows/install-decision.js";
-import { DEFAULT_HARNESS_WORKFLOW_REF } from "../src/release.js";
+import { DEFAULT_HARNESS_WORKFLOW_REF, HARNESS_VERSION } from "../src/release.js";
 
 describe("WORKFLOW_TEMPLATE_CATALOG", () => {
   it("TAC-01: includes the migrated bug-triage entry unchanged (path/marker/default ref)", () => {
@@ -114,6 +115,18 @@ describe("WORKFLOW_TEMPLATE_CATALOG", () => {
       expect(rendered, entry.name).toContain(`@${DEFAULT_HARNESS_WORKFLOW_REF}`);
       expect(rendered, entry.name).not.toMatch(/@main(?:\s|$)/);
     }
+  });
+
+  it("release gate: package and lockfile versions match the release catalog", () => {
+    const packageJson = JSON.parse(readFileSync("package.json", "utf8")) as { version: string };
+    const packageLock = JSON.parse(readFileSync("package-lock.json", "utf8")) as {
+      version: string;
+      packages: Record<string, { version?: string }>;
+    };
+    expect(HARNESS_VERSION).toBe("0.3.0");
+    expect(packageJson.version).toBe(HARNESS_VERSION);
+    expect(packageLock.version).toBe(HARNESS_VERSION);
+    expect(packageLock.packages[""]?.version).toBe(HARNESS_VERSION);
   });
 
   it("renders the trusted review-fix receiver with split triggers and checks permission", () => {

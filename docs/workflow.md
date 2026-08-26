@@ -131,6 +131,16 @@ Verfügbare Vorlagennamen (für `--install-workflows <name>[,<name>...]`):
 | `bug-triage` | `.github/workflows/harness-bug-triage.yml` | `.github/workflows/bug-triage.yml` |
 | `spec-to-issue` | `.github/workflows/harness-spec-to-issue.yml` | `.github/workflows/spec-to-issue.yml` |
 | `label-approval-bundling` | `.github/workflows/harness-label-approval-bundling.yml` | `.github/workflows/label-approval-bundling.yml` |
+| `review-fix` | `.github/workflows/harness-review-fix.yml` | `.github/workflows/review-fix.yml` |
+| `capability-smoke` | `.github/workflows/harness-capability-smoke.yml` | `.github/workflows/capability-smoke.yml` |
+| `run-documentation-finalizer` | `.github/workflows/harness-run-documentation-finalizer.yml` | `.github/workflows/run-documentation-finalizer.yml` |
+| `process-audit-receiver` | `.github/workflows/harness-process-audit-receiver.yml` | `.github/workflows/process-audit-automation.yml` |
+| `requirement-to-spec` | `.github/workflows/harness-requirement-to-spec.yml` | `.github/workflows/requirement-to-spec.yml` |
+
+Alle Katalogeinträge verwenden ohne explizites `--workflow-ref` denselben im
+Release verifizierten vollständigen Commit-SHA. Dadurch kann kein einzelner
+Caller unbemerkt auf `main`, einen noch nicht existierenden Tag oder eine
+ältere Teilversion zurückfallen.
 
 ```bash
 npm run harness -- init \
@@ -139,7 +149,7 @@ npm run harness -- init \
   --requirement REQ-006 \
   --spec SPEC-006 \
   --install-workflows bug-triage,spec-to-issue,label-approval-bundling \
-  --workflow-ref v0.2.2
+  --workflow-ref v0.3.0
 ```
 
 `--install-bug-workflow` bleibt unverändert nutzbar und erzeugt
@@ -305,7 +315,7 @@ oder über das GitHub-UI: **Actions → Harness Capability Smoke → Run workflo
 ### Installation (TAC-12)
 
 ```bash
-harness init --install-workflows capability-smoke --workflow-ref main
+harness init --install-workflows capability-smoke --workflow-ref v0.3.0
 ```
 
 Erstellt/aktualisiert `.github/workflows/harness-capability-smoke.yml`
