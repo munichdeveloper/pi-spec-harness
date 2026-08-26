@@ -15,13 +15,20 @@
   "bin": {
     "harness": "./dist/cli.js"
   },
+  "files": [
+    "dist",
+    "skills",
+    "README.md"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "prepare": "npm run build",
     "harness": "tsx src/cli.ts",
     "test": "vitest run",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "lint": "eslint .",
-    "check": "npm run typecheck && npm run lint && npm run test"
+    "check": "npm run typecheck && npm run lint && npm run test",
+    "release:smoke": "npm run check && npm run build && node scripts/verify_release_package.mjs"
   },
   "dependencies": {
     "yargs": "^17.7.2"
