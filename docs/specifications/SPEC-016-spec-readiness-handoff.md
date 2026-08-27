@@ -73,6 +73,14 @@ issue renders the current decision, work owner and pending evidence.
 
 Port-integration tests cover duplicate invocations, dispatch-before-crash,
 audit failure, quota loss, stale results and retry exhaustion. These are not
-workflow E2E tests. Concrete GitHub ports, canonical bootstrap, CLI/workflow
+workflow E2E tests. The concrete issue adapter now uses the paginated REST issue
+listing (including closed issues, excluding PRs), adopts exact legacy spec issues
+without rewriting user content, and rejects ambiguous or conflicting identities.
+Spike issues carry owner, executor, question, criteria, revision and attempt limit;
+closure never constitutes evidence. Lost creation responses are recovered through
+the durable marker. Callers must serialize reconciliation and confirm issue audit.
+No execution labels or providers are activated by issue materialization alone.
+
+Remaining dispatch/evidence ports, canonical bootstrap, CLI/workflow
 integration, trusted producer validation and synthetic workflow E2E remain
 mandatory milestone work; no consumer activation before those are verified.

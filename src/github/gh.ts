@@ -354,6 +354,20 @@ export const github = {
     }
   },
 
+  /** Readiness reconciliation must not depend on the search index or a result limit. */
+  async listReadinessIssues(repository: string): Promise<Array<{
+    number: number; title: string; body: string; state: string; url: string;
+  }>> {
+    const out = await runGh(["api", `repos/${repository}/issues?state=all&per_page=100`, "--paginate", "--slurp"]);
+    const pages = JSON.parse(out) as Array<Array<{
+      number: number; title: string; body: string | null; state: string;
+      html_url: string; pull_request?: unknown;
+    }>>;
+    return pages.flat().filter(issue => !issue.pull_request).map(issue => ({
+      number: issue.number, title: issue.title, body: issue.body ?? "", state: issue.state, url: issue.html_url,
+    }));
+  },
+
   async viewIssue(repository: string, number: number) {
     const out = await runGh(["issue", "view", String(number), "--repo", repository, "--json",
       "number,title,body,state,labels,assignees,url,comments"]);
