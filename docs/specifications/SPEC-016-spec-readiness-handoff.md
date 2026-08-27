@@ -109,6 +109,17 @@ and trusted command configuration remain deployment responsibilities.
 Tests execute actual synthetic Node subprocesses for agent and verifier, including
 negative and duplicate-delivery cases. They are not GitHub workflow E2E evidence.
 
-Remaining dispatch ports, CLI/workflow integration, configured criterion-verifying
+The `readiness-execute --repository OWNER/REPO --run-issue N --work-key KEY
+--receipt github-actions:RUN_ID --config TRUSTED_CONFIG` CLI command now binds
+execution to the GitHub Actions runtime, loads the canonical tracking issue,
+validates repository/spec revision and confirms execution audit in the journal.
+Configuration is executable authority and must come from a verified trusted
+checkout, never the work branch or agent output. The workflow integration must
+enforce this checkout policy and the shared concurrency lock. Configuration
+contains schemaVersion, repository, costCeiling, policy, contract, agent,
+optional verifier, and audit.directory/audit.branch. Command environments are
+explicit; do not commit credential values into configuration.
+
+Remaining dispatch ports, orchestration CLI/workflow integration, configured criterion-verifying
 producer workflow and synthetic workflow E2E remain
 mandatory milestone work; no consumer activation before those are verified.
