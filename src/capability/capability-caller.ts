@@ -56,6 +56,7 @@ ${pathsYaml}
 permissions:
   contents: read
   actions: write   # required for cache save/restore in the reusable workflow
+  id-token: write  # required by the pinned Claude action in the reusable workflow
 
 jobs:
   smoke:

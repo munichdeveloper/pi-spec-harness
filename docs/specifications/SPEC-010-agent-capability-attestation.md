@@ -135,8 +135,13 @@ werden weder in Fingerprint, Cache-Manifest, Logs noch Run-State geschrieben.
   `status:needs-human`, kommentiert die konkrete Ursache und endet rot.
 - TAC-09: Der installierte Caller unterstützt relevante Pfadänderungen,
   `workflow_dispatch` sowie Wiederverwendung durch die Bug-Pipeline.
-- TAC-10: Der Smoke kann weder committen noch pushen noch PRs erzeugen; seine
-  GitHub-Token-Berechtigungen sind entsprechend minimal.
+- TAC-10: Der Smoke kann weder committen noch pushen noch Issues, Deployments
+  oder PRs verändern. Caller und Reusable gewähren ausschließlich
+  `contents: read`, `actions: write` für den Attestation-Cache und
+  `id-token: write` für das kurzlebige OIDC-Token der fest gepinnten
+  `anthropics/claude-code-action`. Da GitHub die Berechtigungen eines Reusable
+  Workflows mit denen des Callers schneidet, müssen beide Ebenen diese drei
+  Berechtigungen deklarieren.
 - TAC-11: Fehlende Credentials werden vor Agent-Start erkannt und keine
   Secret-Werte werden persistiert oder ausgegeben.
 - TAC-12: `harness init` erzeugt/aktualisiert den markierten Caller idempotent

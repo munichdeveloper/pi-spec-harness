@@ -303,11 +303,13 @@ describe("SPEC-010 capability-smoke reusable workflow contracts", () => {
     );
   });
 
-  it("TAC-10: workflow has no contents:write, pull-requests:write, or id-token permission", async () => {
+  it("TAC-10: workflow grants OIDC but no repository or deployment write permission", async () => {
     const workflow = await readFile(".github/workflows/capability-smoke.yml", "utf8");
+    expect(workflow).toContain("id-token: write");
     expect(workflow).not.toContain("contents: write");
+    expect(workflow).not.toContain("issues: write");
     expect(workflow).not.toContain("pull-requests: write");
-    expect(workflow).not.toContain("id-token: write");
+    expect(workflow).not.toContain("deployments: write");
     expect(workflow).not.toContain("git push");
     expect(workflow).not.toContain("gh pr create");
   });
@@ -389,12 +391,17 @@ describe("SPEC-010 capability-smoke reusable workflow contracts", () => {
     expect(workflow).not.toMatch(/agent_output="\$\{\{ steps\.agent\.outputs\.execution_file \}\}"/);
   });
 
-  it("TAC-10: thin caller template uses actions:write so the reusable workflow can save cache", async () => {
+  it("TAC-10: thin caller grants cache and OIDC permissions but no repository write permission", async () => {
     const { renderCapabilityCallerReference } = await import("../src/capability/capability-caller.js");
     const caller = renderCapabilityCallerReference();
-    // actions: write is required so the called reusable workflow can use cache/save
+    // Reusable workflow permissions are intersected with the caller permissions.
     expect(caller).toContain("actions: write");
+    expect(caller).toContain("id-token: write");
     expect(caller).not.toContain("actions: read");
+    expect(caller).not.toContain("contents: write");
+    expect(caller).not.toContain("issues: write");
+    expect(caller).not.toContain("pull-requests: write");
+    expect(caller).not.toContain("deployments: write");
   });
 
   it("TAC-02: attestation manifest is validated before a cache hit is trusted", async () => {

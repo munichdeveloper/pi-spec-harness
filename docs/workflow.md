@@ -290,6 +290,13 @@ verschachtelten Deadlock, noch bevor der erste Job startet.
    Der produktive Agent-Step wird übersprungen. Kein Label wird gesetzt;
    das Gate besitzt keine `issues: write`-Berechtigung (TAC-10).
 
+Caller und Reusable deklarieren `id-token: write`, weil die fest gepinnte
+`anthropics/claude-code-action` ein kurzlebiges GitHub-OIDC-Token anfordert.
+Diese Berechtigung erlaubt für sich allein weder Repository-, Issue-, PR- noch
+Deployment-Schreibzugriffe. Sie muss auf beiden Workflow-Ebenen stehen, weil
+GitHub die Berechtigungen eines aufgerufenen Workflows auf die im Caller
+gewährte Schnittmenge begrenzt.
+
 ### Kostenverhalten und Attestation-Lebensdauer
 
 - Ein Smoke verursacht einen echten `claude-code-action`-Lauf. Er findet nur
@@ -317,6 +324,7 @@ oder über das GitHub-UI: **Actions → Harness Capability Smoke → Run workflo
 | `File content mismatch` | Edit-Tool hat Datei nicht korrekt geändert | Smoke wiederholen; ggf. Action-Pin prüfen |
 | `Cached attestation fingerprint … does not match` | Cache-Poisoning oder falscher Key | Cache manuell löschen und Smoke neu auslösen |
 | `deadlock was detected for concurrency group` | Veralteter Caller besitzt dieselbe Concurrency-Gruppe wie der Reusable Workflow | Caller mit der aktuellen Harness-Version neu installieren |
+| `Could not fetch an OIDC token` | Caller oder Reusable enthält nicht `id-token: write` | Beide verwalteten Workflows mit der aktuellen Harness-Version installieren |
 
 ### Installation (TAC-12)
 
