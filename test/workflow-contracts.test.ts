@@ -346,7 +346,10 @@ describe("SPEC-010 capability-smoke reusable workflow contracts", () => {
     const { renderCapabilityCallerReference } = await import("../src/capability/capability-caller.js");
     const caller = renderCapabilityCallerReference();
     expect(caller).toContain("github.event_name == 'push' && github.ref_name == github.event.repository.default_branch");
-    expect(caller).toContain('gh workflow run harness-capability-smoke.yml --ref "$GITHUB_REF_NAME"');
+    expect(caller).toContain(
+      'gh workflow run harness-capability-smoke.yml --repo "$GITHUB_REPOSITORY" --ref "$GITHUB_REF_NAME"',
+    );
+    expect(caller).not.toContain("actions/checkout");
     expect(caller).toContain("GH_TOKEN: ${{ github.token }}");
     expect(caller).toContain("if: github.event_name != 'push'");
   });

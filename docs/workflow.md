@@ -278,6 +278,8 @@ mit `actions: write` genau einen `workflow_dispatch`; erst dieser unterstützte
 Event ruft den Reusable auf. Feature-Branch-Pushes erzeugen keinen Smoke. Damit
 greift die Attestation automatisch erst, wenn die Workflow-Änderung wirksam
 und für die Anti-Tamper-Prüfung der Action auf dem Default-Branch sichtbar ist.
+Die Bridge übergibt `--repo "$GITHUB_REPOSITORY"` explizit, da sie bewusst ohne
+Checkout läuft und die GitHub CLI das Repository sonst nicht ableiten kann.
 
 1. **Credential-Check** (TAC-11): Ist weder `ANTHROPIC_API_KEY` noch
    `CLAUDE_CODE_OAUTH_TOKEN` gesetzt, schlägt der Workflow mit einer klaren
