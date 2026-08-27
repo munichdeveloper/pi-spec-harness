@@ -296,6 +296,9 @@ keine pauschale Freigabe.
    Datei schreiben und den Inhalt per Edit ersetzen.
 4. **Deterministischer Verifier** (TAC-04/TAC-05): Tatsächliche erfolgreiche
    Toolaufrufe werden ausgewertet; Textausgaben des Agenten sind keine Evidence.
+   Native `tool_use`- und `tool_result`-Blöcke werden anhand von Session und
+   Tool-ID korreliert (JSON-Array oder NDJSON). Fehlende, doppelte, nicht
+   zuordenbare oder fehlerhafte Ergebnisse gelten nicht als Erfolg.
    Fehlt eine Fähigkeit, schlägt der Workflow rot ab.
 5. **Attestation schreiben** (TAC-03): Nur nach vollständig grünem Verifier wird
    der Cache-Key geschrieben.
