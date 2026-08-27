@@ -7,4 +7,4 @@
  * to mutable branches, future tags, or older incomplete releases.
  */
 export const HARNESS_VERSION = "0.3.0";
-export const DEFAULT_HARNESS_WORKFLOW_REF = "df2561910e27e8a849d89b475b7a6db54252d45b";
+export const DEFAULT_HARNESS_WORKFLOW_REF = "686178aa8160c296b334e7b6b9e63f0b4e719ad1";
