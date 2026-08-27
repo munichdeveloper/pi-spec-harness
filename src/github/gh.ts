@@ -1,5 +1,8 @@
 import { execFile as execFileCb, spawn } from "node:child_process";
 import { promisify } from "node:util";
+import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { validateStagedPaths } from "../documentation/path-validator.js";
 import {
   DEFAULT_REUSABLE_WORKFLOW_REPOSITORY,
@@ -366,6 +369,33 @@ export const github = {
     return pages.flat().filter(issue => !issue.pull_request).map(issue => ({
       number: issue.number, title: issue.title, body: issue.body ?? "", state: issue.state, url: issue.html_url,
     }));
+  },
+
+  async viewReadinessWorkflowRun(repository: string, runId: number): Promise<unknown> {
+    if (!Number.isSafeInteger(runId) || runId <= 0) throw new Error("Invalid readiness workflow run");
+    return JSON.parse(await runGh(["api", `repos/${repository}/actions/runs/${runId}`])) as unknown;
+  },
+
+  async listReadinessResultArtifacts(repository: string, runId: number): Promise<unknown[]> {
+    if (!Number.isSafeInteger(runId) || runId <= 0) throw new Error("Invalid readiness workflow run");
+    const pages = JSON.parse(await runGh(["api", `repos/${repository}/actions/runs/${runId}/artifacts?per_page=100`, "--paginate", "--slurp"])) as Array<{ artifacts: unknown[] }>;
+    return pages.flatMap(page => page.artifacts);
+  },
+
+  /** Read only the exact result filename after the caller verifies run/artifact provenance. */
+  async downloadReadinessResult(repository: string, runId: number, artifactName: string): Promise<unknown> {
+    if (!Number.isSafeInteger(runId) || runId <= 0 || !/^readiness-result-[a-f0-9]{64}-[1-9]\d*$/.test(artifactName)) {
+      throw new Error("Invalid readiness result identity");
+    }
+    const directory = await mkdtemp(join(tmpdir(), "harness-readiness-result-"));
+    try {
+      await runGh(["run", "download", String(runId), "--repo", repository, "--name", artifactName, "--dir", directory]);
+      const path = join(directory, "result.json");
+      if ((await stat(path)).size > 262144) throw new Error("Readiness result exceeds size limit");
+      return JSON.parse(await readFile(path, "utf8")) as unknown;
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
   },
 
   async viewIssue(repository: string, number: number) {

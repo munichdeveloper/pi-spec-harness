@@ -88,6 +88,14 @@ Duplicate, closed, malformed or conflicting runs stop reconciliation; an advance
 legacy run cannot silently dispatch a competing implementation. Trusted approval
 verification remains the entry point's responsibility, not an inference from chat.
 
-Remaining dispatch/evidence ports, CLI/workflow
-integration, trusted producer validation and synthetic workflow E2E remain
+The workflow evidence adapter validates repository, numeric actor identities,
+workflow ID/path and pinned revision, dispatch identity, run attempt and an exact
+non-expired bounded result artifact. It rechecks the run after retrieval to detect
+rerun races. Payload binding covers work key, executor, issue, spike attempt,
+blocker and spec revision. Failed research and boundary changes remain explicit.
+The approved producer workflow must independently verify criteria before emitting
+this artifact; agent self-reports are not an implementation of that verifier.
+
+Remaining dispatch ports, CLI/workflow integration, criterion-verifying producer
+workflow and synthetic workflow E2E remain
 mandatory milestone work; no consumer activation before those are verified.
