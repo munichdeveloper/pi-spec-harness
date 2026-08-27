@@ -342,6 +342,15 @@ describe("SPEC-010 capability-smoke reusable workflow contracts", () => {
     expect(caller).toContain("secrets: inherit");
   });
 
+  it("TAC-09: push only bridges default-branch changes to a supported workflow_dispatch", async () => {
+    const { renderCapabilityCallerReference } = await import("../src/capability/capability-caller.js");
+    const caller = renderCapabilityCallerReference();
+    expect(caller).toContain("github.event_name == 'push' && github.ref_name == github.event.repository.default_branch");
+    expect(caller).toContain('gh workflow run harness-capability-smoke.yml --ref "$GITHUB_REF_NAME"');
+    expect(caller).toContain("GH_TOKEN: ${{ github.token }}");
+    expect(caller).toContain("if: github.event_name != 'push'");
+  });
+
   it("release regression: thin caller does not deadlock the reusable workflow concurrency", async () => {
     const { renderCapabilityCallerReference } = await import("../src/capability/capability-caller.js");
     const caller = renderCapabilityCallerReference();

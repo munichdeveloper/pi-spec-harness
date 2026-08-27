@@ -272,6 +272,13 @@ dünne Caller definiert bewusst keine eigene `concurrency`-Gruppe: Identische
 Gruppen auf Caller- und aufgerufener Ebene erzeugen bei GitHub einen
 verschachtelten Deadlock, noch bevor der erste Job startet.
 
+Ein relevanter `push` führt die Claude-Action nicht direkt aus, da diese den
+Eventtyp nicht unterstützt. Auf dem Default-Branch erzeugt der Caller deshalb
+mit `actions: write` genau einen `workflow_dispatch`; erst dieser unterstützte
+Event ruft den Reusable auf. Feature-Branch-Pushes erzeugen keinen Smoke. Damit
+greift die Attestation automatisch erst, wenn die Workflow-Änderung wirksam
+und für die Anti-Tamper-Prüfung der Action auf dem Default-Branch sichtbar ist.
+
 1. **Credential-Check** (TAC-11): Ist weder `ANTHROPIC_API_KEY` noch
    `CLAUDE_CODE_OAUTH_TOKEN` gesetzt, schlägt der Workflow mit einer klaren
    Meldung fehl, bevor `claude-code-action` aufgerufen wird.
@@ -325,6 +332,7 @@ oder über das GitHub-UI: **Actions → Harness Capability Smoke → Run workflo
 | `Cached attestation fingerprint … does not match` | Cache-Poisoning oder falscher Key | Cache manuell löschen und Smoke neu auslösen |
 | `deadlock was detected for concurrency group` | Veralteter Caller besitzt dieselbe Concurrency-Gruppe wie der Reusable Workflow | Caller mit der aktuellen Harness-Version neu installieren |
 | `Could not fetch an OIDC token` | Caller oder Reusable enthält nicht `id-token: write` | Beide verwalteten Workflows mit der aktuellen Harness-Version installieren |
+| `Unsupported event type: push` | Veralteter Caller ruft die Action direkt aus einem Push-Lauf auf | Caller mit der aktuellen Harness-Version installieren; der Default-Branch-Push wird dann auf `workflow_dispatch` gebridged |
 
 ### Installation (TAC-12)
 
