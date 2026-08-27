@@ -65,6 +65,14 @@ superseded only for the new fully validated handoff path.
 
 ## Delivery status
 
-In progress. The first implementation unit is the pure decision contract.
-Run persistence, issue reconciliation, workflow dispatch, audit and E2E remain
+In progress. Pure decision logic and a checkpointed coordinator are implemented.
+The coordinator persists prepared work in the existing run, reconciles accepted
+dispatches before retrying, confirms dispatch/result audit before progression,
+and rechecks executor availability immediately before dispatch. The tracking
+issue renders the current decision, work owner and pending evidence.
+
+Port-integration tests cover duplicate invocations, dispatch-before-crash,
+audit failure, quota loss, stale results and retry exhaustion. These are not
+workflow E2E tests. Concrete GitHub ports, canonical bootstrap, CLI/workflow
+integration, trusted producer validation and synthetic workflow E2E remain
 mandatory milestone work; no consumer activation before those are verified.
