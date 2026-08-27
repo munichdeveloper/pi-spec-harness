@@ -128,6 +128,14 @@ attempt; delayed visibility produces a retriable reconciliation error, never a
 fabricated receipt. Duplicate transport runs are possible after ambiguous delivery;
 the receiver's canonical receipt/claim and shared lock must prevent duplicate work.
 
-Remaining orchestration CLI/workflow integration, configured criterion-verifying
+The concrete GitHub handoff controller now composes approved-spec lookup,
+canonical run bootstrap, issue/spike materialization, readiness disposition labels,
+dispatch, artifact verification and continuation. It keeps readiness labels separate
+from legacy Copilot assignment labels. A durable audit outbox preserves event time,
+revision and payload across retries and coordinator state saves. API-simulation
+tests exercise the complete spike-to-implementation controller on one run, including
+unavailable executors. These tests are not hosted GitHub E2E evidence.
+
+Remaining orchestration CLI/workflow entry points, configured criterion-verifying
 producer workflow and synthetic workflow E2E remain
 mandatory milestone work; no consumer activation before those are verified.
