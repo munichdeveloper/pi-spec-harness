@@ -314,6 +314,13 @@ describe("SPEC-010 capability-smoke reusable workflow contracts", () => {
     expect(workflow).not.toContain("gh pr create");
   });
 
+  it("TAC-10: capability smoke allows only the exact automation actor", async () => {
+    const workflow = await readFile(".github/workflows/capability-smoke.yml", "utf8");
+    expect(workflow).toContain("allowed_bots: github-actions");
+    expect(workflow).not.toContain("allowed_bots: '*'");
+    expect(workflow).not.toContain('allowed_bots: "*"');
+  });
+
   it("TAC-11: credential check job runs before the smoke and fails with a clear message when both are absent", async () => {
     const workflow = await readFile(".github/workflows/capability-smoke.yml", "utf8");
     expect(workflow).toContain("ANTHROPIC_API_KEY");

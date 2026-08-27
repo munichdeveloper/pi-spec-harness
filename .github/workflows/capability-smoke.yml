@@ -184,6 +184,9 @@ jobs:
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # The default-branch push bridge dispatches this workflow as the
+          # GitHub Actions bot. Keep this exact allowlist; never use `*`.
+          allowed_bots: github-actions
           settings: '{"permissions":{"allow":["Bash(*)","Write","Edit"]}}'
           show_full_output: true
           prompt: |
