@@ -63,7 +63,11 @@ export async function reconcileReadiness(
   const checkpoint = state.readiness;
   if (checkpoint.revision !== context.revision) {
     // Do not launch competing work against a new revision while old work exists.
-    return { action: "human-decision", reason: "spec-revision-changed-requires-reconciliation" };
+    const decision = { action: "human-decision" as const, reason: "spec-revision-changed-requires-reconciliation" };
+    checkpoint.decision = decision;
+    await save();
+    if (state.issue) await ports.reconcileReadinessLabels(state.issue, decision);
+    return decision;
   }
   if (!state.issue) {
     state.issue = await ports.ensureImplementationIssue(checkpoint.implementationKey);
@@ -104,6 +108,8 @@ export async function reconcileReadiness(
   for (const work of checkpoint.work.filter(w => !w.result)) {
     if (!await resume(work)) {
       const decision = { action: "await-executor" as const, reason: "prepared-executor-unavailable", blockerId: work.blockerId };
+      checkpoint.decision = decision;
+      await save();
       await ports.reconcileReadinessLabels(state.issue, decision);
       return decision;
     }
@@ -137,6 +143,8 @@ export async function reconcileReadiness(
   await save();
   if (!await resume(work)) {
     const waiting = { action: "await-executor" as const, reason: "executor-became-unavailable", blockerId: work.blockerId };
+    checkpoint.decision = waiting;
+    await save();
     await ports.reconcileReadinessLabels(state.issue, waiting);
     return waiting;
   }

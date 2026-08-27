@@ -72,6 +72,7 @@ describe("SPEC-016 durable readiness coordinator (port integration, not workflow
     expect((await reconcileReadiness(f.store, f.context, f.ports)).action).toBe("await-executor");
     expect(f.ports.dispatchReadinessWork).not.toHaveBeenCalled();
     expect(f.ports.reconcileReadinessLabels).toHaveBeenLastCalledWith(96, expect.objectContaining({ action: "await-executor" }));
+    expect(f.state().readiness?.decision?.action).toBe("await-executor");
   });
   it("rejects mismatched result and does not persist it", async () => {
     const f = setup(); await reconcileReadiness(f.store, f.context, f.ports);
@@ -97,6 +98,8 @@ describe("SPEC-016 durable readiness coordinator (port integration, not workflow
     await expect(reconcileReadiness(f.store, { ...f.context, specId: "SPEC-002" }, f.ports)).rejects.toThrow("canonical run");
     await reconcileReadiness(f.store, f.context, f.ports);
     expect((await reconcileReadiness(f.store, { ...f.context, revision: "new" }, f.ports)).action).toBe("human-decision");
+    expect(f.state().readiness?.decision?.action).toBe("human-decision");
+    expect(f.ports.reconcileReadinessLabels).toHaveBeenLastCalledWith(96, expect.objectContaining({ action: "human-decision" }));
     expect(f.ports.dispatchReadinessWork).toHaveBeenCalledTimes(1);
   });
 });
