@@ -61,8 +61,19 @@ export async function runReadinessExecuteCommand(options: {
   const state = await store.load();
   if (state.repository !== options.repository || !state.readiness || !isReadinessContract(config.contract)
     || config.contract.specRevision !== state.readiness.revision) throw new Error("Executor configuration does not match canonical readiness revision");
-  const work = state.readiness.work.find(item => item.key === options.workKey);
-  if (!work) throw new Error("No canonical readiness work matches request");
+  const matches = state.readiness.work.filter(item => item.key === options.workKey);
+  if (matches.length !== 1) throw new Error("Readiness work is not uniquely bound to the request");
+  const work = matches[0];
+  // Validate the request before even running the availability command. An
+  // arbitrary manual workflow_dispatch must not claim an unbound prepared task.
+  if (work.executorId !== config.policy.id || work.revision !== state.readiness.revision
+    || (work.receipt && work.receipt !== options.receipt) || (!dependencies && !work.receipt)) {
+    throw new Error("Readiness receiver identity or canonical receipt mismatch");
+  }
+  if (!dependencies && (!/^[1-9]\d*$/.test(process.env.GITHUB_RUN_ATTEMPT ?? "")
+    || !Number.isSafeInteger(Number(process.env.GITHUB_RUN_ATTEMPT)))) {
+    throw new Error("Invalid GitHub Actions run attempt");
+  }
   const confirmAudit = dependencies?.confirmAudit ?? (async (current: ReadinessWork) => {
     const execution = current.execution;
     const status = execution?.status ?? "deferred";

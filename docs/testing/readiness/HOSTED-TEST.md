@@ -32,6 +32,10 @@ The workflow generates config in its ephemeral checkout. The synthetic producer
 allowlist uses the API-verified `github-actions[bot]` user ID `41898282`.
 Dispatch the reconcile workflow, not the executor directly; only the controller
 may bind work and choose an executor.
+The executor rejects an absent canonical receipt, a different receipt/executor or
+spec revision, duplicate work identities and malformed Actions attempt numbers
+before starting even the availability probe. These checks are covered locally;
+hosted validation remains pending bootstrap approval.
 
 ## Required evidence before claiming success
 
