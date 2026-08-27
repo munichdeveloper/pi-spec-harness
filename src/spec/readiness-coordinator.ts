@@ -13,6 +13,13 @@ export interface ReadinessWork {
   issue?: number;
   receipt?: string;
   auditConfirmed?: boolean;
+  execution?: {
+    receipt: string;
+    status: "claimed" | "completed" | "failed";
+    startedAt: string;
+    finishedAt?: string;
+    output?: unknown;
+  };
   result?: VerifiedSpikeEvidence;
 }
 export interface ReadinessCheckpoint {

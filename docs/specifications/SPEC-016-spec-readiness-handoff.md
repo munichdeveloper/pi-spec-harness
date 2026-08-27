@@ -96,6 +96,19 @@ blocker and spec revision. Failed research and boundary changes remain explicit.
 The approved producer workflow must independently verify criteria before emitting
 this artifact; agent self-reports are not an implementation of that verifier.
 
-Remaining dispatch ports, CLI/workflow integration, criterion-verifying producer
-workflow and synthetic workflow E2E remain
+The executable receiver now persists a work claim before starting a configured
+command, then invokes a separately configured verifier for spike criteria. JSON
+stdin separates task data from commands; no shell or implicit environment is used.
+Input/output sizes and subprocess runtime are bounded. Results are hygiene-checked
+before persistence and completed work reuses its durable output. Interrupted or
+failed claims require reconciliation rather than blindly duplicating agent work.
+The workflow runner must contain descendant processes; the command timeout alone
+is not a provider-spend limit or a general sandbox. Provider budget enforcement
+and trusted command configuration remain deployment responsibilities.
+
+Tests execute actual synthetic Node subprocesses for agent and verifier, including
+negative and duplicate-delivery cases. They are not GitHub workflow E2E evidence.
+
+Remaining dispatch ports, CLI/workflow integration, configured criterion-verifying
+producer workflow and synthetic workflow E2E remain
 mandatory milestone work; no consumer activation before those are verified.
