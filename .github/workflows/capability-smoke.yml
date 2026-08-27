@@ -28,10 +28,12 @@ on:
           will fail the check-credentials pre-flight.
         required: false
 
-# TAC-10: minimal permissions – no contents:write, no pull-requests, no id-token
+# TAC-10: minimal permissions – OIDC is required by the pinned Claude action;
+# no contents:write, issues:write, pull-requests:write, or deployments:write.
 permissions:
   contents: read
   actions: write   # required only for cache save/restore
+  id-token: write  # required only to mint the action's short-lived GitHub OIDC token
 
 concurrency:
   # AC-08: bind to the actual capability contract, not the possibly-different caller input.
