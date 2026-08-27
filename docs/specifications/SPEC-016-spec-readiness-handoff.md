@@ -120,6 +120,14 @@ contains schemaVersion, repository, costCeiling, policy, contract, agent,
 optional verifier, and audit.directory/audit.branch. Command environments are
 explicit; do not commit credential values into configuration.
 
-Remaining dispatch ports, orchestration CLI/workflow integration, configured criterion-verifying
+The dispatch adapter now explicitly submits workflow_dispatch and resolves the
+actual run ID through the paginated Actions API. It reuses trusted matching runs,
+recovers accepted requests with lost HTTP responses, validates canonical receipts,
+and rejects a moved workflow branch before submission. Lookup is bounded per
+attempt; delayed visibility produces a retriable reconciliation error, never a
+fabricated receipt. Duplicate transport runs are possible after ambiguous delivery;
+the receiver's canonical receipt/claim and shared lock must prevent duplicate work.
+
+Remaining orchestration CLI/workflow integration, configured criterion-verifying
 producer workflow and synthetic workflow E2E remain
 mandatory milestone work; no consumer activation before those are verified.

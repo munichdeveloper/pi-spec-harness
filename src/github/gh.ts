@@ -371,6 +371,23 @@ export const github = {
     }));
   },
 
+  async listReadinessWorkflowRuns(repository: string, workflowId: number): Promise<unknown[]> {
+    if (!Number.isSafeInteger(workflowId) || workflowId <= 0) throw new Error("Invalid readiness workflow identity");
+    const pages = JSON.parse(await runGh(["api", `repos/${repository}/actions/workflows/${workflowId}/runs?event=workflow_dispatch&per_page=100`, "--paginate", "--slurp"])) as Array<{ workflow_runs: unknown[] }>;
+    return pages.flatMap(page => page.workflow_runs);
+  },
+
+  async dispatchReadinessWorkflow(repository: string, workflowId: number, ref: string, inputs: {
+    "run-issue": string; "work-key": string; "spec-revision": string; "workflow-revision": string;
+  }): Promise<void> {
+    if (!Number.isSafeInteger(workflowId) || workflowId <= 0 || !ref.trim()
+      || !/^[1-9]\d*$/.test(inputs["run-issue"]) || !/^readiness-[a-f0-9]{64}$/.test(inputs["work-key"])
+      || !/^[a-f0-9]{40}$/.test(inputs["spec-revision"]) || !/^[a-f0-9]{40}$/.test(inputs["workflow-revision"])) {
+      throw new Error("Invalid readiness workflow dispatch");
+    }
+    await runGhWithJson(["api", `repos/${repository}/actions/workflows/${workflowId}/dispatches`, "--method", "POST", "--input", "-"], { ref, inputs });
+  },
+
   async viewReadinessWorkflowRun(repository: string, runId: number): Promise<unknown> {
     if (!Number.isSafeInteger(runId) || runId <= 0) throw new Error("Invalid readiness workflow run");
     return JSON.parse(await runGh(["api", `repos/${repository}/actions/runs/${runId}`])) as unknown;
