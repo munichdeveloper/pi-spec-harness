@@ -388,6 +388,11 @@ export const github = {
     await runGhWithJson(["api", `repos/${repository}/actions/workflows/${workflowId}/dispatches`, "--method", "POST", "--input", "-"], { ref, inputs });
   },
 
+  async rerunReadinessWorkflow(repository: string, runId: number): Promise<void> {
+    if (!Number.isSafeInteger(runId) || runId <= 0) throw new Error("Invalid readiness workflow run");
+    await runGh(["api", `repos/${repository}/actions/runs/${runId}/rerun`, "--method", "POST"]);
+  },
+
   async viewReadinessWorkflowRun(repository: string, runId: number): Promise<unknown> {
     if (!Number.isSafeInteger(runId) || runId <= 0) throw new Error("Invalid readiness workflow run");
     return JSON.parse(await runGh(["api", `repos/${repository}/actions/runs/${runId}`])) as unknown;

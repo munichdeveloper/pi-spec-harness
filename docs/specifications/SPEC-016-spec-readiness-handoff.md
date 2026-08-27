@@ -169,8 +169,16 @@ decision and a receipt-bound deferral with a stable audit timestamp. No agent
 process starts in this case. Already completed work can republish its stored
 result without requiring provider availability or re-executing the agent.
 
-Remaining activation configuration, cancelled/failed transport reconciliation,
-workflow syntax/runtime validation and
+Cancelled/failed transport now reuses the original Actions run via bounded rerun:
+at most three submissions per work item, persisted before the API request, with
+at least 60 seconds between submissions. Unstarted tasks require live executor
+availability. Completed execution output can be republished without an agent
+rerun. Claimed/failed agent execution stops for explicit reconciliation because
+its effects are uncertain. Recovery verifies the canonical receipt and does not
+run against a changed spec-content revision. API-response loss consumes the
+submission budget and subsequent running attempts are observed rather than resent.
+
+Remaining activation configuration, workflow syntax/runtime validation and
 synthetic hosted E2E remain mandatory milestone work. Concurrency alone is not a
 durable FIFO queue: cancelled pending transport runs must be recovered. No
 consumer activation before these cases and the complete flow are verified.

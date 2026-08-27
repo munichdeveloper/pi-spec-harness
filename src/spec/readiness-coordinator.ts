@@ -14,6 +14,7 @@ export interface ReadinessWork {
   receipt?: string;
   auditConfirmed?: boolean;
   deferral?: { receipt: string; occurredAt: string; reason: "executor-unavailable" };
+  transportRecovery?: { submissions: number; sourceAttempt: number; occurredAt: string };
   execution?: {
     receipt: string;
     status: "claimed" | "completed" | "failed";

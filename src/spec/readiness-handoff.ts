@@ -8,7 +8,8 @@ import { ensureReadinessImplementationIssue, ensureReadinessSpikeIssue } from ".
 import { reconcileReadiness } from "./readiness-coordinator.js";
 import { dispatchReadinessWork, findReadinessDispatch, type ReadinessDispatchPolicy } from "./readiness-dispatch.js";
 import { readVerifiedReadinessSpikeResult } from "./readiness-evidence.js";
-import { isReadinessContract, type ExecutorPolicy, type ReadinessAction } from "./readiness.js";
+import { isReadinessContract, type ExecutorPolicy, type ReadinessAction, type ReadinessDecision } from "./readiness.js";
+import { recoverReadinessTransport } from "./readiness-recovery.js";
 
 const labels: Record<ReadinessAction, string> = {
   "await-approval": "harness:readiness-approval", classify: "harness:readiness-classify",
@@ -77,6 +78,22 @@ export async function runReadinessHandoff(input: {
     if (policy.repository !== input.repository) throw new Error("Cross-repository readiness execution is not configured");
     return policy;
   };
+  const setLabels = async (issue: number, decision: ReadinessDecision) => {
+    const desired = labels[decision.action];
+    await github.ensureLabel(input.repository, desired, { color: "1D76DB", description: `Harness readiness: ${decision.action}` });
+    const current = await github.viewIssue(input.repository, issue);
+    await github.addLabels(input.repository, issue, current.labels.some(label => label.name === desired) ? [] : [desired]);
+    await github.removeLabels(input.repository, issue, current.labels.map(label => label.name).filter(name => Object.values(labels).includes(name) && name !== desired));
+    await audit(`decision:${JSON.stringify(decision)}`, `Readiness ${decision.action}: ${decision.reason}; next executor ${decision.executorId ?? "none"}.`);
+  };
+  const beforeRecovery = await store.load();
+  const recovery = beforeRecovery.readiness?.revision === specRevision
+    ? await recoverReadinessTransport({ store, workflow, currentExecutors: input.currentExecutors, costCeiling: input.costCeiling, audit }) : undefined;
+  if (recovery) {
+    const state = await store.load();
+    if (recovery.action !== "observe-work" && state.issue) await setLabels(state.issue, recovery);
+    return { ...recovery, runIssue: canonical.issue.number, runUrl: canonical.issue.url };
+  }
   const result = await reconcileReadiness(store, { specId: frontmatter.id, approved: true, revision: specRevision,
     contract: input.contract, costCeiling: input.costCeiling }, {
     ensureImplementationIssue: async key => {
@@ -93,14 +110,7 @@ export async function runReadinessHandoff(input: {
       await audit(`spike:${work.key}`, `Spike #${number} established; owner ${blocker.owner}; executor ${work.executorId}.`);
       return number;
     },
-    reconcileReadinessLabels: async (issue, decision) => {
-      const desired = labels[decision.action];
-      await github.ensureLabel(input.repository, desired, { color: "1D76DB", description: `Harness readiness: ${decision.action}` });
-      const current = await github.viewIssue(input.repository, issue);
-      await github.addLabels(input.repository, issue, current.labels.some(label => label.name === desired) ? [] : [desired]);
-      await github.removeLabels(input.repository, issue, current.labels.map(label => label.name).filter(name => Object.values(labels).includes(name) && name !== desired));
-      await audit(`decision:${JSON.stringify(decision)}`, `Readiness ${decision.action}: ${decision.reason}; next executor ${decision.executorId ?? "none"}.`);
-    },
+    reconcileReadinessLabels: setLabels,
     currentExecutors: input.currentExecutors,
     findReadinessWork: async key => {
       const state = await store.load();
