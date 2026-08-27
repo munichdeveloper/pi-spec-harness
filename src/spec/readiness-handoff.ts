@@ -31,13 +31,14 @@ export async function runReadinessHandoff(input: {
   if (await github.getBranchSha(input.repository, input.branch) !== input.revision) {
     throw new Error("Readiness source revision no longer matches trusted branch");
   }
-  const { content } = await github.getFileContent(input.repository, input.specPath, input.revision);
+  const { content, blobSha: specRevision } = await github.getFileContent(input.repository, input.specPath, input.revision);
+  if (!/^[a-f0-9]{40}$/.test(specRevision)) throw new Error("Invalid immutable spec content identity");
   const frontmatter = parseSpecFrontmatterForIssue(content);
   if (frontmatter.status !== "approved") return { action: "await-approval", reason: "spec-not-approved" };
   const built = buildIssueFromSpec(content, { specPath: input.specPath });
   if (frontmatter.requirements.length !== 1) throw new Error("Readiness run requires an explicit single requirement binding");
   const canonical = await ensureReadinessRun({ repository: input.repository, specId: frontmatter.id,
-    requirementId: frontmatter.requirements[0], specPath: input.specPath, approvedRevision: input.revision,
+    requirementId: frontmatter.requirements[0], specPath: input.specPath, approvedRevision: specRevision,
     approvalEvidence: `https://github.com/${input.repository}/blob/${input.revision}/${input.specPath}` });
   const backingStore = new IssueStateStore(input.repository, canonical.issue.number, canonical.issue.url);
   const store = {
@@ -76,7 +77,7 @@ export async function runReadinessHandoff(input: {
     if (policy.repository !== input.repository) throw new Error("Cross-repository readiness execution is not configured");
     return policy;
   };
-  const result = await reconcileReadiness(store, { specId: frontmatter.id, approved: true, revision: input.revision,
+  const result = await reconcileReadiness(store, { specId: frontmatter.id, approved: true, revision: specRevision,
     contract: input.contract, costCeiling: input.costCeiling }, {
     ensureImplementationIssue: async key => {
       const number = await ensureReadinessImplementationIssue(input.repository, { key, specId: frontmatter.id, title: frontmatter.title, body: built.body });

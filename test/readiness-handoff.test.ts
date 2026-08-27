@@ -8,7 +8,7 @@ function setup() {
   const revision = "a".repeat(40);
   const issues: Array<{ number: number; title: string; body: string; state: string; url: string; labels: { name: string }[] }> = [];
   vi.spyOn(github, "getBranchSha").mockResolvedValue(revision);
-  vi.spyOn(github, "getFileContent").mockResolvedValue({ blobSha: "blob", content: "---\nid: SPEC-001\ntitle: Feature\nstatus: approved\nrequirements:\n  - REQ-001\n---\n# Feature\n" });
+  vi.spyOn(github, "getFileContent").mockResolvedValue({ blobSha: revision, content: "---\nid: SPEC-001\ntitle: Feature\nstatus: approved\nrequirements:\n  - REQ-001\n---\n# Feature\n" });
   vi.spyOn(github, "listReadinessIssues").mockImplementation(async () => structuredClone(issues));
   vi.spyOn(github, "ensureLabel").mockResolvedValue();
   vi.spyOn(github, "createIssue").mockImplementation(async (repository, issue) => {
@@ -38,6 +38,17 @@ function setup() {
   return { input, issues, runs, policy };
 }
 describe("SPEC-016 complete GitHub controller (API simulation, not hosted E2E)", () => {
+  it("does not invalidate readiness when audit commits move the branch without changing the spec", async () => {
+    const f = setup();
+    await runReadinessHandoff(f.input);
+    const sourceCommit = "b".repeat(40);
+    vi.mocked(github.getBranchSha).mockResolvedValue(sourceCommit);
+    const result = await runReadinessHandoff({ ...f.input, revision: sourceCommit });
+    expect(result.action).toBe("observe-work");
+    expect(result.reason).toBe("spike-result-pending");
+    expect(f.runs).toHaveLength(1);
+    expect(parseStateFromBody(f.issues[0].body).readiness?.revision).toBe(f.input.revision);
+  });
   it("connects approved spec, one run, implementation issue, bounded spike and automatic continuation", async () => {
     const f = setup();
     expect((await runReadinessHandoff(f.input)).action).toBe("observe-work");

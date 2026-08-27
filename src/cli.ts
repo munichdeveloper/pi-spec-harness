@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { readFile } from "node:fs/promises";
 import { runReadinessExecuteCommand } from "./spec/readiness-execute-command.js";
+import { runReadinessReconcileCommand } from "./spec/readiness-reconcile-command.js";
 import { existsSync } from "node:fs";
 import { createHash } from "node:crypto";
 import yargs, { type Argv } from "yargs";
@@ -3816,6 +3817,16 @@ const _harnessCli = yargs(hideBin(process.argv))
         workKey: argv["work-key"], receipt: argv.receipt, configPath: argv.config });
       console.log(JSON.stringify(result, null, 2));
     },
+  )
+  .command(
+    "readiness-reconcile",
+    "Reconcile approved spec readiness using trusted workflow configuration and live executor probes",
+    y => y.option("repository", { type: "string", demandOption: true })
+      .option("revision", { type: "string", demandOption: true })
+      .option("config", { type: "string", demandOption: true }),
+    async argv => { console.log(JSON.stringify(await runReadinessReconcileCommand({
+      repository: argv.repository, revision: argv.revision, configPath: argv.config,
+    }), null, 2)); },
   )
   .demandCommand(1)
   .strict();

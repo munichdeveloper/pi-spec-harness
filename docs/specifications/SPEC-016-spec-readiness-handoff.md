@@ -14,7 +14,10 @@ the milestone; this draft is not a fabricated GitHub human-gate decision.
 
 ## Contract
 
-Readiness metadata version 1 is bound to an immutable spec revision. Each
+Readiness metadata version 1 is bound to the immutable Git blob SHA of the spec
+file, not the repository HEAD commit. Source approval provenance separately
+records the commit URL. Audit-only commits therefore do not invalidate evidence.
+Each
 blocker has a stable ID, stage (`implementation`, `deployment`, `deferred`),
 kind (`technical`, `decision`), explicit owner, question, acceptance criteria
 and a positive execution budget. A missing legacy contract is unclassified,
@@ -136,6 +139,15 @@ revision and payload across retries and coordinator state saves. API-simulation
 tests exercise the complete spike-to-implementation controller on one run, including
 unavailable executors. These tests are not hosted GitHub E2E evidence.
 
-Remaining orchestration CLI/workflow entry points, configured criterion-verifying
+The `readiness-reconcile --repository OWNER/REPO --revision SOURCE_COMMIT
+--config TRUSTED_CONFIG` CLI now invokes that controller. Configuration supplies
+repository, branch, specPath, contract, costCeiling, audit and executors. Every
+executor contains policy, workflow and an explicit availability command. The
+command receives a JSON availability request and must return `{available:true}`;
+failure or any other response means unavailable. Authorization and cost scope
+remain trusted configuration and cannot be granted by a probe response. Missing
+legacy readiness contracts stay unclassified rather than silently ready.
+
+Remaining workflow entry points, configured criterion-verifying
 producer workflow and synthetic workflow E2E remain
 mandatory milestone work; no consumer activation before those are verified.

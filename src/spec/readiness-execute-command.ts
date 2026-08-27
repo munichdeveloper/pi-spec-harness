@@ -18,7 +18,7 @@ export interface ReadinessExecutionConfig {
   audit: { directory: string; branch: string };
 }
 
-function commandValid(value: unknown): value is ReadinessCommand {
+export function commandValid(value: unknown): value is ReadinessCommand {
   if (!value || typeof value !== "object") return false;
   const c = value as Partial<ReadinessCommand>;
   return typeof c.executable === "string" && !!c.executable.trim() && typeof c.cwd === "string" && !!c.cwd.trim()
