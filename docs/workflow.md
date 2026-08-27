@@ -280,6 +280,11 @@ greift die Attestation automatisch erst, wenn die Workflow-Änderung wirksam
 und für die Anti-Tamper-Prüfung der Action auf dem Default-Branch sichtbar ist.
 Die Bridge übergibt `--repo "$GITHUB_REPOSITORY"` explizit, da sie bewusst ohne
 Checkout läuft und die GitHub CLI das Repository sonst nicht ableiten kann.
+Der dadurch ausgelöste Lauf hat den Actor `github-actions` (Typ `Bot`). Der
+Reusable erlaubt ausschließlich diesen exakten Automation-Actor über
+`allowed_bots: github-actions`; eine Wildcard ist aus Sicherheitsgründen nicht
+zulässig. Menschlich oder anderweitig ausgelöste Bot-Läufe erhalten dadurch
+keine pauschale Freigabe.
 
 1. **Credential-Check** (TAC-11): Ist weder `ANTHROPIC_API_KEY` noch
    `CLAUDE_CODE_OAUTH_TOKEN` gesetzt, schlägt der Workflow mit einer klaren
@@ -335,6 +340,7 @@ oder über das GitHub-UI: **Actions → Harness Capability Smoke → Run workflo
 | `deadlock was detected for concurrency group` | Veralteter Caller besitzt dieselbe Concurrency-Gruppe wie der Reusable Workflow | Caller mit der aktuellen Harness-Version neu installieren |
 | `Could not fetch an OIDC token` | Caller oder Reusable enthält nicht `id-token: write` | Beide verwalteten Workflows mit der aktuellen Harness-Version installieren |
 | `Unsupported event type: push` | Veralteter Caller ruft die Action direkt aus einem Push-Lauf auf | Caller mit der aktuellen Harness-Version installieren; der Default-Branch-Push wird dann auf `workflow_dispatch` gebridged |
+| `Workflow initiated by non-human actor: github-actions` | Reusable enthält noch keine exakte Freigabe für den Automation-Actor | Aktuelle Harness-Version installieren; `allowed_bots` muss exakt `github-actions` sein, niemals `*` |
 
 ### Installation (TAC-12)
 
