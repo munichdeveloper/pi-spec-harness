@@ -66,7 +66,7 @@ jobs:
       - name: Start supported capability smoke event
         env:
           GH_TOKEN: \${{ github.token }}
-        run: gh workflow run harness-capability-smoke.yml --ref "$GITHUB_REF_NAME"
+        run: gh workflow run harness-capability-smoke.yml --repo "$GITHUB_REPOSITORY" --ref "$GITHUB_REF_NAME"
 
   smoke:
     if: github.event_name != 'push'
