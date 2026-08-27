@@ -82,6 +82,13 @@ export async function runReadinessExecuteCommand(options: {
     policy: config.policy, costCeiling: config.costCeiling,
     blocker: config.contract.blockers.find(blocker => blocker.id === work.blockerId),
     agent: config.agent, verifier: config.verifier, confirmAudit });
-  return { schemaVersion: 1, command: "readiness-execute", result: { workKey: options.workKey, output },
+  const artifact = work.kind === "spike" ? {
+    ...(output as Record<string, unknown>), schemaVersion: 1, workKey: work.key,
+    executorId: work.executorId, issue: work.issue, attempt: work.attempt,
+    blockerId: work.blockerId, specRevision: work.revision,
+    runId: Number(options.receipt.slice("github-actions:".length)),
+    runAttempt: Number(process.env.GITHUB_RUN_ATTEMPT ?? "1"),
+  } : undefined;
+  return { schemaVersion: 1, command: "readiness-execute", result: { workKey: options.workKey, output, artifact },
     nextAction: "Publish the bound result artifact and reconcile the same canonical run." };
 }

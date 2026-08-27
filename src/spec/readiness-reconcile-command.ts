@@ -59,7 +59,17 @@ export async function runReadinessReconcileCommand(options: { repository: string
   if (process.env.GITHUB_ACTIONS !== "true" || process.env.GITHUB_REPOSITORY !== options.repository) {
     throw new Error("Readiness reconciliation requires a trusted GitHub Actions runtime");
   }
-  const config = parseReadinessReconcileConfig(JSON.parse(await readFile(options.configPath, "utf8")) as unknown);
+  const raw: unknown = JSON.parse(await readFile(options.configPath, "utf8"));
+  // A runtime cannot embed its own future commit SHA. Resolve only this explicit
+  // sentinel from the workflow's trusted repository variable, never task input.
+  if (raw && typeof raw === "object" && Array.isArray((raw as ReadinessReconcileConfig).executors)) {
+    for (const executor of (raw as ReadinessReconcileConfig).executors) {
+      if (executor?.workflow?.workflowRevision === "$runtime") {
+        executor.workflow.workflowRevision = process.env.HARNESS_READINESS_RUNTIME_SHA ?? "";
+      }
+    }
+  }
+  const config = parseReadinessReconcileConfig(raw);
   if (config.repository !== options.repository) throw new Error("Readiness configuration repository mismatch");
   const result = await runReadinessHandoff({ ...config, revision: options.revision,
     workflows: Object.fromEntries(config.executors.map(executor => [executor.policy.id, executor.workflow])),

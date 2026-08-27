@@ -1,0 +1,90 @@
+name: Harness Readiness Executor
+run-name: readiness:${{ inputs.work-key }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      run-issue:
+        required: true
+        type: string
+      work-key:
+        required: true
+        type: string
+      spec-revision:
+        required: true
+        type: string
+      workflow-revision:
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: readiness-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  execute:
+    if: ${{ vars.HARNESS_READINESS_ENABLED == 'true' && github.sha == vars.HARNESS_READINESS_RUNTIME_SHA && inputs.workflow-revision == vars.HARNESS_READINESS_RUNTIME_SHA }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write # canonical process-audit repository_dispatch
+      issues: write
+      actions: read
+    steps:
+      - name: Validate dispatch bindings
+        env:
+          RUN_ISSUE: ${{ inputs.run-issue }}
+          WORK_KEY: ${{ inputs.work-key }}
+          SPEC_REVISION: ${{ inputs.spec-revision }}
+        run: |
+          [[ "$RUN_ISSUE" =~ ^[1-9][0-9]*$ ]]
+          [[ "$WORK_KEY" =~ ^readiness-[a-f0-9]{64}$ ]]
+          [[ "$SPEC_REVISION" =~ ^[a-f0-9]{40}$ ]]
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ vars.HARNESS_READINESS_RUNTIME_SHA }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20.9'
+      - run: npm ci --ignore-scripts
+      - run: npm run build
+      - name: Verify configured spec binding
+        env:
+          SPEC_REVISION: ${{ inputs.spec-revision }}
+        run: |
+          node -e "const c=require('./.harness/readiness/executor.json');if(c.contract.specRevision!==process.env.SPEC_REVISION)process.exit(1)"
+      - name: Execute the canonical work claim
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          RUN_ISSUE: ${{ inputs.run-issue }}
+          WORK_KEY: ${{ inputs.work-key }}
+        run: |
+          set -euo pipefail
+          node dist/cli.js readiness-execute --repository "$REPOSITORY" --run-issue "$RUN_ISSUE" --work-key "$WORK_KEY" --receipt "github-actions:$GITHUB_RUN_ID" --config .harness/readiness/executor.json > "$RUNNER_TEMP/readiness-envelope.json"
+      - name: Prepare verified result artifact
+        id: artifact
+        env:
+          WORK_KEY: ${{ inputs.work-key }}
+        run: |
+          node --input-type=module <<'NODE'
+          import {readFileSync,writeFileSync,mkdirSync,appendFileSync} from 'node:fs';
+          import {join} from 'node:path';
+          const envelope=JSON.parse(readFileSync(join(process.env.RUNNER_TEMP,'readiness-envelope.json'),'utf8'));
+          if(envelope.result.artifact){
+            const dir=join(process.env.RUNNER_TEMP,'readiness-result');mkdirSync(dir,{recursive:true});
+            writeFileSync(join(dir,'result.json'),JSON.stringify(envelope.result.artifact));
+            appendFileSync(process.env.GITHUB_OUTPUT,`present=true\nname=readiness-result-${process.env.WORK_KEY.slice(10)}-${process.env.GITHUB_RUN_ATTEMPT}\n`);
+          }
+          NODE
+      - uses: actions/upload-artifact@v4
+        if: steps.artifact.outputs.present == 'true'
+        with:
+          name: ${{ steps.artifact.outputs.name }}
+          path: ${{ runner.temp }}/readiness-result/result.json
+          if-no-files-found: error
+          retention-days: 14

@@ -148,6 +148,23 @@ failure or any other response means unavailable. Authorization and cost scope
 remain trusted configuration and cannot be granted by a probe response. Missing
 legacy readiness contracts stay unclassified rather than silently ready.
 
-Remaining workflow entry points, configured criterion-verifying
-producer workflow and synthetic workflow E2E remain
-mandatory milestone work; no consumer activation before those are verified.
+Workflow entry points now exist as `readiness-reconcile.yml` and
+`readiness-executor.yml`. Both share a non-cancelling repository-wide concurrency
+group. Reconciliation is triggered manually, on spec/config pushes, executor
+completion and a ten-minute recovery schedule. Execution publishes the verified
+result envelope with the exact attempt-specific artifact name.
+
+They remain opt-in: `HARNESS_READINESS_ENABLED=true` and a 40-character
+`HARNESS_READINESS_RUNTIME_SHA` are required. Both check out that trusted commit
+without persisting Git credentials. Configurations must be present there at
+`.harness/readiness/reconcile.json` and `.harness/readiness/executor.json`.
+The reconcile workflow resolves the explicit `$runtime` workflowRevision sentinel
+from the trusted repository variable, avoiding a self-referential commit SHA.
+The executor dispatch branch must point to that runtime commit and must not be
+the audit journal branch; audit writes must not move the executable revision.
+
+Remaining activation configuration, live availability recheck at the receiver,
+cancelled/failed transport reconciliation, workflow syntax/runtime validation and
+synthetic hosted E2E remain mandatory milestone work. Concurrency alone is not a
+durable FIFO queue: cancelled pending transport runs must be recovered. No
+consumer activation before these cases and the complete flow are verified.
