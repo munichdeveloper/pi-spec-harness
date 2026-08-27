@@ -225,35 +225,48 @@ jobs:
           # Parse tool-call evidence from the action's structured output file.
           # execution_file is a path; read its contents before parsing.
           execution_file_path="${{ steps.agent.outputs.execution_file }}"
-          if [[ -n "$execution_file_path" && -f "$execution_file_path" ]]; then
-            agent_output="$(cat "$execution_file_path")"
-          else
-            agent_output=""
-          fi
 
-          # Each check uses jq to find a record where both the tool name and
-          # success flag appear in the same JSON object (TAC-04/TAC-05).
-          # Falls back to grep for line-level NDJSON where each line is one event.
+          # Correlate native Claude tool_use and tool_result records. Text
+          # mentioning tools, orphan results and failed calls are not evidence.
           check_tool_success() {
             local tool_name="$1"
-            # Try jq first (handles JSON arrays or NDJSON)
-            if command -v jq >/dev/null 2>&1; then
-              # Works for NDJSON: each line is a JSON object
-              if echo "$agent_output" | jq -e --arg t "$tool_name" \
-                'select(.tool == $t and .success == true)' >/dev/null 2>&1; then
-                return 0
-              fi
-              # Works for a JSON array of events
-              if echo "$agent_output" | jq -e --arg t "$tool_name" \
-                '.[] | select(.tool == $t and .success == true)' >/dev/null 2>&1; then
-                return 0
-              fi
-            fi
-            # Fallback: require both fields on the same line (single-line JSON records)
-            if echo "$agent_output" | grep -q "\"tool\":\"${tool_name}\".*\"success\":true"; then
-              return 0
-            fi
-            return 1
+            node - "$execution_file_path" "$tool_name" <<'NODE'
+          const fs = require('node:fs');
+          try {
+            const raw = fs.readFileSync(process.argv[2], 'utf8');
+            let events;
+            try {
+              const parsed = JSON.parse(raw);
+              events = Array.isArray(parsed) ? parsed : [parsed];
+            } catch {
+              events = raw.split(/\r?\n/).filter(line => line.trim()).map(line => JSON.parse(line));
+            }
+            const calls = new Map();
+            const results = new Map();
+            const invalid = new Set();
+            for (const event of events) {
+              if (!event || typeof event.session_id !== 'string' || !event.session_id) continue;
+              if (!Array.isArray(event.message?.content)) continue;
+              for (const block of event.message.content) {
+                if (!block || typeof block !== 'object') continue;
+                if (event.type === 'assistant' && block.type === 'tool_use' && typeof block.id === 'string' && block.id) {
+                  const key = JSON.stringify([event.session_id, block.id]);
+                  if (calls.has(key)) invalid.add(key);
+                  calls.set(key, block.name);
+                }
+                if (event.type === 'user' && block.type === 'tool_result' && typeof block.tool_use_id === 'string' && block.tool_use_id) {
+                  const key = JSON.stringify([event.session_id, block.tool_use_id]);
+                  if (!calls.has(key) || results.has(key)) invalid.add(key);
+                  results.set(key, (block.is_error === undefined || block.is_error === false) && Object.hasOwn(block, 'content'));
+                }
+              }
+            }
+            const passed = [...calls].some(([key, name]) => name === process.argv[3] && results.get(key) === true && !invalid.has(key));
+            process.exit(passed ? 0 : 1);
+          } catch {
+            process.exit(1);
+          }
+          NODE
           }
 
           # Bash evidence: any successful Bash tool call

@@ -273,8 +273,9 @@ describe("SPEC-010 capability-smoke reusable workflow contracts", () => {
     expect(workflow).toContain("SMOKE_WRITE_");
     // TAC-04/TAC-05: tool success is checked per-tool (scoped), not globally
     expect(workflow).toContain("check_tool_success");
-    expect(workflow).toContain("jq -e");
-    expect(workflow).toContain('.tool == $t and .success == true');
+    expect(workflow).toContain("block.type === 'tool_use'");
+    expect(workflow).toContain("block.type === 'tool_result'");
+    expect(workflow).toContain("results.get(key) === true && !invalid.has(key)");
   });
 
   it("TAC-05: gate job fails the workflow when smoke_passed is not true", async () => {
@@ -405,7 +406,8 @@ describe("SPEC-010 capability-smoke reusable workflow contracts", () => {
     expect(workflow).not.toContain("agent_output='${{ steps.agent.outputs.execution_file");
     // execution_file is a path; must read the file before passing to jq/grep.
     expect(workflow).toContain('execution_file_path="${{ steps.agent.outputs.execution_file }}');
-    expect(workflow).toContain('agent_output="$(cat "$execution_file_path")"');
+    expect(workflow).toContain('node - "$execution_file_path" "$tool_name"');
+    expect(workflow).toContain("fs.readFileSync(process.argv[2], 'utf8')");
     // Must NOT assign the raw path directly to agent_output (would pipe a path string to jq).
     expect(workflow).not.toMatch(/agent_output="\$\{\{ steps\.agent\.outputs\.execution_file \}\}"/);
   });
