@@ -9,6 +9,7 @@ function config() {
     policy: { id: "synthetic", available: true, authorized: true, capabilities: ["implementation"], maxTaskCost: 0 },
     contract: { schemaVersion: 1, specRevision: "revision", blockers: [] },
     agent: { executable: process.execPath, args: ["-e", "process.stdin.resume();process.stdin.on('end',()=>console.log(JSON.stringify({synthetic:true})))"], cwd: process.cwd(), timeoutMs: 5000, env: {} },
+    availability: { executable: process.execPath, args: ["-e", "process.stdin.resume();process.stdin.on('end',()=>console.log(JSON.stringify({available:true})))"], cwd: process.cwd(), timeoutMs: 5000, env: {} },
     audit: { directory: "docs/process-audit/journal", branch: "main" } };
 }
 describe("SPEC-016 executable CLI entry point", () => {
@@ -27,6 +28,19 @@ describe("SPEC-016 executable CLI entry point", () => {
     for (const patch of [{ costCeiling: -1 }, { repository: "../unsafe" }, { agent: { ...config().agent, timeoutMs: 0 } }, { contract: {} }]) {
       expect(() => parseReadinessExecutionConfig({ ...config(), ...patch })).toThrow("Invalid");
     }
+  });
+  it("defers and audits a lost quota before claiming or starting the agent", async () => {
+    const c = config(); c.availability.args = ["-e", "process.stdin.resume();process.stdin.on('end',()=>console.log(JSON.stringify({available:false})))"];
+    vi.mocked(readFile).mockResolvedValue(JSON.stringify(c));
+    let state = initRunState({ repository: "acme/product", runId: "test", requirement: "REQ-001", spec: "SPEC-001" });
+    state.readiness = { schemaVersion: 1, revision: "revision", implementationKey: "issue", work: [{ key: "work", revision: "revision", kind: "implementation", executorId: "synthetic", attempt: 1, issue: 96 }] };
+    const store = { load: async () => structuredClone(state), save: async (next: typeof state) => { state = structuredClone(next); } };
+    const confirmAudit = vi.fn(async () => {});
+    await expect(runReadinessExecuteCommand({ repository: "acme/product", runIssue: 97, workKey: "work", receipt: "github-actions:123", configPath: "trusted.json" }, { store, confirmAudit })).rejects.toThrow("no agent work was started");
+    expect(state.readiness?.work[0].execution).toBeUndefined();
+    expect(state.readiness?.decision?.action).toBe("await-executor");
+    expect(state.readiness?.work[0].deferral?.receipt).toBe("github-actions:123");
+    expect(confirmAudit).toHaveBeenCalledTimes(1);
   });
   it("refuses an unbound production runtime rather than misattributing the audit actor", async () => {
     await expect(runReadinessExecuteCommand({ repository: "acme/nonmatching", runIssue: 97, workKey: "work", receipt: "invalid", configPath: "trusted.json" })).rejects.toThrow("bound GitHub Actions runtime");

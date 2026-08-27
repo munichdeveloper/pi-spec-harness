@@ -13,6 +13,7 @@ export interface ReadinessWork {
   issue?: number;
   receipt?: string;
   auditConfirmed?: boolean;
+  deferral?: { receipt: string; occurredAt: string; reason: "executor-unavailable" };
   execution?: {
     receipt: string;
     status: "claimed" | "completed" | "failed";

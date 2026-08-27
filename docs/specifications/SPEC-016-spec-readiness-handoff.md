@@ -119,7 +119,7 @@ validates repository/spec revision and confirms execution audit in the journal.
 Configuration is executable authority and must come from a verified trusted
 checkout, never the work branch or agent output. The workflow integration must
 enforce this checkout policy and the shared concurrency lock. Configuration
-contains schemaVersion, repository, costCeiling, policy, contract, agent,
+contains schemaVersion, repository, costCeiling, policy, contract, agent, availability,
 optional verifier, and audit.directory/audit.branch. Command environments are
 explicit; do not commit credential values into configuration.
 
@@ -163,8 +163,14 @@ from the trusted repository variable, avoiding a self-referential commit SHA.
 The executor dispatch branch must point to that runtime commit and must not be
 the audit journal branch; audit writes must not move the executable revision.
 
-Remaining activation configuration, live availability recheck at the receiver,
-cancelled/failed transport reconciliation, workflow syntax/runtime validation and
+The receiver now requires an explicit availability command and probes again
+before claiming new work. Failed probes or quota loss persist an executor-waiting
+decision and a receipt-bound deferral with a stable audit timestamp. No agent
+process starts in this case. Already completed work can republish its stored
+result without requiring provider availability or re-executing the agent.
+
+Remaining activation configuration, cancelled/failed transport reconciliation,
+workflow syntax/runtime validation and
 synthetic hosted E2E remain mandatory milestone work. Concurrency alone is not a
 durable FIFO queue: cancelled pending transport runs must be recovered. No
 consumer activation before these cases and the complete flow are verified.
