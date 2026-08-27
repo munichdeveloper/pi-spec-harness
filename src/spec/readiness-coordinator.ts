@@ -52,6 +52,9 @@ export async function reconcileReadiness(
   const state = await store.load();
   if (state.spec !== context.specId) throw new Error("Readiness spec does not match canonical run");
   if (!context.approved) return { action: "await-approval", reason: "spec-not-approved" };
+  if (!state.readiness && !["requirement", "spec", "issue"].includes(state.phase)) {
+    return { action: "human-decision", reason: "existing-run-progress-requires-adoption" };
+  }
   const save = async () => { assertHygiene(state); await store.save(state); };
   if (!state.readiness) {
     state.readiness = {

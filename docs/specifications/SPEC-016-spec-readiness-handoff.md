@@ -81,6 +81,13 @@ closure never constitutes evidence. Lost creation responses are recovered throug
 the durable marker. Callers must serialize reconciliation and confirm issue audit.
 No execution labels or providers are activated by issue materialization alone.
 
-Remaining dispatch/evidence ports, canonical bootstrap, CLI/workflow
+Canonical bootstrap now adopts existing runs by exact spec/binding rather than
+by a generated title alone, preserving legacy names and progress. It creates a
+single issue-backed run with revision-bound spec provenance when none exists.
+Duplicate, closed, malformed or conflicting runs stop reconciliation; an advanced
+legacy run cannot silently dispatch a competing implementation. Trusted approval
+verification remains the entry point's responsibility, not an inference from chat.
+
+Remaining dispatch/evidence ports, CLI/workflow
 integration, trusted producer validation and synthetic workflow E2E remain
 mandatory milestone work; no consumer activation before those are verified.

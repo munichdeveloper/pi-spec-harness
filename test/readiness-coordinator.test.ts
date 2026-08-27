@@ -29,6 +29,14 @@ function setup() {
 }
 
 describe("SPEC-016 durable readiness coordinator (port integration, not workflow E2E)", () => {
+  it("does not launch a competing implementation for an already advanced legacy run", async () => {
+    const f = setup();
+    const state = await f.store.load(); state.phase = "verification";
+    await f.store.save(state);
+    expect((await reconcileReadiness(f.store, f.context, f.ports)).reason).toBe("existing-run-progress-requires-adoption");
+    expect(f.ports.ensureImplementationIssue).not.toHaveBeenCalled();
+    expect(f.ports.dispatchReadinessWork).not.toHaveBeenCalled();
+  });
   it("reconciles an existing issue, performs a spike and resumes implementation on the same run", async () => {
     const f = setup();
     expect((await reconcileReadiness(f.store, f.context, f.ports)).action).toBe("observe-work");
