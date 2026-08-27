@@ -59,7 +59,17 @@ permissions:
   id-token: write  # required by the pinned Claude action in the reusable workflow
 
 jobs:
+  dispatch-after-default-branch-push:
+    if: github.event_name == 'push' && github.ref_name == github.event.repository.default_branch
+    runs-on: ubuntu-latest
+    steps:
+      - name: Start supported capability smoke event
+        env:
+          GH_TOKEN: \${{ github.token }}
+        run: gh workflow run harness-capability-smoke.yml --ref "$GITHUB_REF_NAME"
+
   smoke:
+    if: github.event_name != 'push'
     uses: ${reusableRepository}/.github/workflows/capability-smoke.yml@${harnessRef}
     with:
       claude-code-action-version: ${claudeCodeActionVersion}
