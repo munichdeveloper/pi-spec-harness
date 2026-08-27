@@ -52,6 +52,15 @@ jobs:
           node-version: '20.9'
       - run: npm ci --ignore-scripts
       - run: npm run build
+      - name: Prepare explicitly enabled synthetic configuration
+        if: vars.HARNESS_READINESS_SYNTHETIC == 'true'
+        env:
+          HARNESS_READINESS_EXECUTOR_WORKFLOW_ID: ${{ vars.HARNESS_READINESS_EXECUTOR_WORKFLOW_ID }}
+          HARNESS_READINESS_RUNTIME_BRANCH: ${{ vars.HARNESS_READINESS_RUNTIME_BRANCH }}
+          HARNESS_READINESS_SOURCE_BRANCH: ${{ vars.HARNESS_READINESS_SOURCE_BRANCH }}
+        run: |
+          node scripts/prepare-readiness-synthetic.mjs > "$RUNNER_TEMP/readiness-synthetic.json"
+          node --input-type=module -e "import fs from 'node:fs';const c=JSON.parse(fs.readFileSync(process.env.RUNNER_TEMP+'/readiness-synthetic.json','utf8'));fs.mkdirSync('.harness/readiness',{recursive:true});for(const k of ['executor','reconcile'])fs.writeFileSync('.harness/readiness/'+k+'.json',JSON.stringify(c[k]));"
       - name: Verify configured spec binding
         env:
           SPEC_REVISION: ${{ inputs.spec-revision }}
