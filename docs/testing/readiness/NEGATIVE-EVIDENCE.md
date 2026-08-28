@@ -1,5 +1,18 @@
 # Hosted negative evidence tests
 
+## Agent failure after availability: verified 2026-08-28
+
+SPEC-900008, canonical run148, spike150, runtime dd56cfc on
+runtime/spec016-agent-failure-v9. Controller33192306861 succeeded.
+Executor33192452753 intentionally failed after the canonical claim; stored
+execution.status is failed with timestamps, no provider output. Its automatic
+repository_dispatch continuation33192582207 succeeded and set human-decision /
+agent-execution-outcome-requires-reconciliation. Exactly one work record,
+spike attempt1, original Actions run_attempt1; no retry or implementation.
+All nine run events confirmed on origin/main c791953. Readiness disabled.
+This is an intentional bounded subprocess failure, not a real process kill or
+workflow cancellation; those fault modes are not inferred from this result.
+
 ## Invalid coordinates: verified 2026-08-28
 
 SPEC-900006, canonical run140, runtime299b853 on runtime/spec016-invalid-v7.
