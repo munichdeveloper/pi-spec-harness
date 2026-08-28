@@ -10,6 +10,7 @@ import { dispatchReadinessWork, findReadinessDispatch, type ReadinessDispatchPol
 import { readVerifiedReadinessSpikeResult } from "./readiness-evidence.js";
 import { isReadinessContract, type ExecutorPolicy, type ReadinessAction, type ReadinessDecision } from "./readiness.js";
 import { recoverReadinessTransport } from "./readiness-recovery.js";
+import { AuditConfirmationPendingError } from "../audit/confirmation-pending.js";
 
 const labels: Record<ReadinessAction, string> = {
   "await-approval": "harness:readiness-approval", classify: "harness:readiness-classify",
@@ -21,7 +22,20 @@ const labels: Record<ReadinessAction, string> = {
  * serializes the entire call with receivers under the same repository/spec lock.
  * Readiness labels are deliberately separate from legacy Copilot triggers.
  */
-export async function runReadinessHandoff(input: {
+export async function runReadinessHandoff(input: Parameters<typeof executeReadinessHandoff>[0]) {
+  try {
+    return await executeReadinessHandoff(input);
+  } catch (error) {
+    if (!(error instanceof AuditConfirmationPendingError)) throw error;
+    // The original event is already persisted in the canonical run before
+    // dispatch. Stop here: no downstream work may pass an unconfirmed audit.
+    // The existing ten-minute scheduler retries the same idempotent handoff.
+    return { action: "await-audit", reason: "audit-confirmation-pending",
+      idempotencyKey: error.idempotencyKey, retryAfterSeconds: 600 };
+  }
+}
+
+async function executeReadinessHandoff(input: {
   repository: string; branch: string; specPath: string; revision: string;
   contract: unknown; costCeiling: number;
   workflows: Record<string, ReadinessDispatchPolicy>;
@@ -52,15 +66,7 @@ export async function runReadinessHandoff(input: {
       await backingStore.save(state);
     },
   };
-  const audit = async (identity: string, description: string, evidence: string[] = []) => {
-    const id = `readiness:${createHash("sha256").update(`${canonical.issue.number}:${identity}`).digest("hex")}`;
-    const state = await backingStore.load();
-    state.readinessAudits ??= {};
-    if (!state.readinessAudits[id]) {
-      state.readinessAudits[id] = { occurredAt: new Date().toISOString(), revision: input.revision, description, evidence: [canonical.issue.url, ...evidence] };
-      await backingStore.save(state);
-    }
-    const event = state.readinessAudits[id];
+  const deliver = async (id: string, event: { occurredAt: string; revision: string; description: string; evidence: string[] }) => {
     await github.dispatchProcessAuditEnvelopeV1(input.repository, {
       schema_version: 1, occurred_at: event.occurredAt,
       process_instance: formatCanonicalRunId(input.repository, canonical.issue.number).processInstance,
@@ -70,6 +76,27 @@ export async function runReadinessHandoff(input: {
       evidence: event.evidence, reason: "Reconcile approved spec readiness on its canonical run", description: event.description,
     });
     await github.confirmAuditEventInJournal(input.repository, input.audit.directory, id, input.audit.branch);
+  };
+  // Drain durable intents first, including a previous decision whose conditions
+  // have since changed. Never abandon it by computing a different decision.
+  for (const [id, event] of Object.entries((await backingStore.load()).readinessAudits ?? {})) {
+    try {
+      await github.confirmAuditEventInJournal(input.repository, input.audit.directory, id, input.audit.branch, 1, 0);
+    } catch (error) {
+      if (!(error instanceof AuditConfirmationPendingError)) throw error;
+      await deliver(id, event);
+    }
+  }
+  const audit = async (identity: string, description: string, evidence: string[] = []) => {
+    const id = `readiness:${createHash("sha256").update(`${canonical.issue.number}:${identity}`).digest("hex")}`;
+    const state = await backingStore.load();
+    state.readinessAudits ??= {};
+    if (!state.readinessAudits[id]) {
+      state.readinessAudits[id] = { occurredAt: new Date().toISOString(), revision: input.revision, description, evidence: [canonical.issue.url, ...evidence] };
+      await backingStore.save(state);
+    }
+    const event = state.readinessAudits[id];
+    await deliver(id, event);
   };
   await audit("canonical-run", "Canonical run established or recovered; next actor: readiness controller.");
   const workflow = (executorId: string) => {

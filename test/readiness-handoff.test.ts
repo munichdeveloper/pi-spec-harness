@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { github } from "../src/github/gh.js";
 import { runReadinessHandoff } from "../src/spec/readiness-handoff.js";
 import { parseStateFromBody } from "../src/state/issue-store.js";
+import { AuditConfirmationPendingError } from "../src/audit/confirmation-pending.js";
 
 afterEach(() => vi.restoreAllMocks());
 function setup() {
@@ -38,6 +39,50 @@ function setup() {
   return { input, issues, runs, policy };
 }
 describe("SPEC-016 complete GitHub controller (API simulation, not hosted E2E)", () => {
+  it("waits on delayed acknowledgement and resumes the same event without duplicate work", async () => {
+    const f = setup();
+    vi.mocked(github.confirmAuditEventInJournal).mockImplementationOnce(async (_repo, _dir, key) => {
+      throw new AuditConfirmationPendingError(key, "receiver queued");
+    });
+    expect(await runReadinessHandoff(f.input)).toMatchObject({ action: "await-audit", retryAfterSeconds: 600 });
+    expect(f.issues).toHaveLength(1);
+    expect(f.runs).toHaveLength(0);
+    const first = vi.mocked(github.dispatchProcessAuditEnvelopeV1).mock.calls[0][1];
+    expect(parseStateFromBody(f.issues[0].body).readinessAudits?.[first.idempotency_key]).toBeDefined();
+    await runReadinessHandoff(f.input);
+    expect(vi.mocked(github.dispatchProcessAuditEnvelopeV1).mock.calls[1][1]).toEqual(first);
+    await runReadinessHandoff(f.input);
+    expect(f.issues).toHaveLength(3);
+    expect(f.runs).toHaveLength(1);
+  });
+  it("does not downgrade permission or invalid-journal failures to pending", async () => {
+    const f = setup();
+    vi.mocked(github.confirmAuditEventInJournal).mockRejectedValue(new Error("HTTP 403"));
+    await expect(runReadinessHandoff(f.input)).rejects.toThrow("HTTP 403");
+    expect(f.runs).toHaveLength(0);
+  });
+  it("drains an old quota decision before dispatch after availability changes", async () => {
+    const f = setup(); f.policy.available = false;
+    let pendingKey = "";
+    vi.mocked(github.dispatchProcessAuditEnvelopeV1).mockImplementation(async (_repo, event) => {
+      if (event.description.includes("Readiness await-executor")) pendingKey = event.idempotency_key;
+    });
+    vi.mocked(github.confirmAuditEventInJournal).mockImplementation(async (_repo, _dir, key) => {
+      if (key === pendingKey) throw new AuditConfirmationPendingError(key, "queued");
+      return "confirmed";
+    });
+    expect((await runReadinessHandoff(f.input)).action).toBe("await-audit");
+    f.policy.available = true;
+    expect((await runReadinessHandoff(f.input)).action).toBe("await-audit");
+    expect(f.runs).toHaveLength(0);
+    vi.mocked(github.confirmAuditEventInJournal).mockResolvedValue("confirmed");
+    await runReadinessHandoff(f.input);
+    expect(f.runs).toHaveLength(1);
+    const events = vi.mocked(github.dispatchProcessAuditEnvelopeV1).mock.calls
+      .map(([, event]) => event).filter(event => event.idempotency_key === pendingKey);
+    expect(events).toHaveLength(2);
+    expect(events[1]).toEqual(events[0]);
+  });
   it("does not invalidate readiness when audit commits move the branch without changing the spec", async () => {
     const f = setup();
     await runReadinessHandoff(f.input);

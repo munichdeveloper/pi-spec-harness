@@ -11,6 +11,7 @@ import {
   PROCESS_AUDIT_RECEIVER_PATH,
 } from "../workflows/template-catalog.js";
 import { parseJournalEntry } from "../audit/journalParser.js";
+import { AuditConfirmationPendingError } from "../audit/confirmation-pending.js";
 
 const execFile = promisify(execFileCb);
 
@@ -1305,7 +1306,7 @@ export const github = {
         return result.confirmedAt;
       }
     }
-    throw new Error(
+    throw new AuditConfirmationPendingError(idempotencyKey,
       `audit event with idempotency_key "${idempotencyKey}" not found in journal ` +
       `"${journalDirectory}" of "${recorderRepository}" after ${maxAttempts} attempt(s). ` +
       `Ensure the process-audit-receiver workflow is installed in the recorder repository.`,

@@ -229,3 +229,20 @@ on the same identity; changing runtime identity must not invalidate its receipt.
 Cancellation-before-claim and stale artifact tests require separate transport
 and artifact fault injection; agent-failure is not a substitute for either.
 Do not weaken production verification to make a negative fixture pass.
+
+### Delayed audit acknowledgement
+
+Readiness reconciliation now distinguishes bounded acknowledgement expiry
+(`AuditConfirmationPendingError`) from permission, transport and malformed
+journal failures. Only acknowledgement expiry returns `await-audit` with the
+exact idempotency key and a 600-second retry hint. It does not mark delivery
+confirmed or authorize downstream work. Original audit intents remain in the
+canonical issue body and are drained before new decisions, including when quota
+has changed. Replays preserve event timestamps and payloads.
+
+The existing ten-minute schedule supplies automatic continuation while readiness
+is enabled; the hint does not create a separate timer. If readiness is disabled,
+an operator must re-enable it after diagnosis. Real API/schema failures still
+fail visibly. This controller fix does not change executor-side error handling.
+Hosted verification is still required; local tests simulate delayed delivery,
+changed availability and permission failure.
