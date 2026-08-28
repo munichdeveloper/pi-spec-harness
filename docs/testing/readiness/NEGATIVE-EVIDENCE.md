@@ -1,5 +1,31 @@
 # Hosted negative evidence tests
 
+## Workflow cancellation before claim: verified 2026-08-28
+
+The first attempted identity SPEC-900009/run151 was NOT cancelled: local
+approval tooling hit a usage limit before cancellation. The run continued
+successfully (spike33193035851, implementation33193260380). Preserve it as
+ordinary positive evidence, never claim it as cancellation evidence.
+
+Retest SPEC-900010/run154 used runtime11ea45c on runtime/spec016-cancel-v11.
+Controller33210854679 dispatched spike33211011952. A bounded local observer
+validated branch/SHA, queued status and zero jobs before requesting cancellation.
+GitHub confirmed cancelled with jobs=[], and canonical work had no execution.
+
+Recovery controller33211063937 was manually dispatched once; this does not
+prove automatic scheduler detection of a never-started cancelled workflow.
+It automatically submitted exactly one rerun of receipt github-actions:33211011952.
+Actions attempt2 succeeded; logical spike attempt remained1. Artifact9701648752
+is bound to Actions attempt2. Automatic controller33211223809 verified it and
+dispatched implementation33211311414, completed with synthetic result10.
+Automatic follow-up33211426108 returned observe-work/implementation-already-dispatched.
+
+Exactly two logical work records, one recovery submission, no repeated agent
+execution. All 14 automatic run154 audit events confirmed on origin/main9e279de.
+Readiness disabled and false read back. Explicit cancellation action is recorded
+locally below, not counted among the 14 automatic events. Remaining coverage:
+stale evidence and automatic scheduler wakeup after pre-job cancellation.
+
 ## Agent failure after availability: verified 2026-08-28
 
 SPEC-900008, canonical run148, spike150, runtime dd56cfc on
