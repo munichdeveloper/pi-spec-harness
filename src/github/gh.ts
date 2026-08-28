@@ -1,5 +1,6 @@
 import { execFile as execFileCb, spawn } from "node:child_process";
 import { promisify } from "node:util";
+import { createHash } from "node:crypto";
 import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -1280,7 +1281,18 @@ export const github = {
       // List all .md files in the journal directory.  An empty or missing
       // directory is not an error here — the workflow may not have run yet.
       const files = await this.listDirectoryMarkdownFiles(recorderRepository, journalDirectory, branch);
-      for (const file of files) {
+      // The canonical recorder includes this hash in the filename. Prioritize
+      // matching candidates instead of downloading the entire journal on every
+      // poll. A hash match alone is never confirmation: parse the complete key
+      // and confirmed_at below. Keep legacy filenames compatible and perform
+      // one exhaustive final fallback for renamed/noncanonical historical data.
+      const suffix = `-${createHash("sha256").update(idempotencyKey, "utf8").digest("hex").slice(0, 16)}.md`;
+      const canonicalName = /^\d{8}T\d{6}Z-[a-f0-9]{16}\.md$/;
+      const candidates = files.filter(file => file.name.endsWith(suffix));
+      const legacy = files.filter(file => !file.name.endsWith(suffix) && !canonicalName.test(file.name));
+      const fallback = attempt === maxAttempts - 1
+        ? files.filter(file => !file.name.endsWith(suffix) && canonicalName.test(file.name)) : [];
+      for (const file of [...candidates, ...legacy, ...fallback]) {
         // Fail closed: any file-read error propagates immediately; unreadable
         // journal files are NOT silently skipped (SPEC-005 §external-contract).
         const { content } = await this.getFileContent(recorderRepository, file.path, branch);

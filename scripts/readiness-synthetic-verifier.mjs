@@ -8,5 +8,5 @@ process.stdout.write(JSON.stringify({
   blockerId: task.blocker.id, specRevision: task.specRevision,
   verdict: passed ? 'passed' : 'failed',
   verifiedCriteria: passed ? ['Exact synthetic coordinate sample verified independently'] : [],
-  references: ['synthetic:coordinate-fixture-v1'], changes: [],
+  references: ['https://github.com/munichdeveloper/pi-spec-harness/blob/bc453c31bb4808fb63ba9b39fa3a3afe2085f8e0/scripts/readiness-synthetic-agent.mjs'], changes: [],
 }));
