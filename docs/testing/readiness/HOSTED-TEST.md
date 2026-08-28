@@ -208,3 +208,24 @@ milestone. Required-evidence items 6-8 above still need comprehensive hosted
 negative-path tests. The readiness checkpoint observes completed work; it does
 not yet close the overall tracking run or retire the spike issue. Real-provider
 coding capability is deliberately not claimed by this deterministic fixture.
+
+## Negative-fixture preparation
+
+The local synthetic config generator accepts an explicit
+`HARNESS_READINESS_SYNTHETIC_SCENARIO`: `success` (default),
+`quota-unavailable`, `invalid-coordinates`, `incomplete-result`, or
+`agent-failure`. Unknown values fail closed. The scenario is passed through
+the subprocess environment allowlist; no ambient credential is forwarded.
+The independent verifier is unchanged: bad or missing coordinates fail.
+Quota-unavailable both reports unavailable and refuses direct execution.
+Agent-failure reports available but exits unsuccessfully during execution.
+
+These fixtures are preparation, not hosted evidence. Both workflows forward
+the scenario variable only to their synthetic config preparation step.
+Before activation, bind both source and runtime to
+the reviewed test commit and allocate a new identity per independent scenario.
+Keep previous canonical runs and evidence unchanged. Quota recovery must stay
+on the same identity; changing runtime identity must not invalidate its receipt.
+Cancellation-before-claim and stale artifact tests require separate transport
+and artifact fault injection; agent-failure is not a substitute for either.
+Do not weaken production verification to make a negative fixture pass.
