@@ -1,5 +1,40 @@
 # Hosted negative evidence tests
 
+## Scheduler-only quota recovery: verified 2026-08-28
+
+SPEC-900011/run158 used runtime8977eb26512984a7cd15fec4882984404e4eb62c.
+Schedule33215844110 created await-executor with no work while quota was unavailable.
+Availability was restored at22:21:10.825Z; schedule33216891586 at22:27:47Z
+automatically dispatched spike160/executor33216972816. Artifact9703736171
+was verified by automatic controller33217042570, which dispatched
+implementation33217133065. Its persisted output is result10; automatic follow-up
+33217219904 returned observe-work/implementation-already-dispatched.
+Exactly two work records, both attempt1. No manual controller dispatch at all.
+Audits confirmed on main; readiness disabled and false read back.
+Completion audit key: spec016:scheduler-v12:verified:v1.
+
+## Scheduler recovery after pre-job cancellation: verified 2026-08-28
+
+SPEC-900012/run161 used runtime0adac8f8f91d1d0faced65783daac27668b96063.
+Initial setup controller33217831770 was manually dispatched once. A bounded
+observer cancelled executor33217963640 at22:44:57.565Z after verifying exact
+SHA, pending status, attempt1 and zero jobs. API confirmed cancelled/jobs=0;
+canonical work had no execution claim. This setup is not the recovery proof.
+
+Schedule33218394205 at22:51:53Z automatically submitted exactly one recovery
+at22:52:18.432Z. Same receipt, Actions attempt2, logical spike attempt1.
+Executor succeeded; artifact9704272397 is bound to attempt2. Automatic controller
+33218503913 verified it and dispatched implementation33218572385, which persisted
+result10 at22:55:53.947Z. Automatic follow-up33218657725 returned observe-work /
+implementation-already-dispatched. No manual recovery dispatch or rerun.
+
+All ten controller audit keys plus four execution claim/completion events were
+independently confirmed on main608f114. Exactly two completed work records and
+one transport recovery submission. Readiness disabled and false read back.
+Previous runs, including the earlier manually initiated recovery proof, remain
+unchanged. Neither proof closes the overall product lifecycle: hosted stale
+evidence coverage and explicit synthetic lifecycle disposition remain outstanding.
+
 ## Stale evidence: read-only live API proof
 
 `npm run build && node scripts/verify-readiness-stale-evidence.mjs` passed
