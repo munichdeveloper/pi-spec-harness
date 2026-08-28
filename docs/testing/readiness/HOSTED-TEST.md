@@ -83,7 +83,8 @@ hosted validation is tracked below and must not be inferred from local tests.
 
 1. Real run/implementation/spike issues with one canonical run and stable bindings.
 2. Successful hosted spike execution and attempt-bound result artifact.
-3. Automatic workflow_run continuation to implementation without a second approval.
+3. Automatic executor-completion notification and continuation to implementation
+   without a second approval (explicit repository_dispatch; workflow_run is supplementary).
 4. Persisted implementation fixture output and both execution audit events.
 5. Repeated reconcile does not create another issue or execute work again.
 6. Cancellation-before-claim recovers within the retry bound; uncertain claimed
@@ -95,3 +96,69 @@ hosted validation is tracked below and must not be inferred from local tests.
 Record workflow URLs, run-issue URL, artifact IDs, attempts and journal paths here
 after verification. Disable synthetic execution when testing is complete; retain
 issues/artifacts as evidence within their retention periods.
+
+## PR #124 hosted verification (2026-08-28)
+
+PR #124 was explicitly authorized and merged as
+`5c6bfbf811afabb175ee13ed66d8f44383728384`.
+[Post-merge CI 33173722961](https://github.com/munichdeveloper/pi-spec-harness/actions/runs/33173722961)
+passed. Runtime `runtime/spec016-synthetic-v2` used a fresh synthetic identity
+SPEC-900002; the prior run's receipts and evidence were not rewritten.
+
+- [Controller 33173751573](https://github.com/munichdeveloper/pi-spec-harness/actions/runs/33173751573)
+  automatically created run #125, implementation #126 and spike #127.
+- [Executor 33174075980](https://github.com/munichdeveloper/pi-spec-harness/actions/runs/33174075980)
+  passed; artifact `9686894918` bound to attempt 1 was uploaded.
+- **Automatic notification proved:**
+  [controller 33174295288](https://github.com/munichdeveloper/pi-spec-harness/actions/runs/33174295288)
+  started via `repository_dispatch`, with no manual continuation.
+- **Negative audit-contract proof:**
+  [receiver 33174349874](https://github.com/munichdeveloper/pi-spec-harness/actions/runs/33174349874)
+  rejected `synthetic:coordinate-fixture-v1` because evidence must use HTTPS.
+  Controller failed after bounded confirmation retries. No implementation work
+  was authorized. Run #125 retains the rejected pending event for diagnosis;
+  it is not a complete run and its audit event was not confirmed.
+- Fixture corrected to an immutable HTTPS link to the actual synthetic agent
+  source; a regression assertion now checks HTTPS evidence. Full local check:
+  720 tests passed. This changes test data, not the runtime approval policy.
+- Repeated in a new isolated identity SPEC-900003 on
+  `runtime/spec016-synthetic-v3` (`e9a37ce`), controller
+  [33174669002](https://github.com/munichdeveloper/pi-spec-harness/actions/runs/33174669002),
+  canonical run [#128](https://github.com/munichdeveloper/pi-spec-harness/issues/128).
+  Controller passed; implementation #129 and spike #130 were automatically bound.
+
+### SPEC-900003 outcome and API-limit finding
+
+- [Spike executor 33174955227](https://github.com/munichdeveloper/pi-spec-harness/actions/runs/33174955227)
+  passed; artifact `9687245936`, attempt 1, was independently verified by the controller.
+- Both a scheduled controller and completion notification arrived. Shared concurrency
+  serialized them; redundant pending notification 33175179822 was cancelled when
+  the canonical implementation dispatch replaced it. This did not duplicate work.
+- [Scheduled controller 33175095639](https://github.com/munichdeveloper/pi-spec-harness/actions/runs/33175095639)
+  passed, persisted verified spike evidence, changed readiness to `implement` and
+  dispatched [implementation executor 33175418819](https://github.com/munichdeveloper/pi-spec-harness/actions/runs/33175418819)
+  without another approval or manual continuation.
+- Implementation completed with `{ "synthetic": true, "implementationResult": 10 }`
+  at `2026-08-28T13:29:15.328Z`, persisted in run #128. **The Actions job failed
+  afterwards**: repeated full-journal reads exhausted the installation API limit
+  (HTTP 403). Do not rerun the agent to repair this acknowledgement failure.
+- The failure notification still automatically launched controller 33175617524;
+  it also failed while the same API quota was exhausted. Synthetic execution was
+  disabled (`HARNESS_READINESS_ENABLED=false`) to prevent fruitless retries.
+- Independent read-only verification against `origin/main` confirmed **all 12
+  run-128 audit events** exist, including execution completion at
+  `docs/process-audit/journal/20260828T132915Z-010687b44200da17.md`, confirmed at
+  `2026-08-28T13:29:30.097Z`. Thus delivery succeeded but producer acknowledgement
+  failed. No event or completed work record was rewritten.
+- Fix prepared: prioritize canonical filename hash candidates, validate the full
+  idempotency key and canonical confirmation timestamp, retain legacy-name support
+  and one exhaustive final fallback. Tests cover a 1,000-file journal, delayed
+  delivery, renamed history, hash collision, malformed confirmation and HTTP errors.
+  Full local check: **727 tests passed**. Hosted verification of this performance
+  fix and a fully green terminal/idempotent reconciliation remain outstanding.
+
+Remaining hardening findings: deploy and verify the indexed audit lookup; invalid evidence
+should be rejected before delivery and expose an actionable disposition; blocked
+historical test runs require explicit evidence-preserving retirement. Dependency
+installation reported eight existing advisories (three moderate, four high, one
+critical); no blind or breaking dependency update was performed during this test.
