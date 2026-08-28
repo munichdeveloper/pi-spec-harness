@@ -1,6 +1,8 @@
 # SPEC-016 hosted synthetic proof
 
-Status: hosted verification **in progress**. Bootstrap PR #120 was explicitly
+Status: positive hosted synthetic cycle **verified** on 2026-08-28 (SPEC-900004,
+run #132). Hosted negative-path coverage remains incomplete; this is not a full
+release-readiness or real-provider proof. Bootstrap PR #120 was explicitly
 approved and squash-merged on 2026-08-28 as
 `f34d1e7d7d75f147bc98a273505f1462409c0bee`; post-merge CI
 [33159260635](https://github.com/munichdeveloper/pi-spec-harness/actions/runs/33159260635)
@@ -162,3 +164,47 @@ should be rejected before delivery and expose an actionable disposition; blocked
 historical test runs require explicit evidence-preserving retirement. Dependency
 installation reported eight existing advisories (three moderate, four high, one
 critical); no blind or breaking dependency update was performed during this test.
+
+## PR #131 recovery and successful SPEC-900004 cycle
+
+The authorized retry of binding check 33175851931 passed on attempt 2 (one
+retry). PR #131 was squash-merged with exact-head guard for
+`7bfe3c691611852bfebafa9e498e6243637f805f`, producing
+`b7180b108af20030b7e48902150267260b41cbc4`. Post-merge CI
+[33180260100](https://github.com/munichdeveloper/pi-spec-harness/actions/runs/33180260100)
+passed. No protection bypass was used.
+
+Source and runtime were both pinned to
+`72306342b83f8a351b0903a60179681d30827451` on
+`runtime/spec016-synthetic-v4`. Only fixture identity changed to SPEC-900004;
+the generator path remains `docs/testing/readiness/SPEC-900001.md`.
+
+| Stage | Evidence | Result |
+| --- | --- | --- |
+| Initial controller | [33180307841](https://github.com/munichdeveloper/pi-spec-harness/actions/runs/33180307841) | Success, 2m15s; canonical run #132, implementation #133, spike #134 |
+| Spike executor | [33180477288](https://github.com/munichdeveloper/pi-spec-harness/actions/runs/33180477288) | Success, 53s; artifact 9689501417, attempt 1 |
+| Automatic verification/continuation | [33180594030](https://github.com/munichdeveloper/pi-spec-harness/actions/runs/33180594030) | Independently verified spike; automatically dispatched implementation |
+| Implementation executor | [33180718465](https://github.com/munichdeveloper/pi-spec-harness/actions/runs/33180718465) | Success; persisted synthetic output `implementationResult: 10` |
+| Automatic idempotent follow-up | [33180837407](https://github.com/munichdeveloper/pi-spec-harness/actions/runs/33180837407) | Success via repository_dispatch; `observe-work`, `implementation-already-dispatched` |
+
+The canonical [run #132](https://github.com/munichdeveloper/pi-spec-harness/issues/132)
+contains exactly two work records, both attempt 1 and execution completed.
+Spike evidence is bound to spec blob `d8200245e15f8b65f8803c4cbea8b5e7d43ae9a7`
+and producer run/attempt. No manual continuation after the initial controller
+dispatch and no repeated agent work were needed.
+
+All 12 run audit records were independently read from `origin/main`, including:
+
+- verified result: `docs/process-audit/journal/20260828T143202Z-bd8491f6dca5897c.md`;
+- implementation completed: `docs/process-audit/journal/20260828T143400Z-1d56671c98c8cb79.md`,
+  confirmed at `2026-08-28T14:34:11.394Z`.
+
+`HARNESS_READINESS_ENABLED=false` was set and read back after verification.
+Historical runs #121/#125/#128, receipts and evidence remain untouched.
+No Immogent writes, real AI provider calls, releases or paid resources were used.
+
+This closes the positive-cycle and indexed-lookup hosted proof, not the entire
+milestone. Required-evidence items 6-8 above still need comprehensive hosted
+negative-path tests. The readiness checkpoint observes completed work; it does
+not yet close the overall tracking run or retire the spike issue. Real-provider
+coding capability is deliberately not claimed by this deterministic fixture.
