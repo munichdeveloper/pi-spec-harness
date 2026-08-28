@@ -52,6 +52,7 @@ jobs:
           node-version: '20.9'
       - run: npm ci --ignore-scripts
       - run: npm run build
+        id: build
       - name: Prepare explicitly enabled synthetic configuration
         if: vars.HARNESS_READINESS_SYNTHETIC == 'true'
         env:
@@ -97,3 +98,10 @@ jobs:
           path: ${{ runner.temp }}/readiness-result/result.json
           if-no-files-found: error
           retention-days: 14
+      # GITHUB_TOKEN-dispatched executors may not produce a workflow_run cascade.
+      # This wakes reconciliation only; canonical state and artifact checks remain mandatory.
+      - name: Notify canonical reconciliation
+        if: ${{ always() && steps.build.outcome == 'success' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/readiness-notify.mjs

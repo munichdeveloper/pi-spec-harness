@@ -310,6 +310,15 @@ export function validateReceiverContent(
  * from this one file.
  */
 export const github = {
+  /** Wake the same-repository controller; payload is a hint, never execution authority. */
+  async notifyReadinessReconciliation(repository: string, runId: string): Promise<void> {
+    if (!/^[A-Za-z0-9][A-Za-z0-9_.-]*\/[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(repository) || !/^[1-9][0-9]*$/.test(runId)) {
+      throw new Error("Invalid readiness notification identity");
+    }
+    await runGhWithJson(["api", `repos/${repository}/dispatches`, "--method", "POST", "--input", "-"], {
+      event_type: "harness_readiness_completed", client_payload: { run_id: runId },
+    });
+  },
   async ensureLabelExists(
     repository: string,
     name: string,

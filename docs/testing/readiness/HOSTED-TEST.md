@@ -1,7 +1,49 @@
 # SPEC-016 hosted synthetic proof
 
-Status: prepared, **not yet executed on GitHub**. Local subprocess and simulated
-API tests are not evidence that workflow dispatch/resume works on hosted runners.
+Status: hosted verification **in progress**. Bootstrap PR #120 was explicitly
+approved and squash-merged on 2026-08-28 as
+`f34d1e7d7d75f147bc98a273505f1462409c0bee`; post-merge CI
+[33159260635](https://github.com/munichdeveloper/pi-spec-harness/actions/runs/33159260635)
+passed. The first hosted controller is
+[33159287185](https://github.com/munichdeveloper/pi-spec-harness/actions/runs/33159287185).
+This is not yet evidence of a completed spike-to-implementation cycle.
+
+The isolated runtime is `runtime/spec016-synthetic` at
+`3a7f69d28287d0ab6354ea62dc3018200d9a5b10`; registered executor workflow ID:
+`344477441`. Synthetic configuration was enabled only in this Harness repository.
+The canonical synthetic run is [#121](https://github.com/munichdeveloper/pi-spec-harness/issues/121),
+with implementation fixture [#122](https://github.com/munichdeveloper/pi-spec-harness/issues/122).
+No Immogent configuration or paid provider was activated.
+
+### First hosted result and observed gap (2026-08-28)
+
+- Controller 33159287185 passed in 5m36s and automatically dispatched
+  [spike executor 33159597244](https://github.com/munichdeveloper/pi-spec-harness/actions/runs/33159597244).
+- [Spike #123](https://github.com/munichdeveloper/pi-spec-harness/issues/123) was
+  created and bound to attempt 1; executor succeeded in 2m25s.
+- Result artifact ID `9681150746`, name
+  `readiness-result-8c96eadfe8198452b37a29eaac951f7473de31756e5a619aeb4c87dfd87b00b8-1`,
+  was uploaded (14-day retention).
+- **No workflow_run continuation was observed after successful completion.**
+  Consequently implementation continuation is not verified. The executor actor
+  and triggering actor are both `github-actions[bot]`.
+- Synthetic execution was disabled while fixing this gap. No manual controller
+  re-run was used to disguise the missing automatic event.
+- Add an explicit same-repository `repository_dispatch` notification after
+  executor completion, including failed execution/artifact publication when the
+  trusted build succeeded. The receiver ignores payload for decisions and reloads
+  canonical state, producer identity, conclusion and artifact bindings. Scheduler
+  remains fallback for cancellation or notification failure; shared lock prevents
+  overlapping state writes. Hosted verification of this fix remains pending.
+- Audit confirmations currently scan the journal sequentially (94+ entries),
+  taking roughly a minute per confirmation in this run. This is a measured
+  scalability concern, not an approval wait.
+
+GitHub documents `workflow_dispatch` and `repository_dispatch` as exceptions to
+GITHUB_TOKEN recursive-trigger suppression:
+[Triggering a workflow](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/trigger-a-workflow).
+The observed missing cascade is treated as a transport failure, not permission to
+skip result verification or use a more privileged personal token.
 
 ## Scope
 
@@ -14,8 +56,8 @@ This verifies orchestration, not Copilot/Claude coding capability.
 ## Bootstrap and configuration
 
 The two new workflows must first be registered on the default branch through an
-authorized merge. Current PR #120 is a draft; the prior release milestone's merge
-authorization is not reused. Keep `HARNESS_READINESS_ENABLED` unset/false until
+authorized merge. PR #120 received separate bootstrap authorization; the prior
+release milestone's merge authorization was not reused. Keep `HARNESS_READINESS_ENABLED` unset/false until
 configuration and the exact runtime commit have been reviewed.
 
 For this isolated test set:
@@ -35,7 +77,7 @@ may bind work and choose an executor.
 The executor rejects an absent canonical receipt, a different receipt/executor or
 spec revision, duplicate work identities and malformed Actions attempt numbers
 before starting even the availability probe. These checks are covered locally;
-hosted validation remains pending bootstrap approval.
+hosted validation is tracked below and must not be inferred from local tests.
 
 ## Required evidence before claiming success
 
