@@ -90,7 +90,11 @@ export function renderStateBody(state: RunState): string {
       ...state.readiness.work.map(work =>
         `- ${work.kind} · ${work.executorId} · Versuch ${work.attempt}` +
         ` · Issue ${work.issue ? `#${work.issue}` : "noch nicht gebunden"}` +
-        ` · ${work.result ? `verifiziert ${work.result.verdict}` : work.receipt ? "gesendet; Ergebnis ausstehend" : "vorbereitet"}` +
+        ` · ${work.result ? `verifiziert ${work.result.verdict}`
+          : work.execution?.status === "completed" ? "Ausführung abgeschlossen; Ausgabe gespeichert"
+          : work.execution?.status === "failed" ? "Ausführung fehlgeschlagen; Klärung erforderlich"
+          : work.execution?.status === "claimed" ? "Ausführung begonnen"
+          : work.receipt ? "gesendet; Ergebnis ausstehend" : "vorbereitet"}` +
         ` · Audit ${work.auditConfirmed ? "bestätigt" : "ausstehend"}`),
       "",
     ] : []),

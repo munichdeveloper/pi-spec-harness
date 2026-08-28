@@ -1,5 +1,26 @@
 # Hosted negative evidence tests
 
+## Stale evidence: read-only live API proof
+
+`npm run build && node scripts/verify-readiness-stale-evidence.mjs` passed
+against real retained artifact9701648752 from run154/producer33211011952.
+The production evidence reader accepted the actual spec binding and rejected
+the same artifact with a different expected spec revision. Canonical issue body
+was verified unchanged. No agent was started or artifact replaced. This is live
+API contract verification, not a full hosted workflow with a spec changed mid-run.
+The script intentionally fails if the retained fixture expires or changes.
+
+## Autonomous milestone continuation
+
+User authorized autonomous implementation and PR merges for this overall
+Harness milestone. Preserve the zero-cost scope and separation from Immogent.
+Next acceptance work: automatic scheduler wakeup, lifecycle disposition of
+completed/blocked synthetic runs and spikes, durable publication of evidence.
+Do not mark a product run complete merely because an implementation subprocess
+returned output: review, tests, merge and post-merge gates still apply.
+Execution summaries distinguish completed/failed/claimed work from waiting
+without changing the authoritative lifecycle or closing tracking issues.
+
 ## Workflow cancellation before claim: verified 2026-08-28
 
 The first attempted identity SPEC-900009/run151 was NOT cancelled: local
