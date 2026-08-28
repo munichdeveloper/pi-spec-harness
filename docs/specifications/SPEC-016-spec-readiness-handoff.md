@@ -1,0 +1,184 @@
+---
+id: SPEC-016
+type: software-spec
+title: Deterministic readiness and durable spike reconciliation
+status: draft
+requirements:
+  - REQ-016
+---
+
+# SPEC-016
+
+Implementation design for milestone 2 / issue 119. The user authorized work on
+the milestone; this draft is not a fabricated GitHub human-gate decision.
+
+## Contract
+
+Readiness metadata version 1 is bound to the immutable Git blob SHA of the spec
+file, not the repository HEAD commit. Source approval provenance separately
+records the commit URL. Audit-only commits therefore do not invalidate evidence.
+Each
+blocker has a stable ID, stage (`implementation`, `deployment`, `deferred`),
+kind (`technical`, `decision`), explicit owner, question, acceptance criteria
+and a positive execution budget. A missing legacy contract is unclassified,
+not ready. Do not classify free-form prose by keyword heuristics.
+
+A pure evaluator returns the next responsibility and machine-readable reason:
+`await-approval`, `classify`, `human-decision`, `spike`, `await-executor`, or
+`implement`. It performs no GitHub I/O and never trusts issue closure as proof.
+
+Spike evidence is supplied only by a trusted verification adapter, never
+directly from a comment or issue body without provenance validation. Evidence
+must match the revision and blocker, include references, cover every criterion,
+and indicate whether scope/cost/privacy changes require human review. Stale,
+failed or incomplete evidence cannot unblock implementation.
+
+Executor policy is trusted repository configuration: explicit authorization,
+current availability, deterministic preference order, configured capabilities,
+and a finite per-task cost ceiling. Availability is checked again at dispatch.
+No date-based quota reset assumption and no implicit fallback.
+
+## Durable integration (required before completion)
+
+1. Validate exact approved spec revision and structured readiness.
+2. Reconcile existing issue by exact identity; ambiguous matches stop safely.
+3. Persist canonical run and prepared side-effect intent before dispatch.
+4. Idempotently provision owned status labels and linked spike work.
+5. Select and dispatch a configured executor explicitly; do not rely on
+   GITHUB_TOKEN label changes cascading into other workflows.
+6. Receive trusted verified spike evidence; evaluate the same run again.
+7. Confirm canonical SPEC-005 audit before committing the transition.
+
+GitHub mutations must use named methods in `src/github/gh.ts`. Retry and
+reconciliation must preserve unrelated labels and user content. Execution labels
+are applied only when readiness and executor policy both permit implementation.
+SPEC-007 AC-08 remains the default until this opt-in policy is integrated; it is
+superseded only for the new fully validated handoff path.
+
+## Verification
+
+- TAC-01: Pure evaluator tests cover all dispositions and malformed policies.
+- TAC-02: Deployment/deferred questions do not block implementation.
+- TAC-03: Missing, stale, partial, failed and decision-changing spike evidence
+  cannot authorize implementation; matching complete evidence can.
+- TAC-04: Unavailable, unauthorized or over-budget executors cannot be selected.
+- TAC-05: Durable integration tests cover duplicate events and crash recovery.
+- TAC-06: The actual CLI/workflow entry point is exercised in synthetic E2E;
+  a pure evaluator test alone is not end-to-end proof.
+
+## Delivery status
+
+In progress. Pure decision logic and a checkpointed coordinator are implemented.
+The coordinator persists prepared work in the existing run, reconciles accepted
+dispatches before retrying, confirms dispatch/result audit before progression,
+and rechecks executor availability immediately before dispatch. The tracking
+issue renders the current decision, work owner and pending evidence.
+
+Port-integration tests cover duplicate invocations, dispatch-before-crash,
+audit failure, quota loss, stale results and retry exhaustion. These are not
+workflow E2E tests. The concrete issue adapter now uses the paginated REST issue
+listing (including closed issues, excluding PRs), adopts exact legacy spec issues
+without rewriting user content, and rejects ambiguous or conflicting identities.
+Spike issues carry owner, executor, question, criteria, revision and attempt limit;
+closure never constitutes evidence. Lost creation responses are recovered through
+the durable marker. Callers must serialize reconciliation and confirm issue audit.
+No execution labels or providers are activated by issue materialization alone.
+
+Canonical bootstrap now adopts existing runs by exact spec/binding rather than
+by a generated title alone, preserving legacy names and progress. It creates a
+single issue-backed run with revision-bound spec provenance when none exists.
+Duplicate, closed, malformed or conflicting runs stop reconciliation; an advanced
+legacy run cannot silently dispatch a competing implementation. Trusted approval
+verification remains the entry point's responsibility, not an inference from chat.
+
+The workflow evidence adapter validates repository, numeric actor identities,
+workflow ID/path and pinned revision, dispatch identity, run attempt and an exact
+non-expired bounded result artifact. It rechecks the run after retrieval to detect
+rerun races. Payload binding covers work key, executor, issue, spike attempt,
+blocker and spec revision. Failed research and boundary changes remain explicit.
+The approved producer workflow must independently verify criteria before emitting
+this artifact; agent self-reports are not an implementation of that verifier.
+
+The executable receiver now persists a work claim before starting a configured
+command, then invokes a separately configured verifier for spike criteria. JSON
+stdin separates task data from commands; no shell or implicit environment is used.
+Input/output sizes and subprocess runtime are bounded. Results are hygiene-checked
+before persistence and completed work reuses its durable output. Interrupted or
+failed claims require reconciliation rather than blindly duplicating agent work.
+The workflow runner must contain descendant processes; the command timeout alone
+is not a provider-spend limit or a general sandbox. Provider budget enforcement
+and trusted command configuration remain deployment responsibilities.
+
+Tests execute actual synthetic Node subprocesses for agent and verifier, including
+negative and duplicate-delivery cases. They are not GitHub workflow E2E evidence.
+
+The `readiness-execute --repository OWNER/REPO --run-issue N --work-key KEY
+--receipt github-actions:RUN_ID --config TRUSTED_CONFIG` CLI command now binds
+execution to the GitHub Actions runtime, loads the canonical tracking issue,
+validates repository/spec revision and confirms execution audit in the journal.
+Configuration is executable authority and must come from a verified trusted
+checkout, never the work branch or agent output. The workflow integration must
+enforce this checkout policy and the shared concurrency lock. Configuration
+contains schemaVersion, repository, costCeiling, policy, contract, agent, availability,
+optional verifier, and audit.directory/audit.branch. Command environments are
+explicit; do not commit credential values into configuration.
+
+The dispatch adapter now explicitly submits workflow_dispatch and resolves the
+actual run ID through the paginated Actions API. It reuses trusted matching runs,
+recovers accepted requests with lost HTTP responses, validates canonical receipts,
+and rejects a moved workflow branch before submission. Lookup is bounded per
+attempt; delayed visibility produces a retriable reconciliation error, never a
+fabricated receipt. Duplicate transport runs are possible after ambiguous delivery;
+the receiver's canonical receipt/claim and shared lock must prevent duplicate work.
+
+The concrete GitHub handoff controller now composes approved-spec lookup,
+canonical run bootstrap, issue/spike materialization, readiness disposition labels,
+dispatch, artifact verification and continuation. It keeps readiness labels separate
+from legacy Copilot assignment labels. A durable audit outbox preserves event time,
+revision and payload across retries and coordinator state saves. API-simulation
+tests exercise the complete spike-to-implementation controller on one run, including
+unavailable executors. These tests are not hosted GitHub E2E evidence.
+
+The `readiness-reconcile --repository OWNER/REPO --revision SOURCE_COMMIT
+--config TRUSTED_CONFIG` CLI now invokes that controller. Configuration supplies
+repository, branch, specPath, contract, costCeiling, audit and executors. Every
+executor contains policy, workflow and an explicit availability command. The
+command receives a JSON availability request and must return `{available:true}`;
+failure or any other response means unavailable. Authorization and cost scope
+remain trusted configuration and cannot be granted by a probe response. Missing
+legacy readiness contracts stay unclassified rather than silently ready.
+
+Workflow entry points now exist as `readiness-reconcile.yml` and
+`readiness-executor.yml`. Both share a non-cancelling repository-wide concurrency
+group. Reconciliation is triggered manually, on spec/config pushes, executor
+completion and a ten-minute recovery schedule. Execution publishes the verified
+result envelope with the exact attempt-specific artifact name.
+
+They remain opt-in: `HARNESS_READINESS_ENABLED=true` and a 40-character
+`HARNESS_READINESS_RUNTIME_SHA` are required. Both check out that trusted commit
+without persisting Git credentials. Configurations must be present there at
+`.harness/readiness/reconcile.json` and `.harness/readiness/executor.json`.
+The reconcile workflow resolves the explicit `$runtime` workflowRevision sentinel
+from the trusted repository variable, avoiding a self-referential commit SHA.
+The executor dispatch branch must point to that runtime commit and must not be
+the audit journal branch; audit writes must not move the executable revision.
+
+The receiver now requires an explicit availability command and probes again
+before claiming new work. Failed probes or quota loss persist an executor-waiting
+decision and a receipt-bound deferral with a stable audit timestamp. No agent
+process starts in this case. Already completed work can republish its stored
+result without requiring provider availability or re-executing the agent.
+
+Cancelled/failed transport now reuses the original Actions run via bounded rerun:
+at most three submissions per work item, persisted before the API request, with
+at least 60 seconds between submissions. Unstarted tasks require live executor
+availability. Completed execution output can be republished without an agent
+rerun. Claimed/failed agent execution stops for explicit reconciliation because
+its effects are uncertain. Recovery verifies the canonical receipt and does not
+run against a changed spec-content revision. API-response loss consumes the
+submission budget and subsequent running attempts are observed rather than resent.
+
+Remaining activation configuration, workflow syntax/runtime validation and
+synthetic hosted E2E remain mandatory milestone work. Concurrency alone is not a
+durable FIFO queue: cancelled pending transport runs must be recovered. No
+consumer activation before these cases and the complete flow are verified.

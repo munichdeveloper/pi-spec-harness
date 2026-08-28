@@ -83,6 +83,17 @@ export function renderStateBody(state: RunState): string {
     `**Phase:** \`${state.phase}\` · **Iterationen:** ${state.iterations.length}/${state.maxAutomaticIterations}`,
     "",
     ...openGateSection,
+    ...(state.readiness ? [
+      "### Readiness / nächste Zuständigkeit",
+      `**Spec-Version:** \`${state.readiness.revision}\``,
+      `**Entscheidung:** \`${state.readiness.decision?.action ?? "reconciling"}\` — ${state.readiness.decision?.reason ?? "Issue-/Auftragsbindung wird hergestellt"}`,
+      ...state.readiness.work.map(work =>
+        `- ${work.kind} · ${work.executorId} · Versuch ${work.attempt}` +
+        ` · Issue ${work.issue ? `#${work.issue}` : "noch nicht gebunden"}` +
+        ` · ${work.result ? `verifiziert ${work.result.verdict}` : work.receipt ? "gesendet; Ergebnis ausstehend" : "vorbereitet"}` +
+        ` · Audit ${work.auditConfirmed ? "bestätigt" : "ausstehend"}`),
+      "",
+    ] : []),
     "### Gates",
     "| id | type | result |",
     "|---|---|---|",

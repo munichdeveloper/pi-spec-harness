@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 import { readFile } from "node:fs/promises";
+import { runReadinessExecuteCommand } from "./spec/readiness-execute-command.js";
+import { runReadinessReconcileCommand } from "./spec/readiness-reconcile-command.js";
 import { existsSync } from "node:fs";
 import { createHash } from "node:crypto";
 import yargs, { type Argv } from "yargs";
@@ -3801,6 +3803,30 @@ const _harnessCli = yargs(hideBin(process.argv))
         dispatchKey: argv["dispatch-key"] as string | undefined,
         state: argv.state as string | undefined,
       }),
+  )
+  .command(
+    "readiness-execute",
+    "Execute one canonically claimed readiness task using trusted executor configuration",
+    y => y.option("repository", { type: "string", demandOption: true })
+      .option("run-issue", { type: "number", demandOption: true })
+      .option("work-key", { type: "string", demandOption: true })
+      .option("receipt", { type: "string", demandOption: true })
+      .option("config", { type: "string", demandOption: true, describe: "Trusted executor configuration; never use an untrusted PR checkout" }),
+    async argv => {
+      const result = await runReadinessExecuteCommand({ repository: argv.repository, runIssue: argv["run-issue"],
+        workKey: argv["work-key"], receipt: argv.receipt, configPath: argv.config });
+      console.log(JSON.stringify(result, null, 2));
+    },
+  )
+  .command(
+    "readiness-reconcile",
+    "Reconcile approved spec readiness using trusted workflow configuration and live executor probes",
+    y => y.option("repository", { type: "string", demandOption: true })
+      .option("revision", { type: "string", demandOption: true })
+      .option("config", { type: "string", demandOption: true }),
+    async argv => { console.log(JSON.stringify(await runReadinessReconcileCommand({
+      repository: argv.repository, revision: argv.revision, configPath: argv.config,
+    }), null, 2)); },
   )
   .demandCommand(1)
   .strict();

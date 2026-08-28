@@ -1,0 +1,65 @@
+name: Harness Readiness Reconcile
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'docs/specifications/**'
+      - '.harness/readiness/**'
+  workflow_run:
+    workflows: ['Harness Readiness Executor']
+    types: [completed]
+  schedule:
+    - cron: '*/10 * * * *'
+
+permissions:
+  contents: read
+
+# Shared with the executor: no concurrent writes to canonical run state.
+concurrency:
+  group: readiness-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  reconcile:
+    if: ${{ vars.HARNESS_READINESS_ENABLED == 'true' && vars.HARNESS_READINESS_RUNTIME_SHA != '' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write # canonical process-audit repository_dispatch
+      issues: write
+      actions: write # explicit executor workflow_dispatch
+    steps:
+      - name: Validate trusted runtime configuration
+        env:
+          RUNTIME_SHA: ${{ vars.HARNESS_READINESS_RUNTIME_SHA }}
+        run: '[[ "$RUNTIME_SHA" =~ ^[a-f0-9]{40}$ ]]'
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ vars.HARNESS_READINESS_RUNTIME_SHA }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20.9'
+      - run: npm ci --ignore-scripts
+      - run: npm run build
+      - name: Prepare explicitly enabled synthetic configuration
+        if: vars.HARNESS_READINESS_SYNTHETIC == 'true'
+        env:
+          HARNESS_READINESS_EXECUTOR_WORKFLOW_ID: ${{ vars.HARNESS_READINESS_EXECUTOR_WORKFLOW_ID }}
+          HARNESS_READINESS_RUNTIME_BRANCH: ${{ vars.HARNESS_READINESS_RUNTIME_BRANCH }}
+          HARNESS_READINESS_SOURCE_BRANCH: ${{ vars.HARNESS_READINESS_SOURCE_BRANCH }}
+        run: |
+          node scripts/prepare-readiness-synthetic.mjs > "$RUNNER_TEMP/readiness-synthetic.json"
+          node --input-type=module -e "import fs from 'node:fs';const c=JSON.parse(fs.readFileSync(process.env.RUNNER_TEMP+'/readiness-synthetic.json','utf8'));fs.mkdirSync('.harness/readiness',{recursive:true});for(const k of ['executor','reconcile'])fs.writeFileSync('.harness/readiness/'+k+'.json',JSON.stringify(c[k]));"
+      - name: Reconcile from the current approved source branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          HARNESS_READINESS_RUNTIME_SHA: ${{ vars.HARNESS_READINESS_RUNTIME_SHA }}
+        run: |
+          set -euo pipefail
+          branch="$(node -e "const c=require('./.harness/readiness/reconcile.json');process.stdout.write(c.branch)")"
+          revision="$(gh api "repos/$REPOSITORY/commits/$branch" --jq '.sha')"
+          node dist/cli.js readiness-reconcile --repository "$REPOSITORY" --revision "$revision" --config .harness/readiness/reconcile.json

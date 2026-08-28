@@ -9,6 +9,8 @@
  * src/github, never ad hoc.
  */
 
+import type { ReadinessCheckpoint } from "../spec/readiness-coordinator.js";
+
 export const SCHEMA_VERSION = 1 as const;
 
 export type PhaseId =
@@ -352,6 +354,9 @@ export interface SpecDispatchRecord {
 }
 
 export interface RunState {
+  /** SPEC-016: durable readiness and dispatch recovery, on the same run. */
+  readiness?: ReadinessCheckpoint;
+  readinessAudits?: Record<string, { occurredAt: string; revision: string; description: string; evidence: string[] }>;
   schemaVersion: typeof SCHEMA_VERSION;
   runId: string;
   repository: string; // "owner/repo", the reference/target product repo (e.g. munichdeveloper/Immogent)
