@@ -2,6 +2,8 @@ name: Harness Readiness Reconcile
 
 on:
   workflow_dispatch:
+  repository_dispatch:
+    types: [harness_readiness_completed]
   push:
     branches: [main]
     paths:

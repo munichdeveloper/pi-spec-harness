@@ -17,6 +17,11 @@ describe("SPEC-016 readiness workflow wiring", () => {
     const workflow = read("readiness-reconcile.yml");
     expect(workflow).toContain("workflows: ['Harness Readiness Executor']");
     expect(workflow).toContain("types: [completed]");
+    expect(workflow).toContain("types: [harness_readiness_completed]");
+    expect(workflow).not.toContain("github.event.client_payload");
+    const executor = read("readiness-executor.yml");
+    expect(executor).toContain("always() && steps.build.outcome == 'success'");
+    expect(executor).toContain("node scripts/readiness-notify.mjs");
     expect(workflow).toContain("cron: '*/10 * * * *'");
     expect(workflow).toContain("readiness-reconcile --repository");
   });
