@@ -15,7 +15,10 @@ describe("SPEC-016 hosted-test fixtures", () => {
     expect(parseReadinessReconcileConfig(config.reconcile).costCeiling).toBe(0);
     const task = { kind: "spike", specRevision: config.executor.contract.specRevision, blocker: config.executor.contract.blockers[0] };
     const candidate = await runReadinessCommand(executor.agent, task);
-    expect(await runReadinessCommand(executor.verifier!, { ...task, candidate })).toMatchObject({ verdict: "passed" });
+    const verified = await runReadinessCommand(executor.verifier!, { ...task, candidate }) as { verdict: string; references: string[] };
+    expect(verified).toMatchObject({ verdict: "passed" });
+    expect(verified.references.length).toBeGreaterThan(0);
+    expect(verified.references.every(reference => new URL(reference).protocol === "https:")).toBe(true);
     expect(await runReadinessCommand(executor.verifier!, { ...task, candidate: { latitude: 0, longitude: 0 } })).toMatchObject({ verdict: "failed" });
     expect(await runReadinessCommand(executor.agent, { kind: "implementation" })).toEqual({ synthetic: true, implementationResult: 10 });
   });
