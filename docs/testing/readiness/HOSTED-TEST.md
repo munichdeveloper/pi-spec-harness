@@ -209,6 +209,12 @@ negative-path tests. The readiness checkpoint observes completed work; it does
 not yet close the overall tracking run or retire the spike issue. Real-provider
 coding capability is deliberately not claimed by this deterministic fixture.
 
+Synthetic child issues may be retired only through
+`readiness-dispose-synthetic` after execution is disabled and Evidence has been
+verified. The command retains the canonical tracking issue and product phase;
+it must never advance a run to `complete` or substitute for review, tests, merge
+and post-merge verification.
+
 ## Negative-fixture preparation
 
 The local synthetic config generator accepts an explicit

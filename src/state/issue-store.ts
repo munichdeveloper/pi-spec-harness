@@ -96,6 +96,10 @@ export function renderStateBody(state: RunState): string {
           : work.execution?.status === "claimed" ? "Ausführung begonnen"
           : work.receipt ? "gesendet; Ergebnis ausstehend" : "vorbereitet"}` +
         ` · Audit ${work.auditConfirmed ? "bestätigt" : "ausstehend"}`),
+      ...(state.readiness.lifecycleDisposition ? [
+        `**Evidence-Disposition:** \`${state.readiness.lifecycleDisposition.status}\` — ${state.readiness.lifecycleDisposition.outcome}`,
+        `Tracking-Issue bleibt offen; Child-Issues ${state.readiness.lifecycleDisposition.closedIssues.length}/${state.readiness.lifecycleDisposition.childIssues.length} evidenzerhaltend geschlossen.`,
+      ] : []),
       "",
     ] : []),
     "### Gates",
