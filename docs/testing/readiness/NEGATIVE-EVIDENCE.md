@@ -76,6 +76,24 @@ at its authoritative product phase with all work, results and Evidence intact.
 The command therefore retires test infrastructure without turning a completed
 fixture subprocess into product review, test, merge or completion evidence.
 
+The merged implementation in PR169 (`8f1c439c42a2c648ee9cb287087d0f891cac9f31`)
+passed post-merge CI33229420002. It was applied to run166 as `negative-proof`:
+the canonical tracking issue remains open in phase `issue`; implementation issue167
+and spike168 are closed with their evidence retained. An identical second command
+was a no-op for external side effects. Audit key:
+`spec016:run166:lifecycle-disposed:v1`.
+
+## SPEC-016 milestone disposition
+
+The authorized hosted milestone is complete within its stated synthetic,
+zero-cost scope. Evidence now covers the positive automatic cycle, indexed audit
+lookup, scheduler-only recovery after provider availability returns, scheduler
+recovery after pre-job cancellation, invalid/incomplete/failed agent outcomes,
+hosted stale-artifact rejection before implementation, and evidence-preserving
+synthetic lifecycle disposition. This proves Harness orchestration and its safety
+boundaries, not real-provider coding quality or a completed product delivery.
+`HARNESS_READINESS_ENABLED=false` and the stale-artifact fault flag is false.
+
 ## Autonomous milestone continuation
 
 User authorized autonomous implementation and PR merges for this overall

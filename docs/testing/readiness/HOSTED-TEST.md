@@ -215,6 +215,13 @@ verified. The command retains the canonical tracking issue and product phase;
 it must never advance a run to `complete` or substitute for review, tests, merge
 and post-merge verification.
 
+Final milestone verification used run166/SPEC-900013 for the hosted stale binding
+rejection and then applied the merged disposition command idempotently. All
+historical runs, receipts, artifacts and audits remain retained; no prior agent
+execution was replayed. The readiness and stale-artifact flags were disabled and
+read back after the test. The SPEC-016 hosted milestone is complete only for the
+documented deterministic synthetic scope.
+
 ## Negative-fixture preparation
 
 The local synthetic config generator accepts an explicit
