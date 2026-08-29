@@ -58,6 +58,24 @@ to reject the artifact binding and must show that no implementation was dispatch
 This simulates stale artifact transport; it is not evidence of a real product spec
 being edited during an execution.
 
+Hosted proof SPEC-900013/run166 used runtime
+`c08629d0e2c3ab944dde6aa13ee36a8b6a3bc411`. Executor
+33228732382 uploaded retained artifact9707767147; automatic
+repository-dispatch reconciliation33228780286 rejected it with `Invalid or
+incorrectly bound readiness result`. No implementation work was dispatched.
+Readiness and the fault flag were disabled and read back. Completion audit key:
+`spec016:stale-v14:verified:v1`.
+
+## Evidence-preserving synthetic disposition
+
+`readiness-dispose-synthetic` is restricted to `SPEC-9xxxxx` readiness runs.
+It persists a durable disposition before side effects, rejects claimed work,
+closes only the implementation/spike child issues, and records each closure for
+idempotent crash recovery. The canonical `harness:run` tracking issue stays open
+at its authoritative product phase with all work, results and Evidence intact.
+The command therefore retires test infrastructure without turning a completed
+fixture subprocess into product review, test, merge or completion evidence.
+
 ## Autonomous milestone continuation
 
 User authorized autonomous implementation and PR merges for this overall

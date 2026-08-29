@@ -30,6 +30,16 @@ export interface ReadinessCheckpoint {
   implementationKey: string;
   work: ReadinessWork[];
   decision?: ReadinessDecision;
+  lifecycleDisposition?: {
+    schemaVersion: 1;
+    status: "prepared" | "disposed";
+    outcome: "positive-proof" | "negative-proof" | "blocked-evidence";
+    reason: string;
+    evidence: string[];
+    occurredAt: string;
+    childIssues: number[];
+    closedIssues: number[];
+  };
 }
 /** All ports are trusted infrastructure, never instructions taken from issue text.
  * Calls must run under the repository/spec concurrency lock. Creation/dispatch

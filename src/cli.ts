@@ -2,6 +2,7 @@
 import { readFile } from "node:fs/promises";
 import { runReadinessExecuteCommand } from "./spec/readiness-execute-command.js";
 import { runReadinessReconcileCommand } from "./spec/readiness-reconcile-command.js";
+import { disposeSyntheticReadinessEvidence, type SyntheticReadinessOutcome } from "./spec/readiness-lifecycle.js";
 import { existsSync } from "node:fs";
 import { createHash } from "node:crypto";
 import yargs, { type Argv } from "yargs";
@@ -3827,6 +3828,27 @@ const _harnessCli = yargs(hideBin(process.argv))
     async argv => { console.log(JSON.stringify(await runReadinessReconcileCommand({
       repository: argv.repository, revision: argv.revision, configPath: argv.config,
     }), null, 2)); },
+  )
+  .command(
+    "readiness-dispose-synthetic",
+    "Retain a synthetic readiness proof and retire its child issues without completing the product run",
+    y => y.option("repository", { type: "string", demandOption: true })
+      .option("run-issue", { type: "number", demandOption: true })
+      .option("outcome", { type: "string", choices: ["positive-proof", "negative-proof", "blocked-evidence"] as const, demandOption: true })
+      .option("reason", { type: "string", demandOption: true })
+      .option("evidence", { type: "array", string: true, demandOption: true })
+      .option("occurred-at", { type: "string", demandOption: true }),
+    async argv => {
+      const store = new IssueStateStore(argv.repository, argv["run-issue"]);
+      const result = await disposeSyntheticReadinessEvidence(store, {
+        outcome: argv.outcome as SyntheticReadinessOutcome,
+        reason: argv.reason,
+        evidence: argv.evidence as string[],
+        occurredAt: argv["occurred-at"],
+      });
+      console.log(JSON.stringify({ schemaVersion: 1, command: "readiness-dispose-synthetic", result,
+        nextAction: "Audit the disposition; continue product lifecycle only through normal review, test and merge gates." }, null, 2));
+    },
   )
   .demandCommand(1)
   .strict();
