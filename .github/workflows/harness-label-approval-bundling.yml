@@ -12,8 +12,8 @@ permissions:
 jobs:
   bundle:
     if: github.event.label.name == 'harness:approved-for-agent'
-    uses: munichdeveloper/pi-spec-harness/.github/workflows/label-approval-bundling.yml@686178aa8160c296b334e7b6b9e63f0b4e719ad1
+    uses: munichdeveloper/pi-spec-harness/.github/workflows/label-approval-bundling.yml@5937140980486653398dd379dd87c86252403ec6
     with:
       trigger-label: 'harness:approved-for-agent'
       target-labels: '["status:ready","ai:allowed","harness:implementation"]'
-      harness-ref: '686178aa8160c296b334e7b6b9e63f0b4e719ad1'
+      harness-ref: '5937140980486653398dd379dd87c86252403ec6'

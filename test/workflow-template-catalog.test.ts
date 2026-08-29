@@ -123,7 +123,7 @@ describe("WORKFLOW_TEMPLATE_CATALOG", () => {
       version: string;
       packages: Record<string, { version?: string }>;
     };
-    expect(HARNESS_VERSION).toBe("0.3.0");
+    expect(HARNESS_VERSION).toBe("0.4.0");
     expect(packageJson.version).toBe(HARNESS_VERSION);
     expect(packageLock.version).toBe(HARNESS_VERSION);
     expect(packageLock.packages[""]?.version).toBe(HARNESS_VERSION);

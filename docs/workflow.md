@@ -149,7 +149,7 @@ npm run harness -- init \
   --requirement REQ-006 \
   --spec SPEC-006 \
   --install-workflows bug-triage,spec-to-issue,label-approval-bundling \
-  --workflow-ref v0.3.0
+  --workflow-ref v0.4.0
 ```
 
 `--install-bug-workflow` bleibt unverändert nutzbar und erzeugt
@@ -348,7 +348,7 @@ oder über das GitHub-UI: **Actions → Harness Capability Smoke → Run workflo
 ### Installation (TAC-12)
 
 ```bash
-harness init --install-workflows capability-smoke --workflow-ref v0.3.0
+harness init --install-workflows capability-smoke --workflow-ref v0.4.0
 ```
 
 Erstellt/aktualisiert `.github/workflows/harness-capability-smoke.yml`

@@ -1,6 +1,6 @@
 {
   "name": "pi-spec-harness",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "private": true,
   "description": "Pi-native spec-driven development harness: persistent run-state, schema-checked gates, and GitHub-issue-based human gates. Reference product: munichdeveloper/Immogent.",
   "type": "module",
@@ -41,7 +41,7 @@
     "tsx": "^4.19.2",
     "typescript": "^5.7.2",
     "typescript-eslint": "^8.15.0",
-    "vitest": "^2.1.5"
+    "vitest": "^4.1.11"
   },
   "engines": {
     "node": ">=20.9"
