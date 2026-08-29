@@ -81,14 +81,23 @@ jobs:
         id: artifact
         env:
           WORK_KEY: ${{ inputs.work-key }}
+          STALE_ARTIFACT_FIXTURE: ${{ vars.HARNESS_READINESS_SYNTHETIC_STALE_ARTIFACT }}
+          SYNTHETIC_ENABLED: ${{ vars.HARNESS_READINESS_SYNTHETIC }}
+          REPOSITORY: ${{ github.repository }}
         run: |
           node --input-type=module <<'NODE'
           import {readFileSync,writeFileSync,mkdirSync,appendFileSync} from 'node:fs';
           import {join} from 'node:path';
+          import {prepareSyntheticArtifactFixture} from './dist/spec/synthetic-artifact-fixture.js';
           const envelope=JSON.parse(readFileSync(join(process.env.RUNNER_TEMP,'readiness-envelope.json'),'utf8'));
           if(envelope.result.artifact){
             const dir=join(process.env.RUNNER_TEMP,'readiness-result');mkdirSync(dir,{recursive:true});
-            writeFileSync(join(dir,'result.json'),JSON.stringify(envelope.result.artifact));
+            const artifact=prepareSyntheticArtifactFixture(envelope.result.artifact,{
+              enabled:process.env.STALE_ARTIFACT_FIXTURE,
+              synthetic:process.env.SYNTHETIC_ENABLED,
+              repository:process.env.REPOSITORY,
+            });
+            writeFileSync(join(dir,'result.json'),JSON.stringify(artifact));
             appendFileSync(process.env.GITHUB_OUTPUT,`present=true\nname=readiness-result-${process.env.WORK_KEY.slice(10)}-${process.env.GITHUB_RUN_ATTEMPT}\n`);
           }
           NODE

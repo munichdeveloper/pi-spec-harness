@@ -45,6 +45,19 @@ was verified unchanged. No agent was started or artifact replaced. This is live
 API contract verification, not a full hosted workflow with a spec changed mid-run.
 The script intentionally fails if the retained fixture expires or changes.
 
+### Hosted stale-artifact fault injection
+
+The executor supports the explicit repository variable
+`HARNESS_READINESS_SYNTHETIC_STALE_ARTIFACT=true` solely for an isolated hosted
+Harness test. It is inert unless synthetic mode is also exactly `true` and the
+repository is exactly `munichdeveloper/pi-spec-harness`; invalid activation fails
+closed. After canonical synthetic execution it changes only the uploaded copy's
+`specRevision`. The canonical execution result and production evidence reader are
+unchanged. A successful negative proof therefore requires the automatic controller
+to reject the artifact binding and must show that no implementation was dispatched.
+This simulates stale artifact transport; it is not evidence of a real product spec
+being edited during an execution.
+
 ## Autonomous milestone continuation
 
 User authorized autonomous implementation and PR merges for this overall

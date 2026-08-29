@@ -31,6 +31,8 @@ describe("SPEC-016 readiness workflow wiring", () => {
     expect(workflow).toContain("inputs.workflow-revision == vars.HARNESS_READINESS_RUNTIME_SHA");
     expect(workflow).toContain("readiness-execute --repository");
     expect(workflow).toContain("envelope.result.artifact");
+    expect(workflow).toContain("HARNESS_READINESS_SYNTHETIC_STALE_ARTIFACT");
+    expect(workflow).toContain("prepareSyntheticArtifactFixture(envelope.result.artifact");
     expect(workflow).toContain("readiness-result-${process.env.WORK_KEY.slice(10)}-${process.env.GITHUB_RUN_ATTEMPT}");
   });
 });
