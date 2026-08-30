@@ -34,6 +34,14 @@ if (catalog.WORKFLOW_TEMPLATE_CATALOG.length !== 8) {
     `release smoke failed: expected 8 workflow templates, got ${catalog.WORKFLOW_TEMPLATE_CATALOG.length}`,
   );
 }
+if (!/^[a-f0-9]{40}$/.test(release.DEFAULT_HARNESS_WORKFLOW_REF)) {
+  throw new Error("release smoke failed: default workflow ref is not an immutable full SHA");
+}
+run("git", ["cat-file", "-e", `${release.DEFAULT_HARNESS_WORKFLOW_REF}^{commit}`]);
+run("git", ["merge-base", "--is-ancestor", release.DEFAULT_HARNESS_WORKFLOW_REF, "HEAD"]);
+for (const entry of catalog.WORKFLOW_TEMPLATE_CATALOG) {
+  run("git", ["cat-file", "-e", `${release.DEFAULT_HARNESS_WORKFLOW_REF}:${entry.reusableWorkflowRepoPath}`]);
+}
 
 const npmCli = process.env.npm_execpath;
 if (!npmCli) {
@@ -64,7 +72,7 @@ for (const file of packed.files) {
   }
 }
 
-const consumer = mkdtempSync(resolve(tmpdir(), "pi-spec-harness-v030-smoke-"));
+const consumer = mkdtempSync(resolve(tmpdir(), "pi-spec-harness-release-smoke-"));
 const projectConfigPath = resolve(consumer, "project-config.json");
 const auditPath = resolve(consumer, "docs/process-audit/journal/existing.md");
 const projectConfig = '{"project":"synthetic-consumer","custom":true}\n';
@@ -109,6 +117,7 @@ process.stdout.write(
       version: packageJson.version,
       cli: "passed",
       workflowTemplates: catalog.WORKFLOW_TEMPLATE_CATALOG.length,
+      immutableWorkflowRef: release.DEFAULT_HARNESS_WORKFLOW_REF,
       packageEntries: packed.entryCount,
       cleanInstall: "passed",
       upgradePreservation: "passed",
