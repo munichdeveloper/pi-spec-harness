@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
   BUG_WORKFLOW_REFERENCE_MARKER,
@@ -34,6 +34,18 @@ import { decideWorkflowInstall } from "../src/workflows/install-decision.js";
 import { DEFAULT_HARNESS_WORKFLOW_REF, HARNESS_VERSION } from "../src/release.js";
 
 describe("WORKFLOW_TEMPLATE_CATALOG", () => {
+  it("uses the package-supported Node 20.19 runtime in every shipped workflow", () => {
+    const workflowDirectory = new URL("../.github/workflows/", import.meta.url);
+    const workflows = readdirSync(workflowDirectory).filter((name) => name.endsWith(".yml"));
+
+    for (const workflow of workflows) {
+      const source = readFileSync(new URL(workflow, workflowDirectory), "utf8");
+      for (const match of source.matchAll(/node-version:\s*["']?([^\s"']+)/g)) {
+        expect(match[1], `${workflow} must use Node 20.19`).toBe("20.19");
+      }
+    }
+  });
+
   it("TAC-01: includes the migrated bug-triage entry unchanged (path/marker/default ref)", () => {
     const entry = findWorkflowTemplate("bug-triage");
     expect(entry).toBeDefined();
@@ -123,7 +135,7 @@ describe("WORKFLOW_TEMPLATE_CATALOG", () => {
       version: string;
       packages: Record<string, { version?: string }>;
     };
-    expect(HARNESS_VERSION).toBe("0.4.0");
+    expect(HARNESS_VERSION).toBe("0.4.1");
     expect(packageJson.version).toBe(HARNESS_VERSION);
     expect(packageLock.version).toBe(HARNESS_VERSION);
     expect(packageLock.packages[""]?.version).toBe(HARNESS_VERSION);

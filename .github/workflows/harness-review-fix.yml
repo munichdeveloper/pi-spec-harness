@@ -17,9 +17,9 @@ permissions:
 jobs:
   review-fix-review:
     if: ${{ github.event_name == 'pull_request_review' }}
-    uses: munichdeveloper/pi-spec-harness/.github/workflows/review-fix.yml@5937140980486653398dd379dd87c86252403ec6
+    uses: munichdeveloper/pi-spec-harness/.github/workflows/review-fix.yml@60353584d46b00f72c617d8f76eefaa4b333eaac
     with:
-      harness-ref: '5937140980486653398dd379dd87c86252403ec6'
+      harness-ref: '60353584d46b00f72c617d8f76eefaa4b333eaac'
       pull-request: ${{ github.event.pull_request.number }}
       review-id: ${{ github.event.review.id || 0 }}
       reviewed-head-sha: ${{ github.event.review.commit_id || github.event.pull_request.head.sha }}
@@ -46,9 +46,9 @@ jobs:
   review-fix-comment:
     needs: resolve-review-fix-comment
     if: ${{ github.event_name == 'issue_comment' && github.event.issue.pull_request && needs.resolve-review-fix-comment.outputs.head_sha != '' }}
-    uses: munichdeveloper/pi-spec-harness/.github/workflows/review-fix.yml@5937140980486653398dd379dd87c86252403ec6
+    uses: munichdeveloper/pi-spec-harness/.github/workflows/review-fix.yml@60353584d46b00f72c617d8f76eefaa4b333eaac
     with:
-      harness-ref: '5937140980486653398dd379dd87c86252403ec6'
+      harness-ref: '60353584d46b00f72c617d8f76eefaa4b333eaac'
       pull-request: ${{ github.event.issue.number }}
       review-id: 0
       reviewed-head-sha: ${{ needs.resolve-review-fix-comment.outputs.head_sha }}
@@ -60,9 +60,9 @@ jobs:
       fix-agent: 'github-copilot'
   review-fix-pr-event:
     if: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.head.repo.full_name == github.repository }}
-    uses: munichdeveloper/pi-spec-harness/.github/workflows/review-fix.yml@5937140980486653398dd379dd87c86252403ec6
+    uses: munichdeveloper/pi-spec-harness/.github/workflows/review-fix.yml@60353584d46b00f72c617d8f76eefaa4b333eaac
     with:
-      harness-ref: '5937140980486653398dd379dd87c86252403ec6'
+      harness-ref: '60353584d46b00f72c617d8f76eefaa4b333eaac'
       pull-request: ${{ github.event.pull_request.number }}
       review-id: 0
       # Metadata only for binding/reconciliation. The reusable workflow must
