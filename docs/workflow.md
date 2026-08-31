@@ -137,6 +137,12 @@ Verfügbare Vorlagennamen (für `--install-workflows <name>[,<name>...]`):
 | `process-audit-receiver` | `.github/workflows/harness-process-audit-receiver.yml` | `.github/workflows/process-audit-automation.yml` |
 | `requirement-to-spec` | `.github/workflows/harness-requirement-to-spec.yml` | `.github/workflows/requirement-to-spec.yml` |
 
+Für Repositories mit abweichender Vault-Struktur kann `requirement-to-spec`
+bei `harness init` über `--requirement-path-glob` und
+`--requirement-spec-output-dir` konfiguriert werden. Beispiel für Immogent:
+`--requirement-path-glob 'docs/20-requirements/**/*.md' --requirement-spec-output-dir 'docs/30-specifications'`.
+Das Zielverzeichnis muss repo-relativ und frei von Traversal-Segmenten sein.
+
 Alle Katalogeinträge verwenden ohne explizites `--workflow-ref` denselben im
 Release verifizierten vollständigen Commit-SHA. Dadurch kann kein einzelner
 Caller unbemerkt auf `main`, einen noch nicht existierenden Tag oder eine

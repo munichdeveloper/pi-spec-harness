@@ -24,6 +24,12 @@ Spec-Auftrag. Der Auftrag enthält Zielpfad, Pflichtabschnitte, Provider und
 Branch. Provideradapter delegieren an GitHub Copilot Coding Agent oder die
 gepinnt konfigurierte Claude Code Action.
 
+Requirement-Glob und repo-relatives Spec-Zielverzeichnis sind pro Zielrepository
+konfigurierbar. Ohne Angabe bleibt `docs/specifications` der rückwärtskompatible
+Default. Absolute Pfade, Traversal, Steuerzeichen und nicht kanonische
+Pfadsegmente werden bereits vor dem Schreiben des Managed Callers und erneut
+vor einem Provider-Dispatch abgelehnt.
+
 Der Agent-PR enthält `status: approved`; dieser Wert ist außerhalb des
 Default-Branches nicht wirksam. Der bestehende `spec-to-issue`-Workflow reagiert
 erst auf den Merge. Damit ist der Merge selbst die einzige Spec-Freigabe.
@@ -54,6 +60,7 @@ erst auf den Merge. Damit ist der Merge selbst die einzige Spec-Freigabe.
 - TAC-08: Managed Marker und Workflow-Katalog unterstützen create/noop/update/conflict.
 - TAC-09: Audit enthält Actor, Access Role, Provider, REQ/SPEC, Source-SHA, PR und Outcome.
 - TAC-10: Synthetisches E2E deckt beide Providerpfade mindestens per Contract, einen Provider real ab.
+- TAC-11: Ein konfiguriertes repo-relatives Spec-Zielverzeichnis wird durch Installer, Caller, reusable Workflow und Dispatch-Order unverändert gebunden; unsichere Pfade werden abgelehnt.
 
 ## Rollback
 

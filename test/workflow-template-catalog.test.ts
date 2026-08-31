@@ -297,6 +297,7 @@ describe("SPEC-014: requirement-to-spec catalog entry", () => {
     expect(rendered).toContain("schedule:");
     expect(rendered).toContain("workflow_dispatch:");
     expect(rendered).toContain("docs/requirements/**/*.md");
+    expect(rendered).toContain("spec-output-dir: 'docs/specifications'");
     expect(rendered).toContain(`requirement-to-spec.yml@${DEFAULT_REQUIREMENT_TO_SPEC_WORKFLOW_REF}`);
     expect(rendered).toContain(`harness-ref: '${DEFAULT_REQUIREMENT_TO_SPEC_WORKFLOW_REF}'`);
     expect(rendered).toContain("provider: 'github-copilot'");
@@ -309,12 +310,14 @@ describe("SPEC-014: requirement-to-spec catalog entry", () => {
     expect(rendered).toContain("harness-ref: 'v1.0.0'");
   });
 
-  it("renders with configurable requirement-path-glob and default-branch", () => {
+  it("renders with configurable requirement path, spec output directory, and default branch", () => {
     const rendered = renderRequirementToSpecReference({
       requirementPathGlob: "requirements/**/*.md",
+      specOutputDir: "docs/30-specifications",
       defaultBranch: "trunk",
     });
     expect(rendered).toContain("requirements/**/*.md");
+    expect(rendered).toContain("spec-output-dir: 'docs/30-specifications'");
     expect(rendered).toContain("branches: [trunk]");
   });
 
@@ -325,6 +328,33 @@ describe("SPEC-014: requirement-to-spec catalog entry", () => {
     expect(rendered).toContain("pull-requests: read");
     expect(rendered).not.toContain("secrets: inherit");
     expect(rendered).not.toContain("contents: write");
+  });
+
+  it.each([
+    "",
+    "/tmp/specs",
+    "../specs",
+    "docs/../specs",
+    "docs\\specs",
+    "docs/specs/",
+    "docs/specs'quoted",
+    "docs/specs\nprovider: 'claude-code'",
+  ])("rejects unsafe spec output directory %j before rendering workflow YAML", (specOutputDir) => {
+    expect(() => renderRequirementToSpecReference({ specOutputDir })).toThrow(
+      "spec output directory must be a canonical repo-relative path",
+    );
+  });
+
+  it("passes the configured spec output directory through the reusable workflow to the CLI", () => {
+    const reusable = readFileSync(
+      new URL("../.github/workflows/requirement-to-spec.yml", import.meta.url),
+      "utf8",
+    ).replace(/\r\n/g, "\n");
+
+    expect(reusable).toContain("spec-output-dir:");
+    expect(reusable).toContain("default: docs/specifications");
+    expect(reusable).toContain("SPEC_OUTPUT_DIR: ${{ inputs.spec-output-dir }}");
+    expect(reusable).toContain('--spec-output-dir "$SPEC_OUTPUT_DIR"');
   });
 
   it("uses non-cancelling concurrency to avoid dropping queued runs", () => {

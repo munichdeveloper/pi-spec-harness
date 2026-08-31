@@ -8,6 +8,11 @@ on:
         required: false
         type: string
         default: docs/requirements/**/*.md
+      spec-output-dir:
+        description: Repo-relative directory where generated software specifications are written.
+        required: false
+        type: string
+        default: docs/specifications
       default-branch:
         description: Default branch the pipeline runs against.
         required: false
@@ -97,6 +102,7 @@ jobs:
           SOURCE_SHA: ${{ github.sha }}
           PROVIDER: ${{ inputs.provider }}
           HARNESS_REF: ${{ inputs.harness-ref }}
+          SPEC_OUTPUT_DIR: ${{ inputs.spec-output-dir }}
         run: |
           while IFS= read -r req_file; do
             [[ -z "$req_file" ]] && continue
@@ -106,6 +112,7 @@ jobs:
               --requirement-path "$req_file" \
               --source-sha "$SOURCE_SHA" \
               --provider "$PROVIDER" \
+              --spec-output-dir "$SPEC_OUTPUT_DIR" \
               --harness-ref "$HARNESS_REF"
           done <<< "${{ steps.changed.outputs.files }}"
 

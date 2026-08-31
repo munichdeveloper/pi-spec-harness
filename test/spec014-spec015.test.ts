@@ -24,6 +24,7 @@ import {
   buildDispatchKey,
   buildSpecDispatchOrder,
   deriveSpecPath,
+  validateSpecOutputDirectory,
   isRequirementEligible,
   parseRequirementFrontmatter,
 } from "../src/spec/requirement-to-spec.js";
@@ -373,6 +374,40 @@ describe("SPEC-014: deriveSpecPath", () => {
   it("uses a configurable base directory", () => {
     expect(deriveSpecPath("REQ-014", "src/specs")).toBe("src/specs/SPEC-014.md");
   });
+
+  it("supports Immogent's numbered spec directory", () => {
+    expect(deriveSpecPath("REQ-014", "docs/30-specifications")).toBe(
+      "docs/30-specifications/SPEC-014.md",
+    );
+  });
+
+  it.each([
+    "",
+    "/tmp/specs",
+    "C:/specs",
+    "../specs",
+    "docs/../specs",
+    "docs//specs",
+    " docs/specs",
+    "docs/specs ",
+    "docs\\specs",
+    "docs/specs/",
+    "\\\\server\\specs",
+    "docs/specs'quoted",
+    "docs/specs\nnext",
+    "docs/specs\u0000",
+  ])(
+    "rejects unsafe or non-canonical output directory %j",
+    (directory) => {
+      expect(() => validateSpecOutputDirectory(directory)).toThrow(
+        "spec output directory must be a canonical repo-relative path",
+      );
+    },
+  );
+
+  it("returns an already canonical directory unchanged", () => {
+    expect(validateSpecOutputDirectory("docs/30-specifications")).toBe("docs/30-specifications");
+  });
 });
 
 describe("SPEC-014: buildSpecDispatchOrder", () => {
@@ -405,6 +440,17 @@ describe("SPEC-014: buildSpecDispatchOrder", () => {
       provider: "claude-code",
     });
     expect(order.provider).toBe("claude-code");
+  });
+
+  it("honours the configured spec output directory", () => {
+    const order = buildSpecDispatchOrder({
+      repository: "munichdeveloper/Immogent",
+      requirementId: "REQ-014",
+      sourceSha: sha("1"),
+      requirementPath: "docs/20-requirements/REQ-014.md",
+      specOutputDir: "docs/30-specifications",
+    });
+    expect(order.targetSpecPath).toBe("docs/30-specifications/SPEC-014.md");
   });
 });
 
