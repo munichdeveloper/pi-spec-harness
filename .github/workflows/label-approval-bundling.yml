@@ -51,7 +51,7 @@ jobs:
       - name: Setup Node for the harness CLI
         uses: actions/setup-node@v4
         with:
-          node-version: "20.9"
+          node-version: "20.19"
 
       - name: Checkout pi-spec-harness (source of the harness CLI)
         uses: actions/checkout@v4

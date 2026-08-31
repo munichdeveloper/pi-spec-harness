@@ -75,7 +75,7 @@ jobs:
         if: steps.changed.outputs.any == 'true'
         uses: actions/setup-node@v4
         with:
-          node-version: "20.9"
+          node-version: "20.19"
 
       - name: Checkout pi-spec-harness (source of buildIssueFromSpec())
         if: steps.changed.outputs.any == 'true'

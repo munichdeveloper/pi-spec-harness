@@ -189,7 +189,7 @@ export const CROSS_REPO_ALLOWED_ROLES = new Set([
  *
  * @param content      Raw YAML content of the receiver workflow file.
  * @param expectedRef  The harness ref the caller expects the receiver to use
- *                     (e.g. `"v0.4.0"` or the full SHA from
+ *                     (e.g. `"v0.4.1"` or the full SHA from
  *                     `DEFAULT_PROCESS_AUDIT_RECEIVER_WORKFLOW_REF`).
  * @param receiverPath Path used in error messages (e.g. `PROCESS_AUDIT_RECEIVER_PATH`).
  * @param recorder     Repository name used in error messages.
@@ -267,7 +267,7 @@ export function validateReceiverContent(
     throw new Error(
       `run-documentation-writer preflight failed: the process-audit receiver at ` +
       `'${receiverPath}' in '${recorder}' pins to mutable ref '${harnessRef}'. ` +
-      `Use an immutable version tag (e.g. 'v0.4.0') or a full commit SHA. ` +
+      `Use an immutable version tag (e.g. 'v0.4.1') or a full commit SHA. ` +
       `Re-install with \`harness install process-audit-receiver --harness-ref <immutable-ref>\`.`,
     );
   }
