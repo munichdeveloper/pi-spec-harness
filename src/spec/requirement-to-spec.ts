@@ -114,7 +114,31 @@ export function isRequirementEligible(fm: RequirementFrontmatter): boolean {
  * The NNN portion mirrors the numeric part of the REQ id.
  * SPEC-014, decision 3.
  */
+export function validateSpecOutputDirectory(specDir: string): string {
+  const segments = specDir.split("/");
+  const hasControlCharacter = [...specDir].some((character) => {
+    const code = character.charCodeAt(0);
+    return code <= 31 || code === 127;
+  });
+  if (
+    specDir.length === 0 ||
+    specDir !== specDir.trim() ||
+    specDir.startsWith("/") ||
+    /^[A-Za-z]:/.test(specDir) ||
+    specDir.includes("\\") ||
+    specDir.endsWith("/") ||
+    hasControlCharacter ||
+    /['"`]/.test(specDir) ||
+    !/^[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)*$/.test(specDir) ||
+    segments.some((segment) => segment === "" || segment === "." || segment === "..")
+  ) {
+    throw new Error(`spec output directory must be a canonical repo-relative path: '${specDir}'`);
+  }
+  return specDir;
+}
+
 export function deriveSpecPath(requirementId: string, specDir = "docs/specifications"): string {
+  const normalizedSpecDir = validateSpecOutputDirectory(specDir);
   const numericMatch = requirementId.match(/(\d+)/);
   const numericPart = numericMatch ? numericMatch[1].padStart(3, "0") : "000";
   const slugPart = requirementId
@@ -124,7 +148,7 @@ export function deriveSpecPath(requirementId: string, specDir = "docs/specificat
     .replace(/^-+|-+$/g, "");
   const specId = `SPEC-${numericPart}`;
   const filename = slugPart.length > 0 ? `${specId}-${slugPart}.md` : `${specId}.md`;
-  return `${specDir}/${filename}`;
+  return `${normalizedSpecDir}/${filename}`;
 }
 
 /**
@@ -138,10 +162,11 @@ export function buildSpecDispatchOrder(opts: {
   sourceSha: string;
   requirementPath: string;
   targetSpecPath?: string;
+  specOutputDir?: string;
   agentBranch?: string;
   provider?: SpecGenerationProvider;
 }): SpecDispatchOrder {
-  const targetSpecPath = opts.targetSpecPath ?? deriveSpecPath(opts.requirementId);
+  const targetSpecPath = opts.targetSpecPath ?? deriveSpecPath(opts.requirementId, opts.specOutputDir);
   const agentBranch =
     opts.agentBranch ??
     `harness/spec-gen-${opts.requirementId.toLowerCase()}-${opts.sourceSha.slice(0, 8)}`;

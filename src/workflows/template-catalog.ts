@@ -7,6 +7,7 @@ import {
 } from "../bug/workflow-reference.js";
 import type { SpecGenerationProvider } from "../state/types.js";
 import { DEFAULT_HARNESS_WORKFLOW_REF } from "../release.js";
+import { validateSpecOutputDirectory } from "../spec/requirement-to-spec.js";
 import {
   CAPABILITY_CALLER_MARKER,
   CAPABILITY_CALLER_PATH,
@@ -348,6 +349,7 @@ export interface RequirementToSpecReferenceOptions {
   harnessRef?: string;
   reusableRepository?: string;
   requirementPathGlob?: string;
+  specOutputDir?: string;
   defaultBranch?: string;
   /** Agent provider. Defaults to "github-copilot". */
   provider?: SpecGenerationProvider;
@@ -363,6 +365,7 @@ export function renderRequirementToSpecReference(options: RequirementToSpecRefer
   const harnessRef = options.harnessRef ?? DEFAULT_REQUIREMENT_TO_SPEC_WORKFLOW_REF;
   const reusableRepository = options.reusableRepository ?? DEFAULT_REUSABLE_WORKFLOW_REPOSITORY;
   const requirementPathGlob = options.requirementPathGlob ?? "docs/requirements/**/*.md";
+  const specOutputDir = validateSpecOutputDirectory(options.specOutputDir ?? "docs/specifications");
   const defaultBranch = options.defaultBranch ?? "main";
   const provider = options.provider ?? "github-copilot";
 
@@ -408,6 +411,7 @@ jobs:
     with:
       harness-ref: '${harnessRef}'
       requirement-path-glob: '${requirementPathGlob}'
+      spec-output-dir: '${specOutputDir}'
       default-branch: '${defaultBranch}'
       provider: '${provider}'
 `;
