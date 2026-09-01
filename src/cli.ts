@@ -88,7 +88,7 @@ import { validateDocumentationPath, validateLegacyDirectoryPath, validateSnapsho
 import { DEFAULT_RUN_DOCUMENTATION_CONFIG } from "./documentation/run-documentation-config.js";
 import {
   buildPostMergeAuditEnvelope,
-  buildPullRequestReviewEvidenceUrl,
+  buildPostMergeEvidenceUrls,
   completePostMergeReconciliation,
   failPostMergeReconciliation,
   reconcilePostMergeEvidence,
@@ -2902,12 +2902,11 @@ async function cmdPostMergeReconcile(
       isOutdated: thread.isOutdated,
     })),
   };
-  const evidence = [
-    snapshot.url,
-    ...reviews.map((review) => buildPullRequestReviewEvidenceUrl(argv.repository!, pullRequest, review.id)),
-    `checks:${snapshot.statusCheckRollup.length}:all-successful`,
-    `review-threads:${snapshot.reviewThreads.length}:none-open-current`,
-  ];
+  const evidence = buildPostMergeEvidenceUrls(
+    argv.repository,
+    pullRequest,
+    reviews.map((review) => review.id),
+  );
 
   try {
     state = reconcilePostMergeEvidence({ state, snapshot, actor: argv.actor, evidence });

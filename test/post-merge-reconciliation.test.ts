@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildPostMergeAuditEnvelope,
+  buildPostMergeEvidenceUrls,
   buildPullRequestReviewEvidenceUrl,
   completePostMergeReconciliation,
   failPostMergeReconciliation,
@@ -61,6 +62,31 @@ describe("post-merge reconciliation", () => {
     expect(url).toBe("https://api.github.com/repos/munichdeveloper/Immogent/pulls/100/reviews/5074680083");
     expect(new URL(url).hash).toBe("");
     expect(new URL(url).search).toBe("");
+  });
+
+  it("builds a complete SPEC-005-compatible evidence set", async () => {
+    const evidence = buildPostMergeEvidenceUrls("munichdeveloper/Immogent", 100, [5074680083]);
+    const state = reconcile();
+    const audit = buildPostMergeAuditEnvelope({
+      state,
+      trackingIssue: 99,
+      snapshot: snapshot(),
+      actor: "CODEX",
+      accessRole: "GITHUB_PERSONAL_ACCESS_TOKEN",
+      reason: "Reconcile completed delivery.",
+      description: "Verified live GitHub evidence and persisted it atomically.",
+      evidence,
+    });
+    const { normalizeProcessAuditInput } = await import(
+      "../scripts/normalize_process_audit_input.mjs" as never as string
+    ) as { normalizeProcessAuditInput: (raw: unknown) => unknown };
+
+    expect(evidence).toHaveLength(4);
+    expect(evidence.every((item) => {
+      const url = new URL(item);
+      return url.protocol === "https:" && url.hash === "" && url.search === "";
+    })).toBe(true);
+    expect(() => normalizeProcessAuditInput(audit)).not.toThrow();
   });
 
   it("atomically records implementation, verification, review and human merge evidence", () => {
