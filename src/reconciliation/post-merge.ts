@@ -53,6 +53,20 @@ export function buildPullRequestReviewEvidenceUrl(
   return `https://api.github.com/repos/${repository}/pulls/${pullRequest}/reviews/${reviewId}`;
 }
 
+export function buildPostMergeEvidenceUrls(
+  repository: string,
+  pullRequest: number,
+  reviewIds: number[],
+): string[] {
+  const pullRequestUrl = `https://github.com/${repository}/pull/${pullRequest}`;
+  return [
+    pullRequestUrl,
+    ...reviewIds.map((reviewId) => buildPullRequestReviewEvidenceUrl(repository, pullRequest, reviewId)),
+    `${pullRequestUrl}/checks`,
+    `${pullRequestUrl}/files`,
+  ];
+}
+
 function evidenceHead(state: RunState): string | undefined {
   const evidence = state.implementationEvidence;
   return evidence?.type === "pull-request" ? evidence.headSha : evidence?.commitSha;
