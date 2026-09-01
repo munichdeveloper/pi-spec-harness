@@ -155,7 +155,7 @@ describe("post-merge reconciliation", () => {
 
     expect(audit).toMatchObject({
       schema_version: 1,
-      occurred_at: "2026-09-01T06:37:00Z",
+      occurred_at: "2026-09-01T06:37:00.000Z",
       idempotency_key: `post-merge-reconcile:bootstrap-v041:pr100:${head}:v1`,
       process_code: "PROCESS_RECONCILIATION",
       actor: "CODEX",
