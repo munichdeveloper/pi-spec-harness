@@ -4,7 +4,7 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const packageJson = JSON.parse(readFileSync(resolve(root, "package.json"), "utf8"));
@@ -41,6 +41,13 @@ run("git", ["cat-file", "-e", `${release.DEFAULT_HARNESS_WORKFLOW_REF}^{commit}`
 run("git", ["merge-base", "--is-ancestor", release.DEFAULT_HARNESS_WORKFLOW_REF, "HEAD"]);
 for (const entry of catalog.WORKFLOW_TEMPLATE_CATALOG) {
   run("git", ["cat-file", "-e", `${release.DEFAULT_HARNESS_WORKFLOW_REF}:${entry.reusableWorkflowRepoPath}`]);
+  const pinnedWorkflow = run("git", ["show", `${release.DEFAULT_HARNESS_WORKFLOW_REF}:${entry.reusableWorkflowRepoPath}`]);
+  const candidateWorkflow = run("git", ["show", `HEAD:${entry.reusableWorkflowRepoPath}`]);
+  if (pinnedWorkflow !== candidateWorkflow) {
+    throw new Error(
+      `release smoke failed: ${entry.reusableWorkflowRepoPath} differs between default pin ${release.DEFAULT_HARNESS_WORKFLOW_REF} and release candidate`,
+    );
+  }
 }
 
 const npmCli = process.env.npm_execpath;
@@ -94,6 +101,15 @@ try {
   if (!installedHelp.includes("init") || !installedHelp.includes("status")) {
     throw new Error("release smoke failed: clean-installed CLI does not expose core commands");
   }
+  const installedCatalog = await import(pathToFileURL(
+    resolve(consumer, "node_modules/pi-spec-harness/dist/workflows/template-catalog.js"),
+  ).href);
+  for (const entry of installedCatalog.WORKFLOW_TEMPLATE_CATALOG) {
+    const rendered = entry.renderReference();
+    if (!rendered.includes(`@${release.DEFAULT_HARNESS_WORKFLOW_REF}`)) {
+      throw new Error(`release smoke failed: clean-installed default for ${entry.name} does not use the release pin`);
+    }
+  }
 
   // Reinstalling the release candidate models an idempotent package upgrade.
   // Consumer-owned configuration and the append-only audit journal must not be
@@ -118,8 +134,10 @@ process.stdout.write(
       cli: "passed",
       workflowTemplates: catalog.WORKFLOW_TEMPLATE_CATALOG.length,
       immutableWorkflowRef: release.DEFAULT_HARNESS_WORKFLOW_REF,
+      workflowContentParity: "passed",
       packageEntries: packed.entryCount,
       cleanInstall: "passed",
+      cleanInstallDefaultPin: "passed",
       upgradePreservation: "passed",
       requiredRuntimeFiles: requiredPaths,
       outcome: "passed",

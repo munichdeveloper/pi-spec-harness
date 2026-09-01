@@ -1,9 +1,9 @@
 # Pi Spec Harness
 
-Aktueller Release-Kandidat: **v0.4.1**. Die installierten Workflow-Caller
+Aktueller Release-Kandidat: **v0.4.2**. Die installierten Workflow-Caller
 verwenden standardmäßig einen verifizierten vollständigen Commit-SHA; der
 Release-Tag wird erst nach erfolgreichem Clean-Install- und Upgrade-Smoke
-erstellt. Details: [Release Notes v0.4.1](docs/releases/v0.4.1.md).
+erstellt. Details: [Release Notes v0.4.2](docs/releases/v0.4.2.md).
 
 Ein **Pi-natives** Werkzeug für spezifikationsgetriebene Entwicklungsdurchläufe:
 persistenter Run-State, schema-geprüfte Gates, und -- als zentrale
@@ -69,7 +69,7 @@ in dessen Body der komplette Run-State liegt (siehe
 <path>`) bleibt für rein lokale Tests verfügbar.
 
 Als Pi-Skill: dieses Repository nach Veröffentlichung versioniert via
-`pi install git:github.com/munichdeveloper/pi-spec-harness@v0.4.1`
+`pi install git:github.com/munichdeveloper/pi-spec-harness@v0.4.2`
 installieren (oder projektlokal `.agents/skills/pi-spec-harness/` verlinken).
 Siehe [`skills/pi-spec-harness/SKILL.md`](skills/pi-spec-harness/SKILL.md) für
 das vollständige Ablaufprotokoll.
@@ -167,7 +167,7 @@ npm run harness -- init \
   --requirement REQ-004 \
   --spec SPEC-004 \
   --install-bug-workflow \
-  --bug-workflow-ref v0.4.1
+  --bug-workflow-ref v0.4.2
 ```
 
 Die Referenzdatei enthält nur Trigger + `uses:` auf den zentralen reusable
@@ -211,4 +211,10 @@ Schreibrechten (`repo`-Scope) auf die Zielrepositories.
 npm install
 npm run check
 npm run release:smoke # kompletter Release-, Paket-, Clean-Install- und Upgrade-Nachweis
+HARNESS_RELEASE_TAG=v0.4.2 npm run release:verify-tag # lokalen Tag vor dem Push prüfen
 ```
+
+Ohne explizites `--harness-ref` erzeugt der Installer Caller auf dem zentralen,
+unveränderlichen Default-SHA. Dieser SHA darf vom Release-Commit abweichen,
+aber `release:smoke` verlangt byteidentische wiederverwendbare Workflows. Ein
+bewusst gesetztes `--harness-ref` bleibt möglich und wird unverändert verwendet.
