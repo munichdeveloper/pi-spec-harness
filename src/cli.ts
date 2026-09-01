@@ -86,6 +86,13 @@ import { renderRunSnapshot, buildSnapshotFilename } from "./documentation/run-sn
 import { generateRunIndex, generateObsidianBase, parseFrontmatter, parseRunIndexEntry } from "./documentation/run-index.js";
 import { validateDocumentationPath, validateLegacyDirectoryPath, validateSnapshotContent } from "./documentation/path-validator.js";
 import { DEFAULT_RUN_DOCUMENTATION_CONFIG } from "./documentation/run-documentation-config.js";
+import {
+  buildPostMergeAuditEnvelope,
+  completePostMergeReconciliation,
+  failPostMergeReconciliation,
+  reconcilePostMergeEvidence,
+  type PostMergePullRequestSnapshot,
+} from "./reconciliation/post-merge.js";
 
 /**
  * Minimal subset of `github` functions required by `cmdPersistRunDocumentation`.
@@ -2840,6 +2847,130 @@ async function cmdRequirementToSpecCheck(argv: {
 }
 
 /**
+ * Adopt a completed delivery PR into an existing bootstrap/migration run.
+ * Every assertion is re-read from GitHub. Evidence is saved as one state
+ * update, while the technical gate remains blocking until the canonical audit
+ * receiver confirms durable delivery.
+ */
+async function cmdPostMergeReconcile(
+  argv: StoreArgs & {
+    pullRequest?: number;
+    actor: string;
+    accessRole: string;
+    reason?: string;
+    description?: string;
+    auditRecorderRepo?: string;
+    auditJournalPath?: string;
+    branch?: string;
+  },
+): Promise<void> {
+  if (!argv.repository) throw new Error("--repository is required for post-merge-reconcile");
+  const store = await resolveExistingStore(argv);
+  let state = await store.load();
+  if (!store.issueRef) {
+    throw new Error("post-merge-reconcile requires the GitHub-issue backend and a persistent tracking issue");
+  }
+  const pullRequest = argv.pullRequest ?? state.deliveryPullRequest ?? state.pullRequest;
+  if (!pullRequest) throw new Error(`no delivery PR bound on run '${state.runId}'`);
+
+  const rawPr = await github.viewPullRequest(argv.repository, pullRequest) as {
+    number?: number;
+    state?: string;
+    url?: string;
+    headRefOid?: string;
+    mergedAt?: string | null;
+    mergeCommit?: { oid?: string } | null;
+    mergedBy?: { login?: string; __typename?: string } | null;
+    statusCheckRollup?: StatusCheckRollupItem[] | null;
+  };
+  const reviews = await github.listPullRequestReviews(argv.repository, pullRequest);
+  const reviewThreads = await github.listPullRequestReviewThreads(argv.repository, pullRequest);
+  const snapshot: PostMergePullRequestSnapshot = {
+    number: rawPr.number ?? pullRequest,
+    state: rawPr.state ?? "UNKNOWN",
+    url: rawPr.url ?? `https://github.com/${argv.repository}/pull/${pullRequest}`,
+    headRefOid: rawPr.headRefOid ?? "",
+    mergedAt: rawPr.mergedAt ?? null,
+    mergeCommit: rawPr.mergeCommit ?? null,
+    mergedBy: rawPr.mergedBy ?? null,
+    statusCheckRollup: rawPr.statusCheckRollup ?? [],
+    reviews: reviews.map((review) => ({ id: review.id, state: review.state, commitId: review.commitId })),
+    reviewThreads: reviewThreads.map((thread) => ({
+      id: thread.id,
+      isResolved: thread.isResolved,
+      isOutdated: thread.isOutdated,
+    })),
+  };
+  const evidence = [
+    snapshot.url,
+    ...reviews.map((review) => `${snapshot.url}#pullrequestreview-${review.id}`),
+    `checks:${snapshot.statusCheckRollup.length}:all-successful`,
+    `review-threads:${snapshot.reviewThreads.length}:none-open-current`,
+  ];
+
+  try {
+    state = reconcilePostMergeEvidence({ state, snapshot, actor: argv.actor, evidence });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    state = failPostMergeReconciliation(state, [snapshot.url, message]);
+    await store.save(state);
+    const next = computeNextAction(state);
+    printResult(
+      "post-merge-reconcile",
+      { reconciled: false, failure: message, state, nextAction: next },
+      next.detail,
+    );
+    process.exitCode = 1;
+    return;
+  }
+  // One issue-body write contains implementation, verification, review and
+  // merge evidence. The runtime gate is deliberately not passed yet.
+  await store.save(state);
+
+  const recorderRepository = argv.auditRecorderRepo ?? argv.repository;
+  const journalPath = argv.auditJournalPath ?? "docs/process-audit/journal";
+  const branch = argv.branch ?? "main";
+  const audit = buildPostMergeAuditEnvelope({
+    state,
+    trackingIssue: store.issueRef.number,
+    snapshot,
+    actor: argv.actor,
+    accessRole: argv.accessRole,
+    reason: argv.reason ?? `Reconcile GitHub-verified post-merge evidence for run ${state.runId}.`,
+    description: argv.description ?? `PR #${pullRequest} was re-read at exact head ${snapshot.headRefOid}; successful checks, submitted reviews, closed review threads and the human merge effect were persisted atomically.`,
+    evidence,
+  });
+  await github.dispatchProcessAuditEnvelopeV1(recorderRepository, audit);
+  const auditConfirmedAt = await github.confirmAuditEventInJournal(
+    recorderRepository,
+    journalPath,
+    audit.idempotency_key,
+    branch,
+  );
+
+  state = completePostMergeReconciliation(state, [
+    ...evidence,
+    `audit:${audit.idempotency_key}`,
+    `audit-confirmed-at:${auditConfirmedAt}`,
+  ]);
+  await store.save(state);
+  const next = computeNextAction(state);
+  printResult(
+    "post-merge-reconcile",
+    {
+      pullRequest,
+      headSha: snapshot.headRefOid,
+      mergeCommitSha: snapshot.mergeCommit?.oid,
+      auditIdempotencyKey: audit.idempotency_key,
+      auditConfirmedAt,
+      state,
+      nextAction: next,
+    },
+    next.detail,
+  );
+}
+
+/**
  * Persist the GitHub-verified merge effect of the bound delivery PR.
  * A passed merge-approval gate authorises the SHA, but the run may complete
  * only after GitHub reports the PR as merged and exposes the resulting merge commit.
@@ -3677,6 +3808,34 @@ const _harnessCli = yargs(hideBin(process.argv))
         state: argv.state,
         repository: argv.repository,
         runId: argv.runId,
+      }),
+  )
+  .command(
+    "post-merge-reconcile",
+    "Fail-closed adoption of an already merged, exactly bound delivery PR",
+    (y) =>
+      storeOptions(y)
+        .option("pull-request", { type: "number", describe: "Delivery PR number (defaults to the bound delivery PR)" })
+        .option("actor", { type: "string", demandOption: true, describe: "Standardized actor enum for the audit event" })
+        .option("access-role", { type: "string", demandOption: true, describe: "Credential/access-role enum used for reconciliation" })
+        .option("reason", { type: "string", describe: "Audit reason" })
+        .option("description", { type: "string", describe: "Audit description" })
+        .option("audit-recorder-repo", { type: "string", describe: "Audit recorder repository (default: target repository)" })
+        .option("audit-journal-path", { type: "string", describe: "Audit journal path (default: docs/process-audit/journal)" })
+        .option("branch", { type: "string", default: "main", describe: "Recorder default branch" }),
+    async (argv) =>
+      cmdPostMergeReconcile({
+        state: argv.state,
+        repository: argv.repository,
+        runId: argv.runId,
+        pullRequest: argv.pullRequest,
+        actor: argv.actor,
+        accessRole: argv["access-role"] as string,
+        reason: argv.reason,
+        description: argv.description,
+        auditRecorderRepo: argv["audit-recorder-repo"] as string | undefined,
+        auditJournalPath: argv["audit-journal-path"] as string | undefined,
+        branch: argv.branch,
       }),
   )
   .command(

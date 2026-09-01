@@ -174,3 +174,21 @@ den auf dem Default Branch installierten
 Tracking-Issue-Nummer. Der Dispatch ist wiederholbar; Snapshot-Checkpoints und
 Idempotenz verhindern doppelte Wirkung. Fehlt der Finalizer, schlägt der
 Reconcile-Job sichtbar fehl, damit keine Dokumentationspflicht verloren geht.
+
+### Post-Merge-Reconciliation für Bootstrap- und Migrations-Runs
+
+Wenn ein Delivery-PR bereits gemergt wurde, bevor der reguläre
+Implementierungs-Issue-Pfad seine Evidence gebunden hat, übernimmt
+`post-merge-reconcile` den Abschlussnachweis ohne künstliches
+`harness:implementation`-Issue. Als einzige Quelle gilt der live erneut
+gelesene, bereits an den Run gebundene GitHub-PR mit exakt übereinstimmender
+Head-SHA.
+
+Der Befehl arbeitet fail-closed: Alle Check-Runs und Statuskontexte müssen
+vorhanden und erfolgreich sein, aktuelle Review-Threads müssen gelöst sein,
+mindestens ein eingereichtes Review muss existieren und der Merge muss einen
+menschlichen `User` als Akteur ausweisen. Erst dann werden Implementation-,
+Verification-, Review- und Merge-Evidence in einem Issue-State-Write
+persistiert. Ein technisches Gate bleibt bis zur bestätigten kanonischen
+Audit-Zustellung blockierend. Wiederholungen verwenden denselben
+Idempotency-Key und verändern bereits passende Evidence nicht.
