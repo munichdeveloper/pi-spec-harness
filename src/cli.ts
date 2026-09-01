@@ -88,6 +88,7 @@ import { validateDocumentationPath, validateLegacyDirectoryPath, validateSnapsho
 import { DEFAULT_RUN_DOCUMENTATION_CONFIG } from "./documentation/run-documentation-config.js";
 import {
   buildPostMergeAuditEnvelope,
+  buildPullRequestReviewEvidenceUrl,
   completePostMergeReconciliation,
   failPostMergeReconciliation,
   reconcilePostMergeEvidence,
@@ -2903,7 +2904,7 @@ async function cmdPostMergeReconcile(
   };
   const evidence = [
     snapshot.url,
-    ...reviews.map((review) => `${snapshot.url}#pullrequestreview-${review.id}`),
+    ...reviews.map((review) => buildPullRequestReviewEvidenceUrl(argv.repository!, pullRequest, review.id)),
     `checks:${snapshot.statusCheckRollup.length}:all-successful`,
     `review-threads:${snapshot.reviewThreads.length}:none-open-current`,
   ];
