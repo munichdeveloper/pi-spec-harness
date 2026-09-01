@@ -137,10 +137,23 @@ npm run harness -- agent-assign \
 npm run harness -- impl-pr-merge \
   --repository owner/repo --run-id run-001
 
+# Bereits gemergten Bootstrap-/Migrations-PR fail-closed übernehmen
+npm run harness -- post-merge-reconcile \
+  --repository owner/repo --run-id run-001 \
+  --actor CODEX --access-role GITHUB_PERSONAL_ACCESS_TOKEN
+
 # Orchestrator: gate-freie Phasen automatisch voranschreiten
 npm run harness -- orchestrate \
   --repository owner/repo --run-id run-001
 ```
+
+`post-merge-reconcile` liest PR, exakten Head, Check-Rollup, Reviews,
+Review-Threads, Merge-Commit und Merge-Akteur erneut aus GitHub. Der Befehl
+verweigert stale Heads, fehlende oder nicht erfolgreiche Checks, offene
+aktuelle Review-Threads und Bot-/App-Merges. Implementation-, Verification-,
+Review- und Merge-Evidence werden gemeinsam im Run-State gespeichert; das
+technische Reconciliation-Gate wird erst nach bestätigter, idempotenter
+`PROCESS_RECONCILIATION`-Audit-Zustellung freigegeben.
 
 ## Bug-zu-PR-Track (SPEC-004)
 
