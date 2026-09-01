@@ -191,7 +191,7 @@ export function buildPostMergeAuditEnvelope(options: {
   const head = options.snapshot.headRefOid.toLowerCase();
   return {
     schema_version: 1 as const,
-    occurred_at: options.snapshot.mergedAt!,
+    occurred_at: new Date(options.snapshot.mergedAt!).toISOString(),
     process_instance: formatCanonicalRunId(options.state.repository, options.trackingIssue).processInstance,
     idempotency_key: `post-merge-reconcile:${options.state.runId}:pr${options.snapshot.number}:${head}:v1`,
     process_code: "PROCESS_RECONCILIATION" as const,
