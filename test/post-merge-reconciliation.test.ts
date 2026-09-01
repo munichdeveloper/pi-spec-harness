@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildPostMergeAuditEnvelope,
+  buildPullRequestReviewEvidenceUrl,
   completePostMergeReconciliation,
   failPostMergeReconciliation,
   reconcilePostMergeEvidence,
@@ -54,6 +55,14 @@ function reconcile(state = run(), observed = snapshot()) {
 }
 
 describe("post-merge reconciliation", () => {
+  it("uses canonical fragment-free GitHub API URLs for review evidence", () => {
+    const url = buildPullRequestReviewEvidenceUrl("munichdeveloper/Immogent", 100, 5074680083);
+
+    expect(url).toBe("https://api.github.com/repos/munichdeveloper/Immogent/pulls/100/reviews/5074680083");
+    expect(new URL(url).hash).toBe("");
+    expect(new URL(url).search).toBe("");
+  });
+
   it("atomically records implementation, verification, review and human merge evidence", () => {
     const state = reconcile();
 

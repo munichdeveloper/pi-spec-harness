@@ -45,6 +45,14 @@ export interface PostMergeReconciliationInput {
   evidence: string[];
 }
 
+export function buildPullRequestReviewEvidenceUrl(
+  repository: string,
+  pullRequest: number,
+  reviewId: number,
+): string {
+  return `https://api.github.com/repos/${repository}/pulls/${pullRequest}/reviews/${reviewId}`;
+}
+
 function evidenceHead(state: RunState): string | undefined {
   const evidence = state.implementationEvidence;
   return evidence?.type === "pull-request" ? evidence.headSha : evidence?.commitSha;
