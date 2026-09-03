@@ -222,6 +222,7 @@ export interface ProcessAuditReceiverOptions {
   harnessRef?: string;
   reusableRepository?: string;
   journalDir?: string;
+  writerAuthMode?: "github-token" | "github-app";
 }
 
 /**
@@ -236,6 +237,11 @@ export function renderProcessAuditReceiver(options: ProcessAuditReceiverOptions 
   const harnessRef = options.harnessRef ?? DEFAULT_PROCESS_AUDIT_RECEIVER_WORKFLOW_REF;
   const reusableRepository = options.reusableRepository ?? DEFAULT_REUSABLE_WORKFLOW_REPOSITORY;
   const journalDir = options.journalDir ?? "docs/process-audit/journal";
+  const writerAuthMode = options.writerAuthMode ?? "github-token";
+
+  if (writerAuthMode === "github-app" && journalDir !== "docs/process-audit/journal") {
+    throw new Error("github-app audit writer requires journalDir 'docs/process-audit/journal'");
+  }
 
   return `${PROCESS_AUDIT_RECEIVER_MARKER}
 name: Harness Process Audit Receiver
@@ -263,7 +269,11 @@ jobs:
       audit-payload-json: \${{ toJson(github.event.client_payload.audit) }}
       journal-dir: '${journalDir}'
       harness-ref: '${harnessRef}'
-    permissions:
+      writer-auth-mode: '${writerAuthMode}'
+${writerAuthMode === "github-app" ? `    secrets:
+      audit-app-id: \${{ secrets.HARNESS_AUDIT_APP_ID }}
+      audit-app-private-key: \${{ secrets.HARNESS_AUDIT_APP_PRIVATE_KEY }}
+` : ""}    permissions:
       contents: write
 `;
 }

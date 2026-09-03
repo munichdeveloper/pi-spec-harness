@@ -135,7 +135,7 @@ describe("WORKFLOW_TEMPLATE_CATALOG", () => {
       version: string;
       packages: Record<string, { version?: string }>;
     };
-    expect(HARNESS_VERSION).toBe("0.4.2");
+    expect(HARNESS_VERSION).toBe("0.4.3");
     expect(packageJson.version).toBe(HARNESS_VERSION);
     expect(packageLock.version).toBe(HARNESS_VERSION);
     expect(packageLock.packages[""]?.version).toBe(HARNESS_VERSION);
@@ -256,6 +256,21 @@ describe("SPEC-005: process-audit-receiver catalog entry (Finding 1)", () => {
   it("renderProcessAuditReceiver accepts a custom journal directory", () => {
     const rendered = renderProcessAuditReceiver({ journalDir: "audit/journal" });
     expect(rendered).toContain("journal-dir: 'audit/journal'");
+  });
+
+  it("renders a fail-closed dedicated GitHub App writer for protected public repositories", () => {
+    const rendered = renderProcessAuditReceiver({ writerAuthMode: "github-app" });
+    expect(rendered).toContain("writer-auth-mode: 'github-app'");
+    expect(rendered).toContain("audit-app-id: ${{ secrets.HARNESS_AUDIT_APP_ID }}");
+    expect(rendered).toContain("audit-app-private-key: ${{ secrets.HARNESS_AUDIT_APP_PRIVATE_KEY }}");
+    expect(rendered).not.toContain("secrets: inherit");
+  });
+
+  it("rejects a dedicated App writer outside the append-only journal directory", () => {
+    expect(() => renderProcessAuditReceiver({
+      writerAuthMode: "github-app",
+      journalDir: "src",
+    })).toThrow(/requires journalDir/);
   });
 
   it("rendered receiver is parseable by decideWorkflowInstall and treated as managed", () => {

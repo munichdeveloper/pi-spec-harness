@@ -38,6 +38,20 @@ on:
           Defaults to main; pin to a release tag for stable behaviour.
         type: string
         default: main
+      writer-auth-mode:
+        description: >
+          Authentication used for the append-only journal push. Use
+          github-app for protected public repositories with a dedicated App
+          ruleset bypass; github-token preserves existing consumer behaviour.
+        type: string
+        default: github-token
+    secrets:
+      audit-app-id:
+        description: Dedicated repository-scoped audit writer GitHub App id.
+        required: false
+      audit-app-private-key:
+        description: Private key for the dedicated audit writer GitHub App.
+        required: false
 
 # No global concurrency group: parallel writers are allowed and resolve
 # conflicts via the bounded push-retry in record_process_audit.mjs
@@ -51,7 +65,58 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout caller repository
+      - name: Validate dedicated writer configuration
+        env:
+          WRITER_AUTH_MODE: ${{ inputs['writer-auth-mode'] }}
+          JOURNAL_DIR: ${{ inputs['journal-dir'] }}
+          AUDIT_APP_ID: ${{ secrets['audit-app-id'] }}
+          AUDIT_APP_PRIVATE_KEY: ${{ secrets['audit-app-private-key'] }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "$WRITER_AUTH_MODE" in
+            github-token)
+              if [[ -n "$AUDIT_APP_ID" || -n "$AUDIT_APP_PRIVATE_KEY" ]]; then
+                echo "::error::Dedicated audit App credentials must not be supplied in github-token mode."
+                exit 1
+              fi
+              ;;
+            github-app)
+              if [[ -z "$AUDIT_APP_ID" || -z "$AUDIT_APP_PRIVATE_KEY" ]]; then
+                echo "::error::github-app mode requires both dedicated audit App credentials."
+                exit 1
+              fi
+              if [[ "$JOURNAL_DIR" != "docs/process-audit/journal" ]]; then
+                echo "::error::github-app mode permits only docs/process-audit/journal."
+                exit 1
+              fi
+              ;;
+            *)
+              echo "::error::Unknown writer-auth-mode."
+              exit 1
+              ;;
+          esac
+
+      - name: Mint repository-scoped audit writer token
+        id: audit-app-token
+        if: inputs['writer-auth-mode'] == 'github-app'
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349
+        with:
+          app-id: ${{ secrets['audit-app-id'] }}
+          private-key: ${{ secrets['audit-app-private-key'] }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: write
+
+      - name: Checkout caller repository with dedicated audit writer
+        if: inputs['writer-auth-mode'] == 'github-app'
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ steps.audit-app-token.outputs.token }}
+
+      - name: Checkout caller repository with workflow token
+        if: inputs['writer-auth-mode'] == 'github-token'
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
