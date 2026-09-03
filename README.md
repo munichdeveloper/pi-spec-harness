@@ -195,6 +195,11 @@ npm run harness -- init \
 Details, verfügbare Vorlagennamen und der reaktive Spec-zu-Issue-
 Einstiegspunkt: siehe `docs/workflow.md`.
 
+Geschützte öffentliche Zielrepositories verwenden für direkte append-only
+Auditpersistenz eine eigene GitHub App statt einer allgemeinen Actions-
+Ruleset-Ausnahme. Siehe
+[`docs/security/dedicated-audit-writer.md`](docs/security/dedicated-audit-writer.md).
+
 ## Verwalteter AGENTS.md-Kontextblock (SPEC-008)
 
 `--install-agents-context` fügt einen abgegrenzten, versionierten

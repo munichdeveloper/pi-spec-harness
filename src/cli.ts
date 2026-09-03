@@ -322,6 +322,7 @@ interface CmdInitArgs {
   requirementSpecOutputDir?: string;
   requirementDefaultBranch?: string;
   requirementProvider?: "github-copilot" | "claude-code";
+  auditWriterAuthMode?: "github-token" | "github-app";
   prApprovalPolicy?: string;
 }
 
@@ -361,6 +362,13 @@ function buildWorkflowRenderOptions(name: string, argv: CmdInitArgs): Record<str
       specOutputDir: argv.requirementSpecOutputDir,
       defaultBranch: argv.requirementDefaultBranch,
       provider: argv.requirementProvider,
+    };
+  }
+  if (name === "process-audit-receiver") {
+    return {
+      harnessRef: argv.workflowRef,
+      reusableRepository: argv.workflowRepository,
+      writerAuthMode: argv.auditWriterAuthMode,
     };
   }
   return undefined;
@@ -3415,6 +3423,11 @@ const _harnessCli = yargs(hideBin(process.argv))
           choices: ["github-copilot", "claude-code"] as const,
           describe: "Agent provider used by the installed requirement-to-spec reference workflow",
         })
+        .option("audit-writer-auth-mode", {
+          type: "string",
+          choices: ["github-token", "github-app"] as const,
+          describe: "Audit journal writer identity. Use github-app for protected public repositories.",
+        })
         .option("pr-approval-policy", {
           type: "string",
           choices: ["merge-is-approval", "label-authorizes-auto-merge"] as const,
@@ -3454,6 +3467,7 @@ const _harnessCli = yargs(hideBin(process.argv))
         requirementSpecOutputDir: argv["requirement-spec-output-dir"] as string | undefined,
         requirementDefaultBranch: argv["requirement-default-branch"] as string | undefined,
         requirementProvider: argv["requirement-provider"] as "github-copilot" | "claude-code" | undefined,
+        auditWriterAuthMode: argv["audit-writer-auth-mode"] as "github-token" | "github-app" | undefined,
         prApprovalPolicy: argv["pr-approval-policy"] as string | undefined,
       }),
   )

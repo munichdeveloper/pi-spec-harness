@@ -143,6 +143,14 @@ bei `harness init` über `--requirement-path-glob` und
 `--requirement-path-glob 'docs/20-requirements/**/*.md' --requirement-spec-output-dir 'docs/30-specifications'`.
 Das Zielverzeichnis muss repo-relativ und frei von Traversal-Segmenten sein.
 
+Für öffentliche Repositories mit geschütztem Default-Branch kann der
+`process-audit-receiver` über `--audit-writer-auth-mode github-app` eine
+dedizierte, repository-begrenzte Audit-App verwenden. Der generische
+`GITHUB_TOKEN` erhält dabei keine Ruleset-Ausnahme. Einrichtung,
+Minimalberechtigungen und Negativtests sind unter
+[`docs/security/dedicated-audit-writer.md`](security/dedicated-audit-writer.md)
+dokumentiert.
+
 Alle Katalogeinträge verwenden ohne explizites `--workflow-ref` denselben im
 Release verifizierten vollständigen Commit-SHA. Dadurch kann kein einzelner
 Caller unbemerkt auf `main`, einen noch nicht existierenden Tag oder eine

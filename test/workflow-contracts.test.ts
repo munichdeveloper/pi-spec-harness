@@ -474,6 +474,25 @@ describe("SPEC-010 capability-smoke reusable workflow contracts", () => {
   });
 });
 
+describe("Issue 184: dedicated protected-branch audit writer", () => {
+  it("fails closed and uses a fully pinned token action without token fallback", async () => {
+    const workflow = await readFile(".github/workflows/process-audit-automation.yml", "utf8");
+    expect(workflow).toContain("writer-auth-mode:");
+    expect(workflow).toContain("github-app mode requires both dedicated audit App credentials");
+    expect(workflow).toContain("github-app mode permits only docs/process-audit/journal");
+    expect(workflow).toContain("actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349");
+    expect(workflow).toContain("permission-contents: write");
+    expect(workflow).toContain("token: ${{ steps.audit-app-token.outputs.token }}");
+    expect(workflow).not.toContain("steps.audit-app-token.outputs.token || github.token");
+  });
+
+  it("exposes an explicit installer option for protected public repositories", async () => {
+    const cli = await readFile("src/cli.ts", "utf8");
+    expect(cli).toContain("audit-writer-auth-mode");
+    expect(cli).toContain("auditWriterAuthMode");
+  });
+});
+
 // ---------------------------------------------------------------------------
 // SPEC-005 normalizeProcessAuditInput: canonical enums + YAML injection safety
 // (Finding 2 regression tests)
