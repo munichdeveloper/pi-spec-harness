@@ -5,15 +5,19 @@ on:
   issues:
     types: [opened, edited]
 
+concurrency:
+  group: harness-issue-intake-${{ github.repository }}-${{ github.event.issue.number }}
+  cancel-in-progress: false
+
 permissions:
   contents: read
   issues: write
 
 jobs:
   intake:
-    uses: munichdeveloper/pi-spec-harness/.github/workflows/issue-intake.yml@301640ece96c2423c174eca3ab4cb188effe14bb
+    uses: munichdeveloper/pi-spec-harness/.github/workflows/issue-intake.yml@8e74a892381afb92e90c80e60eb8b381bedfa0b8
     with:
       issue-number: ${{ github.event.issue.number }}
       issue-title: ${{ github.event.issue.title }}
       issue-body: ${{ github.event.issue.body || '' }}
-      harness-ref: '301640ece96c2423c174eca3ab4cb188effe14bb'
+      harness-ref: '8e74a892381afb92e90c80e60eb8b381bedfa0b8'
