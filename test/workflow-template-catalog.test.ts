@@ -331,7 +331,10 @@ describe("SPEC-014: requirement-to-spec catalog entry", () => {
 
   it("is a valid installable template", () => {
     expect(() => resolveWorkflowInstallPlan({ installWorkflows: "requirement-to-spec" })).not.toThrow();
-    expect(resolveWorkflowInstallPlan({ installWorkflows: "requirement-to-spec" })).toEqual(["requirement-to-spec"]);
+    expect(resolveWorkflowInstallPlan({ installWorkflows: "requirement-to-spec" })).toEqual([
+      "requirement-to-spec",
+      "capability-smoke",
+    ]);
   });
 
   it("renders a minimal reference with default options", () => {
