@@ -591,6 +591,12 @@ describe("TAC-16 run-documentation-finalizer workflow template", () => {
     expect(result).toContain("inputs.issue-number || github.event.issue.number");
   });
 
+  it("ignores labels on ordinary issues and only accepts harness run labels", () => {
+    const result = renderRunDocumentationFinalizer();
+    expect(result).toContain("github.event.label.name == 'harness:run'");
+    expect(result).toContain("contains(github.event.issue.labels.*.name, 'harness:run')");
+  });
+
   it("respects the harnessRef option", () => {
     const result = renderRunDocumentationFinalizer({ harnessRef: "v0.3.0" });
     expect(result).toContain("v0.3.0");

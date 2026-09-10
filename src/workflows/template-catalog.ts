@@ -336,6 +336,11 @@ permissions:
 
 jobs:
   finalize:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'issues' &&
+       github.event.label.name == 'harness:run' &&
+       contains(github.event.issue.labels.*.name, 'harness:run'))
     uses: ${reusableRepository}/.github/workflows/run-documentation-finalizer.yml@${harnessRef}
     with:
       harness-ref: '${harnessRef}'

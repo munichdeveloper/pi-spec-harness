@@ -13,6 +13,7 @@ describe("bug workflow reference installer", () => {
     expect(rendered).toContain("types: [opened, typed, labeled]");
     expect(rendered).toContain("group: harness-bug-triage-${{ github.repository }}-${{ github.event.issue.number }}");
     expect(rendered).toContain("cancel-in-progress: false");
+    expect(rendered).toContain("permissions:\n  contents: write\n  issues: write\n  pull-requests: write\n  id-token: write");
     expect(rendered).toContain("uses: munichdeveloper/pi-spec-harness/.github/workflows/bug-triage.yml@v9.9.9");
     expect(rendered).toContain("github.event.action == 'opened'");
     expect(rendered).toContain("contains(github.event.issue.labels.*.name, 'type:bug')");

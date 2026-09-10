@@ -36,6 +36,15 @@ concurrency:
   group: harness-bug-triage-\${{ github.repository }}-\${{ github.event.issue.number }}
   cancel-in-progress: false
 
+# The called workflow cannot elevate the caller token. Keep this contract in
+# sync with .github/workflows/bug-triage.yml so GitHub rejects neither workflow
+# before runner assignment.
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+  id-token: write
+
 jobs:
   triage:
     if: >-

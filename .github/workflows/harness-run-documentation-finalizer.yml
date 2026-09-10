@@ -18,6 +18,11 @@ permissions:
 
 jobs:
   finalize:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'issues' &&
+       github.event.label.name == 'harness:run' &&
+       contains(github.event.issue.labels.*.name, 'harness:run'))
     # The harness repository calls its own reusable workflow locally. Remote
     # same-repository SHA calls failed before runner assignment (issue #96),
     # while consumer repositories continue to use the immutable remote template.
