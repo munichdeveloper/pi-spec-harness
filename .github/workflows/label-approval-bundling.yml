@@ -69,15 +69,39 @@ jobs:
         shell: bash
         run: |
           body="$(jq -r '.issue.body // ""' "$GITHUB_EVENT_PATH")"
+          title="$(jq -r '.issue.title // ""' "$GITHUB_EVENT_PATH")"
           # Matches the body format produced by buildIssueFromSpec()
           # ("**Requirement(s):** REQ-006, REQ-007" / "**Spec:** SPEC-007 (...)").
           requirement="$(printf '%s\n' "$body" | grep -oE 'REQ-[0-9]+' | head -1 || true)"
-          spec="$(printf '%s\n' "$body" | grep -oE 'SPEC-[0-9]+' | head -1 || true)"
+          spec="$(printf '%s\n%s\n' "$title" "$body" | grep -oE 'SPEC-[0-9]+' | head -1 || true)"
+          # A directly approved SPEC issue is already the canonical specification
+          # artifact. Preserve backward-compatible RunState coordinates by deriving
+          # the matching requirement id when no explicit requirement is present.
+          if [[ -z "$requirement" && "$spec" =~ ^SPEC-([0-9]+)$ ]]; then
+            requirement="REQ-${BASH_REMATCH[1]}"
+          fi
           echo "requirement=$requirement" >> "$GITHUB_OUTPUT"
           echo "spec=$spec" >> "$GITHUB_OUTPUT"
+          if [[ -n "$requirement" && -n "$spec" ]]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Explain an incomplete intake in user language
+        if: steps.refs.outputs.ready != 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh issue comment '${{ steps.bundle.outputs.issue }}' \
+            --repo '${{ github.repository }}' \
+            --body $'Die Freigabe wurde gespeichert, aber die Umsetzung kann noch nicht sicher gestartet werden.\n\nDer Harness konnte noch keine eindeutige Anforderung und Software-Spezifikation zuordnen. Es sind keine weiteren technischen Labels erforderlich. Bitte ergänze im Issue das gewünschte Verhalten und überprüfbare Akzeptanzkriterien; der Intake übernimmt anschließend die technische Zuordnung.'
+          echo "::error::Installation is installed-but-not-ready for zero-knowledge intake: no requirement/spec coordinates could be derived."
+          exit 1
 
       - name: Bootstrap the harness run for this implementation issue (TAC-12/TAC-13/TAC-14)
-        if: steps.refs.outputs.requirement != '' && steps.refs.outputs.spec != ''
+        if: steps.refs.outputs.ready == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         working-directory: .pi-spec-harness

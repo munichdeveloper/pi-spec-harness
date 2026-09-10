@@ -339,6 +339,15 @@ describe("SPEC-010 capability-smoke reusable workflow contracts", () => {
     expect(callBlock).toContain("CLAUDE_CODE_OAUTH_TOKEN:");
   });
 
+  it("SPEC-017: approval bundling derives coordinates from a SPEC title and never silently skips intake", async () => {
+    const workflow = await readFile(".github/workflows/label-approval-bundling.yml", "utf8");
+    expect(workflow).toContain("title=\"$(jq -r '.issue.title // \"\"'");
+    expect(workflow).toContain("requirement=\"REQ-${BASH_REMATCH[1]}\"");
+    expect(workflow).toContain("Explain an incomplete intake in user language");
+    expect(workflow).toContain("Es sind keine weiteren technischen Labels erforderlich");
+    expect(workflow).toContain("steps.refs.outputs.ready == 'true'");
+  });
+
   it("TAC-12/TAC-09: thin caller template declares workflow_call, workflow_dispatch, and push triggers", async () => {
     const { renderCapabilityCallerReference } = await import("../src/capability/capability-caller.js");
     const caller = renderCapabilityCallerReference();
