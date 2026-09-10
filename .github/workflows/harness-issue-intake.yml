@@ -11,9 +11,9 @@ permissions:
 
 jobs:
   intake:
-    uses: munichdeveloper/pi-spec-harness/.github/workflows/issue-intake.yml@4353fa758e1f41c30b9a73116b2becf0c3a33f51
+    uses: munichdeveloper/pi-spec-harness/.github/workflows/issue-intake.yml@301640ece96c2423c174eca3ab4cb188effe14bb
     with:
       issue-number: ${{ github.event.issue.number }}
       issue-title: ${{ github.event.issue.title }}
       issue-body: ${{ github.event.issue.body || '' }}
-      harness-ref: '4353fa758e1f41c30b9a73116b2becf0c3a33f51'
+      harness-ref: '301640ece96c2423c174eca3ab4cb188effe14bb'
