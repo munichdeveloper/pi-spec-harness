@@ -207,7 +207,25 @@ describe("resolveWorkflowInstallPlan (TAC-04/TAC-07)", () => {
 
   it("adds bug-triage from the legacy flag even when --install-workflows only names other templates", () => {
     const plan = resolveWorkflowInstallPlan({ installBugWorkflow: true, installWorkflows: "spec-to-issue" });
-    expect(plan).toEqual(expect.arrayContaining(["bug-triage", "spec-to-issue"]));
+    expect(plan).toEqual(expect.arrayContaining(["bug-triage", "spec-to-issue", "capability-smoke"]));
+  });
+
+  it("SPEC-017: automatically includes capability smoke for every agent-enabled installation", () => {
+    expect(resolveWorkflowInstallPlan({ installWorkflows: "bug-triage" })).toEqual([
+      "bug-triage",
+      "capability-smoke",
+    ]);
+    expect(resolveWorkflowInstallPlan({ installWorkflows: "requirement-to-spec" })).toEqual([
+      "requirement-to-spec",
+      "capability-smoke",
+    ]);
+  });
+
+  it("SPEC-017: does not infer an agent requirement for provider-independent workflows", () => {
+    expect(resolveWorkflowInstallPlan({ installWorkflows: "spec-to-issue,label-approval-bundling" })).toEqual([
+      "spec-to-issue",
+      "label-approval-bundling",
+    ]);
   });
 
   it("SPEC-010: capability-smoke is a valid installable template", () => {

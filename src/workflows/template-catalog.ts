@@ -531,8 +531,17 @@ export function resolveWorkflowInstallPlan(options: { installBugWorkflow?: boole
     }
   }
 
-  if (options.installBugWorkflow) {
-    return [...new Set(["bug-triage", ...requested])];
+  const plan = options.installBugWorkflow
+    ? [...new Set(["bug-triage", ...requested])]
+    : requested;
+
+  // SPEC-017: an agent-enabled installation must never omit its executable
+  // capability attestation. The smoke is an installation invariant, not an
+  // expert-only optional extra. Secret-free or observer-only operation must be
+  // selected explicitly in a future installation manifest rather than inferred
+  // from a missing workflow/credential.
+  if (plan.some((name) => name === "bug-triage" || name === "requirement-to-spec")) {
+    return [...new Set([...plan, "capability-smoke"])];
   }
-  return requested;
+  return plan;
 }

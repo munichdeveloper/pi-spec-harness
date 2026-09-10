@@ -346,6 +346,8 @@ describe("SPEC-010 capability-smoke reusable workflow contracts", () => {
     expect(caller).toContain("workflow_dispatch:");
     expect(caller).toContain("push:");
     expect(caller).toContain("harness-capability-smoke.yml");
+    expect(caller).toContain("harness-requirement-to-spec.yml");
+    expect(caller).toContain("harness-run-documentation-finalizer.yml");
     expect(caller).toContain("harness-bug-triage.yml");
     expect(caller).toContain("secrets: inherit");
   });

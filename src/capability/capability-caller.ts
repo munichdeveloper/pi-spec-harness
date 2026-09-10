@@ -31,6 +31,11 @@ export function renderCapabilityCallerReference(options: CapabilityCallerOptions
   const watchedPaths = options.watchedPaths ?? [
     ".github/workflows/harness-capability-smoke.yml",
     ".github/workflows/harness-bug-triage.yml",
+    ".github/workflows/harness-requirement-to-spec.yml",
+    ".github/workflows/harness-label-approval-bundling.yml",
+    ".github/workflows/harness-review-fix.yml",
+    ".github/workflows/harness-spec-to-issue.yml",
+    ".github/workflows/harness-run-documentation-finalizer.yml",
   ];
   const pathsYaml = watchedPaths.map((p) => `      - '${p}'`).join("\n");
 
