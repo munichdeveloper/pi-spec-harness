@@ -350,6 +350,11 @@ describe("SPEC-010 capability-smoke reusable workflow contracts", () => {
     expect(caller).toContain("harness-run-documentation-finalizer.yml");
     expect(caller).toContain("harness-bug-triage.yml");
     expect(caller).toContain("secrets: inherit");
+    expect(caller).toContain("installation-preflight:");
+    expect(caller).toContain("installed-but-not-ready");
+    expect(caller).toContain("needs: installation-preflight");
+    expect(caller).toContain("harness:approved-for-agent");
+    expect(caller).toContain("@[0-9a-f]{40}$");
   });
 
   it("TAC-09: push only bridges default-branch changes to a supported workflow_dispatch", async () => {
@@ -420,6 +425,7 @@ describe("SPEC-010 capability-smoke reusable workflow contracts", () => {
     // Reusable workflow permissions are intersected with the caller permissions.
     expect(caller).toContain("actions: write");
     expect(caller).toContain("id-token: write");
+    expect(caller).toContain("issues: read");
     expect(caller).not.toContain("actions: read");
     expect(caller).not.toContain("contents: write");
     expect(caller).not.toContain("issues: write");
