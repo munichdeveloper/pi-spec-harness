@@ -239,6 +239,8 @@ describe("resolveWorkflowInstallPlan (TAC-04/TAC-07)", () => {
     expect(entry.marker).toBe(ISSUE_INTAKE_REFERENCE_MARKER);
     expect(entry.renderReference()).toBe(renderIssueIntakeReference());
     expect(entry.renderReference()).toContain("types: [opened, edited]");
+    expect(entry.renderReference()).toContain("group: harness-issue-intake-${{ github.repository }}-${{ github.event.issue.number }}");
+    expect(entry.renderReference()).toContain("cancel-in-progress: false");
     expect(entry.renderReference()).toContain(`issue-intake.yml@${DEFAULT_HARNESS_WORKFLOW_REF}`);
   });
 

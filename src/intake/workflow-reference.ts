@@ -20,6 +20,10 @@ on:
   issues:
     types: [opened, edited]
 
+concurrency:
+  group: harness-issue-intake-\${{ github.repository }}-\${{ github.event.issue.number }}
+  cancel-in-progress: false
+
 permissions:
   contents: read
   issues: write

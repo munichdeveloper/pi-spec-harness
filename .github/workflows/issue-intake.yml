@@ -32,18 +32,19 @@ jobs:
           ISSUE_TITLE: ${{ inputs.issue-title }}
           ISSUE_BODY: ${{ inputs.issue-body }}
         run: |
+          title="$(printf '%s' "$ISSUE_TITLE" | tr '[:upper:]' '[:lower:]')"
           text="$(printf '%s\n%s' "$ISSUE_TITLE" "$ISSUE_BODY" | tr '[:upper:]' '[:lower:]')"
           kind="incomplete"
           label="intake:needs-information"
-          if [[ "$text" =~ spec-[0-9]+ ]] || [[ "$text" =~ (^|[[:space:]])spec(ifikation)?([:[:space:]]|$) ]]; then
+          if [[ "$title" =~ ^[[:space:]]*(\[[^]]*\][[:space:]]*)?spec-[0-9]+([:[:space:]]|$) ]] || [[ "$title" =~ ^[[:space:]]*software[[:space:]]+spec(ifikation)?([:[:space:]]|$) ]]; then
             kind="spec"
             label="type:spec"
-          elif [[ "$text" =~ (^|[[:space:]])spike([:[:space:]]|$) ]] || [[ "$text" == *"untersuchen"* ]]; then
-            kind="spike"
-            label="type:spike"
           elif [[ "$text" == *"bug"* ]] || [[ "$text" == *"fehler"* ]] || [[ "$text" == *"funktioniert nicht"* ]]; then
             kind="bug"
             label="type:bug"
+          elif [[ "$text" =~ (^|[[:space:]])spike([:[:space:]]|$) ]] || [[ "$text" == *"untersuchen"* ]]; then
+            kind="spike"
+            label="type:spike"
           elif [[ "$text" =~ req-[0-9]+ ]] || [[ "$text" == *"anforderung"* ]] || [[ "$text" == *"ich möchte"* ]] || [[ "$text" == *"ich moechte"* ]]; then
             kind="requirement"
             label="type:requirement"
