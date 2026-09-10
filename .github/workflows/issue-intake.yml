@@ -1,0 +1,95 @@
+name: Harness Issue Intake Reusable
+
+on:
+  workflow_call:
+    inputs:
+      issue-number:
+        required: true
+        type: number
+      issue-title:
+        required: true
+        type: string
+      issue-body:
+        required: false
+        type: string
+        default: ""
+      harness-ref:
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  intake:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Classify untrusted issue text without write credentials
+        id: classify
+        shell: bash
+        env:
+          ISSUE_TITLE: ${{ inputs.issue-title }}
+          ISSUE_BODY: ${{ inputs.issue-body }}
+        run: |
+          text="$(printf '%s\n%s' "$ISSUE_TITLE" "$ISSUE_BODY" | tr '[:upper:]' '[:lower:]')"
+          kind="incomplete"
+          label="intake:needs-information"
+          if [[ "$text" =~ spec-[0-9]+ ]] || [[ "$text" =~ (^|[[:space:]])spec(ifikation)?([:[:space:]]|$) ]]; then
+            kind="spec"
+            label="type:spec"
+          elif [[ "$text" =~ (^|[[:space:]])spike([:[:space:]]|$) ]] || [[ "$text" == *"untersuchen"* ]]; then
+            kind="spike"
+            label="type:spike"
+          elif [[ "$text" == *"bug"* ]] || [[ "$text" == *"fehler"* ]] || [[ "$text" == *"funktioniert nicht"* ]]; then
+            kind="bug"
+            label="type:bug"
+          elif [[ "$text" =~ req-[0-9]+ ]] || [[ "$text" == *"anforderung"* ]] || [[ "$text" == *"ich möchte"* ]] || [[ "$text" == *"ich moechte"* ]]; then
+            kind="requirement"
+            label="type:requirement"
+          fi
+          echo "kind=$kind" >> "$GITHUB_OUTPUT"
+          echo "label=$label" >> "$GITHUB_OUTPUT"
+
+      - name: Persist one idempotent intake result
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE_NUMBER: ${{ inputs.issue-number }}
+          ISSUE_TITLE: ${{ inputs.issue-title }}
+          KIND: ${{ steps.classify.outputs.kind }}
+          CLASSIFICATION_LABEL: ${{ steps.classify.outputs.label }}
+        run: |
+          marker='<!-- pi-spec-harness:issue-intake:v1 -->'
+          comment_id="$(gh api "repos/${GITHUB_REPOSITORY}/issues/${ISSUE_NUMBER}/comments" --paginate \
+            --jq '.[] | select(.body | contains("pi-spec-harness:issue-intake:v1")) | .id' | head -n 1)"
+
+          gh label create "$CLASSIFICATION_LABEL" --repo "$GITHUB_REPOSITORY" \
+            --color "1d76db" --description "Automatically derived by the Harness intake" --force
+          current_labels="$(gh issue view "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --json labels --jq '.labels[].name')"
+          for stale in type:bug type:requirement type:spec type:spike intake:needs-information; do
+            if [[ "$stale" != "$CLASSIFICATION_LABEL" ]] && printf '%s\n' "$current_labels" | grep -Fxq "$stale"; then
+              gh issue edit "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --remove-label "$stale"
+            fi
+          done
+          gh issue edit "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --add-label "$CLASSIFICATION_LABEL"
+
+          if [[ "$KIND" == "incomplete" ]]; then
+            body="$marker
+          Installation ist erreichbar, aber das Anliegen ist noch nicht eindeutig ausführbar.
+
+          Bitte ergänze Ziel, beobachtetes oder gewünschtes Verhalten und ein prüfbares Ergebnis. Danach bewertet der Intake denselben Vorgang erneut; es wird kein zweiter Prozess angelegt."
+          else
+            body="$marker
+          Das Anliegen wurde als **$KIND** eingeordnet.
+
+          **Zusammenfassung:** $ISSUE_TITLE
+
+          Vor einer schreibenden Umsetzung ist genau eine inhaltliche Freigabe über die dafür vorgesehene GitHub-Freigabeaktion erforderlich. Technische Labels, Workflow-Namen und Zugangsdaten musst du dafür nicht kennen."
+          fi
+          if [[ -n "$comment_id" ]]; then
+            jq -n --arg body "$body" '{body:$body}' | gh api --method PATCH \
+              "repos/${GITHUB_REPOSITORY}/issues/comments/${comment_id}" --input - >/dev/null
+          else
+            gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --body "$body"
+          fi

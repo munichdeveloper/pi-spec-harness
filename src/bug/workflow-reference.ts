@@ -36,14 +36,24 @@ concurrency:
   group: harness-bug-triage-\${{ github.repository }}-\${{ github.event.issue.number }}
   cancel-in-progress: false
 
+# The called workflow cannot elevate the caller token. Keep this contract in
+# sync with .github/workflows/bug-triage.yml so GitHub rejects neither workflow
+# before runner assignment.
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+  id-token: write
+
 jobs:
   triage:
     if: >-
       github.event_name == 'issues' &&
-      ((github.event.action == 'opened' &&
-        (github.event.issue.type.name == 'Bug' || contains(github.event.issue.labels.*.name, 'type:bug'))) ||
-       (github.event.action == 'typed' && github.event.issue.type.name == 'Bug') ||
-       (github.event.action == 'labeled' && github.event.label.name == 'type:bug'))
+      contains(github.event.issue.labels.*.name, 'harness:approved-for-agent') &&
+      (github.event.issue.type.name == 'Bug' || contains(github.event.issue.labels.*.name, 'type:bug')) &&
+      (github.event.action == 'opened' || github.event.action == 'typed' ||
+       (github.event.action == 'labeled' &&
+        (github.event.label.name == 'type:bug' || github.event.label.name == 'harness:approved-for-agent')))
     uses: ${reusableRepository}/.github/workflows/bug-triage.yml@${harnessRef}
     with:
       issue-number: ${issueNumber}

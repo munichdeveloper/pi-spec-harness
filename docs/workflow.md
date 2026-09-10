@@ -129,6 +129,7 @@ Verfügbare Vorlagennamen (für `--install-workflows <name>[,<name>...]`):
 | Name | Referenzdatei im Zielrepo | Reusable Workflow (Harness-Repo) |
 |---|---|---|
 | `bug-triage` | `.github/workflows/harness-bug-triage.yml` | `.github/workflows/bug-triage.yml` |
+| `issue-intake` | `.github/workflows/harness-issue-intake.yml` | `.github/workflows/issue-intake.yml` |
 | `spec-to-issue` | `.github/workflows/harness-spec-to-issue.yml` | `.github/workflows/spec-to-issue.yml` |
 | `label-approval-bundling` | `.github/workflows/harness-label-approval-bundling.yml` | `.github/workflows/label-approval-bundling.yml` |
 | `review-fix` | `.github/workflows/harness-review-fix.yml` | `.github/workflows/review-fix.yml` |
@@ -172,6 +173,14 @@ kombinieren, ohne dass `bug-triage` doppelt geschrieben wird. Jede
 Installation erkennt `create` / `noop` / `update-managed` / `conflict`; ein
 `conflict` schreibt keine Datei und wird im CLI-Ergebnis unter
 `result.conflicts[]` sichtbar gemacht.
+
+Agentenfähige Installationen ergänzen automatisch `issue-intake` und
+`capability-smoke`. Der Intake reagiert auf neue oder fachlich überarbeitete
+Issues, klassifiziert konservativ und hinterlegt genau eine aktualisierbare
+Rückmeldung. Unvollständige Anliegen starten keine schreibende Umsetzung.
+Auch erkannte Bugs werden erst nach der einmaligen inhaltlichen Freigabe an
+den Coding-Agenten übergeben. Der normale Anwender muss dafür keine internen
+Labels, Workflow-Namen oder Provider-Credentials kennen.
 
 ## Reaktive Spec-zu-Issue-Pipeline und Freigabe-Label-Bündelung (SPEC-007)
 

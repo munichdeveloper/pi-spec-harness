@@ -15,6 +15,13 @@ import {
   renderCapabilityCallerReference,
   type CapabilityCallerOptions,
 } from "../capability/capability-caller.js";
+import {
+  DEFAULT_ISSUE_INTAKE_WORKFLOW_REF,
+  ISSUE_INTAKE_REFERENCE_MARKER,
+  ISSUE_INTAKE_REFERENCE_PATH,
+  renderIssueIntakeReference,
+  type IssueIntakeReferenceOptions,
+} from "../intake/workflow-reference.js";
 
 export type { WorkflowInstallDecision } from "./install-decision.js";
 export { decideWorkflowInstall } from "./install-decision.js";
@@ -336,6 +343,11 @@ permissions:
 
 jobs:
   finalize:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'issues' &&
+       github.event.label.name == 'harness:run' &&
+       contains(github.event.issue.labels.*.name, 'harness:run'))
     uses: ${reusableRepository}/.github/workflows/run-documentation-finalizer.yml@${harnessRef}
     with:
       harness-ref: '${harnessRef}'
@@ -428,6 +440,14 @@ jobs:
 }
 
 export const WORKFLOW_TEMPLATE_CATALOG: WorkflowTemplateDefinition[] = [
+  {
+    name: "issue-intake",
+    targetPath: ISSUE_INTAKE_REFERENCE_PATH,
+    marker: ISSUE_INTAKE_REFERENCE_MARKER,
+    reusableWorkflowRepoPath: ".github/workflows/issue-intake.yml",
+    defaultRef: DEFAULT_ISSUE_INTAKE_WORKFLOW_REF,
+    renderReference: (options) => renderIssueIntakeReference(options as IssueIntakeReferenceOptions | undefined),
+  },
   {
     name: "bug-triage",
     targetPath: BUG_WORKFLOW_REFERENCE_PATH,
@@ -526,8 +546,17 @@ export function resolveWorkflowInstallPlan(options: { installBugWorkflow?: boole
     }
   }
 
-  if (options.installBugWorkflow) {
-    return [...new Set(["bug-triage", ...requested])];
+  const plan = options.installBugWorkflow
+    ? [...new Set(["bug-triage", ...requested])]
+    : requested;
+
+  // SPEC-017: an agent-enabled installation must never omit its executable
+  // capability attestation. The smoke is an installation invariant, not an
+  // expert-only optional extra. Secret-free or observer-only operation must be
+  // selected explicitly in a future installation manifest rather than inferred
+  // from a missing workflow/credential.
+  if (plan.some((name) => name === "bug-triage" || name === "requirement-to-spec" || name === "review-fix")) {
+    return [...new Set([...plan, "issue-intake", "capability-smoke"])];
   }
-  return requested;
+  return plan;
 }

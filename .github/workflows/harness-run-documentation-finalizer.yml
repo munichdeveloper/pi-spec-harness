@@ -18,6 +18,11 @@ permissions:
 
 jobs:
   finalize:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'issues' &&
+       github.event.label.name == 'harness:run' &&
+       contains(github.event.issue.labels.*.name, 'harness:run'))
     # The harness repository calls its own reusable workflow locally. Remote
     # same-repository SHA calls failed before runner assignment (issue #96),
     # while consumer repositories continue to use the immutable remote template.
@@ -25,7 +30,7 @@ jobs:
     # deadlock on the same non-cancelling concurrency key (issue #96).
     uses: ./.github/workflows/run-documentation-finalizer.yml
     with:
-      harness-ref: '402289e68f558a76ab62078b11f90a5e3d947416'
+      harness-ref: '4353fa758e1f41c30b9a73116b2becf0c3a33f51'
       default-branch: 'main'
       generated-directory: 'docs/runs/generated'
       index-path: 'docs/runs/RUN-INDEX.md'

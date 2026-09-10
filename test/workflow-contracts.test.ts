@@ -174,8 +174,8 @@ describe("GitHub workflow contracts", () => {
     expect(helper).toContain("types: [opened, typed, labeled]");
     expect(helper).toContain("github.event.action == 'opened'");
     expect(helper).toContain("contains(github.event.issue.labels.*.name, 'type:bug')");
-    expect(helper).toContain("github.event.action == 'typed' && github.event.issue.type.name == 'Bug'");
-    expect(helper).toContain("github.event.action == 'labeled' && github.event.label.name == 'type:bug'");
+    expect(helper).toContain("github.event.action == 'typed'");
+    expect(helper).toContain("github.event.label.name == 'type:bug' || github.event.label.name == 'harness:approved-for-agent'");
     expect(helper).toContain("cancel-in-progress: false");
     expect(helper).toContain("/.github/workflows/bug-triage.yml@");
   });
@@ -339,6 +339,26 @@ describe("SPEC-010 capability-smoke reusable workflow contracts", () => {
     expect(callBlock).toContain("CLAUDE_CODE_OAUTH_TOKEN:");
   });
 
+  it("SPEC-017: approval bundling derives coordinates from a SPEC title and never silently skips intake", async () => {
+    const workflow = await readFile(".github/workflows/label-approval-bundling.yml", "utf8");
+    expect(workflow).toContain("title=\"$(jq -r '.issue.title // \"\"'");
+    expect(workflow).toContain("requirement=\"REQ-${BASH_REMATCH[1]}\"");
+    expect(workflow).toContain("Explain an incomplete intake in user language");
+    expect(workflow).toContain("Es sind keine weiteren technischen Labels erforderlich");
+    expect(workflow).toContain("steps.refs.outputs.ready == 'true'");
+  });
+
+  it("SPEC-017: issue intake is conservative, idempotent, and does not expose internal approval instructions", async () => {
+    const workflow = await readFile(".github/workflows/issue-intake.yml", "utf8");
+    expect(workflow).toContain("Classify untrusted issue text without write credentials");
+    expect(workflow).toContain("kind=\"incomplete\"");
+    expect(workflow).toContain("pi-spec-harness:issue-intake:v1");
+    expect(workflow).toContain("issues/comments/${comment_id}");
+    expect(workflow).toContain("Technische Labels, Workflow-Namen und Zugangsdaten musst du dafür nicht kennen");
+    expect(workflow).not.toContain("setze Label");
+    expect(workflow).not.toContain("ANTHROPIC_API_KEY");
+  });
+
   it("TAC-12/TAC-09: thin caller template declares workflow_call, workflow_dispatch, and push triggers", async () => {
     const { renderCapabilityCallerReference } = await import("../src/capability/capability-caller.js");
     const caller = renderCapabilityCallerReference();
@@ -346,8 +366,15 @@ describe("SPEC-010 capability-smoke reusable workflow contracts", () => {
     expect(caller).toContain("workflow_dispatch:");
     expect(caller).toContain("push:");
     expect(caller).toContain("harness-capability-smoke.yml");
+    expect(caller).toContain("harness-requirement-to-spec.yml");
+    expect(caller).toContain("harness-run-documentation-finalizer.yml");
     expect(caller).toContain("harness-bug-triage.yml");
     expect(caller).toContain("secrets: inherit");
+    expect(caller).toContain("installation-preflight:");
+    expect(caller).toContain("installed-but-not-ready");
+    expect(caller).toContain("needs: installation-preflight");
+    expect(caller).toContain("harness:approved-for-agent");
+    expect(caller).toContain("@[0-9a-f]{40}$");
   });
 
   it("TAC-09: push only bridges default-branch changes to a supported workflow_dispatch", async () => {
@@ -418,6 +445,7 @@ describe("SPEC-010 capability-smoke reusable workflow contracts", () => {
     // Reusable workflow permissions are intersected with the caller permissions.
     expect(caller).toContain("actions: write");
     expect(caller).toContain("id-token: write");
+    expect(caller).toContain("issues: read");
     expect(caller).not.toContain("actions: read");
     expect(caller).not.toContain("contents: write");
     expect(caller).not.toContain("issues: write");
