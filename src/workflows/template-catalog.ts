@@ -540,7 +540,7 @@ export function resolveWorkflowInstallPlan(options: { installBugWorkflow?: boole
   // expert-only optional extra. Secret-free or observer-only operation must be
   // selected explicitly in a future installation manifest rather than inferred
   // from a missing workflow/credential.
-  if (plan.some((name) => name === "bug-triage" || name === "requirement-to-spec")) {
+  if (plan.some((name) => name === "bug-triage" || name === "requirement-to-spec" || name === "review-fix")) {
     return [...new Set([...plan, "capability-smoke"])];
   }
   return plan;

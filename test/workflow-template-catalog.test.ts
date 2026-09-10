@@ -219,6 +219,10 @@ describe("resolveWorkflowInstallPlan (TAC-04/TAC-07)", () => {
       "requirement-to-spec",
       "capability-smoke",
     ]);
+    expect(resolveWorkflowInstallPlan({ installWorkflows: "review-fix" })).toEqual([
+      "review-fix",
+      "capability-smoke",
+    ]);
   });
 
   it("SPEC-017: does not infer an agent requirement for provider-independent workflows", () => {
