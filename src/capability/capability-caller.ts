@@ -31,6 +31,7 @@ export function renderCapabilityCallerReference(options: CapabilityCallerOptions
   const watchedPaths = options.watchedPaths ?? [
     ".github/workflows/harness-capability-smoke.yml",
     ".github/workflows/harness-bug-triage.yml",
+    ".github/workflows/harness-issue-intake.yml",
     ".github/workflows/harness-requirement-to-spec.yml",
     ".github/workflows/harness-label-approval-bundling.yml",
     ".github/workflows/harness-review-fix.yml",
@@ -99,6 +100,7 @@ jobs:
           default_branch="\${{ github.event.repository.default_branch }}"
           agent_workflows=(
             harness-bug-triage.yml
+            harness-issue-intake.yml
             harness-requirement-to-spec.yml
             harness-review-fix.yml
           )

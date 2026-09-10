@@ -49,10 +49,11 @@ jobs:
   triage:
     if: >-
       github.event_name == 'issues' &&
-      ((github.event.action == 'opened' &&
-        (github.event.issue.type.name == 'Bug' || contains(github.event.issue.labels.*.name, 'type:bug'))) ||
-       (github.event.action == 'typed' && github.event.issue.type.name == 'Bug') ||
-       (github.event.action == 'labeled' && github.event.label.name == 'type:bug'))
+      contains(github.event.issue.labels.*.name, 'harness:approved-for-agent') &&
+      (github.event.issue.type.name == 'Bug' || contains(github.event.issue.labels.*.name, 'type:bug')) &&
+      (github.event.action == 'opened' || github.event.action == 'typed' ||
+       (github.event.action == 'labeled' &&
+        (github.event.label.name == 'type:bug' || github.event.label.name == 'harness:approved-for-agent')))
     uses: ${reusableRepository}/.github/workflows/bug-triage.yml@${harnessRef}
     with:
       issue-number: ${issueNumber}

@@ -174,8 +174,8 @@ describe("GitHub workflow contracts", () => {
     expect(helper).toContain("types: [opened, typed, labeled]");
     expect(helper).toContain("github.event.action == 'opened'");
     expect(helper).toContain("contains(github.event.issue.labels.*.name, 'type:bug')");
-    expect(helper).toContain("github.event.action == 'typed' && github.event.issue.type.name == 'Bug'");
-    expect(helper).toContain("github.event.action == 'labeled' && github.event.label.name == 'type:bug'");
+    expect(helper).toContain("github.event.action == 'typed'");
+    expect(helper).toContain("github.event.label.name == 'type:bug' || github.event.label.name == 'harness:approved-for-agent'");
     expect(helper).toContain("cancel-in-progress: false");
     expect(helper).toContain("/.github/workflows/bug-triage.yml@");
   });
@@ -346,6 +346,17 @@ describe("SPEC-010 capability-smoke reusable workflow contracts", () => {
     expect(workflow).toContain("Explain an incomplete intake in user language");
     expect(workflow).toContain("Es sind keine weiteren technischen Labels erforderlich");
     expect(workflow).toContain("steps.refs.outputs.ready == 'true'");
+  });
+
+  it("SPEC-017: issue intake is conservative, idempotent, and does not expose internal approval instructions", async () => {
+    const workflow = await readFile(".github/workflows/issue-intake.yml", "utf8");
+    expect(workflow).toContain("Classify untrusted issue text without write credentials");
+    expect(workflow).toContain("kind=\"incomplete\"");
+    expect(workflow).toContain("pi-spec-harness:issue-intake:v1");
+    expect(workflow).toContain("issues/comments/${comment_id}");
+    expect(workflow).toContain("Technische Labels, Workflow-Namen und Zugangsdaten musst du dafür nicht kennen");
+    expect(workflow).not.toContain("setze Label");
+    expect(workflow).not.toContain("ANTHROPIC_API_KEY");
   });
 
   it("TAC-12/TAC-09: thin caller template declares workflow_call, workflow_dispatch, and push triggers", async () => {

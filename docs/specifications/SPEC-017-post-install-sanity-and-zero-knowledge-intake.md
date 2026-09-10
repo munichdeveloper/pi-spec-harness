@@ -38,6 +38,13 @@ ausfuehrbar ist; andernfalls lautet er `installed-but-not-ready`.
   verlangt.
 - Der Run-Dokumentations-Finalizer verarbeitet Label-Events nur fuer echte
   `harness:run`-Issues.
+- Der verwaltete `issue-intake` reagiert auf `issues.opened` und
+  `issues.edited`, klassifiziert untrusted Titel-/Body-Daten ohne
+  Schreib-Credential im Klassifikationsschritt und persistiert genau einen
+  aktualisierbaren Intake-Kommentar.
+- Eine automatisch gesetzte Bug-Klassifikation allein startet keinen
+  Coding-Agenten. Der Bug-Caller verlangt zusaetzlich die einmalige gebundene
+  inhaltliche Freigabe.
 - Der Bug-Triage-Caller gewaehrt explizit die vom Reusable benoetigten Rechte,
   damit Berechtigungsfehler nicht erst als `startup_failure` sichtbar werden.
 
@@ -57,4 +64,3 @@ ausfuehrbar ist; andernfalls lautet er `installed-but-not-ready`.
 7. Der Happy Path verlangt hoechstens eine inhaltliche Freigabe.
 8. Normale Issue-Labels starten keinen Run-Dokumentations-Finalizer.
 9. Die in dsb-new beobachtete Blockerkette ist durch Regressionstests gedeckt.
-

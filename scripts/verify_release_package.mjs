@@ -29,9 +29,9 @@ if (release.HARNESS_VERSION !== packageJson.version) {
     `release smoke failed: catalog version ${release.HARNESS_VERSION} does not match package ${packageJson.version}`,
   );
 }
-if (catalog.WORKFLOW_TEMPLATE_CATALOG.length !== 8) {
+if (catalog.WORKFLOW_TEMPLATE_CATALOG.length !== 9) {
   throw new Error(
-    `release smoke failed: expected 8 workflow templates, got ${catalog.WORKFLOW_TEMPLATE_CATALOG.length}`,
+    `release smoke failed: expected 9 workflow templates, got ${catalog.WORKFLOW_TEMPLATE_CATALOG.length}`,
   );
 }
 if (!/^[a-f0-9]{40}$/.test(release.DEFAULT_HARNESS_WORKFLOW_REF)) {

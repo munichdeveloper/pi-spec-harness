@@ -32,6 +32,11 @@ import {
 } from "../src/workflows/template-catalog.js";
 import { decideWorkflowInstall } from "../src/workflows/install-decision.js";
 import { DEFAULT_HARNESS_WORKFLOW_REF, HARNESS_VERSION } from "../src/release.js";
+import {
+  ISSUE_INTAKE_REFERENCE_MARKER,
+  ISSUE_INTAKE_REFERENCE_PATH,
+  renderIssueIntakeReference,
+} from "../src/intake/workflow-reference.js";
 
 describe("WORKFLOW_TEMPLATE_CATALOG", () => {
   it("uses the package-supported Node 20.19 runtime in every shipped workflow", () => {
@@ -213,16 +218,28 @@ describe("resolveWorkflowInstallPlan (TAC-04/TAC-07)", () => {
   it("SPEC-017: automatically includes capability smoke for every agent-enabled installation", () => {
     expect(resolveWorkflowInstallPlan({ installWorkflows: "bug-triage" })).toEqual([
       "bug-triage",
+      "issue-intake",
       "capability-smoke",
     ]);
     expect(resolveWorkflowInstallPlan({ installWorkflows: "requirement-to-spec" })).toEqual([
       "requirement-to-spec",
+      "issue-intake",
       "capability-smoke",
     ]);
     expect(resolveWorkflowInstallPlan({ installWorkflows: "review-fix" })).toEqual([
       "review-fix",
+      "issue-intake",
       "capability-smoke",
     ]);
+  });
+
+  it("SPEC-017: installs a zero-knowledge issue intake for agent-enabled plans", () => {
+    const entry = findWorkflowTemplate("issue-intake")!;
+    expect(entry.targetPath).toBe(ISSUE_INTAKE_REFERENCE_PATH);
+    expect(entry.marker).toBe(ISSUE_INTAKE_REFERENCE_MARKER);
+    expect(entry.renderReference()).toBe(renderIssueIntakeReference());
+    expect(entry.renderReference()).toContain("types: [opened, edited]");
+    expect(entry.renderReference()).toContain(`issue-intake.yml@${DEFAULT_HARNESS_WORKFLOW_REF}`);
   });
 
   it("SPEC-017: does not infer an agent requirement for provider-independent workflows", () => {
@@ -337,6 +354,7 @@ describe("SPEC-014: requirement-to-spec catalog entry", () => {
     expect(() => resolveWorkflowInstallPlan({ installWorkflows: "requirement-to-spec" })).not.toThrow();
     expect(resolveWorkflowInstallPlan({ installWorkflows: "requirement-to-spec" })).toEqual([
       "requirement-to-spec",
+      "issue-intake",
       "capability-smoke",
     ]);
   });
