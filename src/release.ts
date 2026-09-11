@@ -20,5 +20,5 @@ export const DEFAULT_HARNESS_WORKFLOW_REF = "a14f1702f4f77fd2eadbc351b1a228e0982
  * An empty map is the normal/released state.
  */
 export const PENDING_REUSABLE_WORKFLOW_SHA256: Readonly<Record<string, string>> = Object.freeze({
-  ".github/workflows/requirement-to-spec.yml": "09b1422d0807d22ba68e5e471d97d59d87a9329036c8a0118c798cca8df067a0",
+  ".github/workflows/requirement-to-spec.yml": "02715d5140073e06c3d5df2e15f7b94ead154396237907ebe35c742ce40e5879",
 });
