@@ -2450,6 +2450,7 @@ async function cmdRequirementToSpecDispatch(argv: {
   provider: SpecGenerationProvider;
   harnessRef: string;
   specOutputDir: string;
+  defaultBranch: string;
 }): Promise<void> {
   // ── 1. Read and parse the requirement file ─────────────────────────────────
   let content: string;
@@ -2647,10 +2648,11 @@ async function cmdRequirementToSpecDispatch(argv: {
           "COPILOT_ASSIGN_PAT is not configured; GitHub App installation tokens cannot assign coding agents",
         );
       }
-      await github.addAssigneesWithCredential(
+      await github.assignCodingAgent(
         argv.repository,
         created.number,
-        ["Copilot"],
+        DEFAULT_CODING_AGENT,
+        argv.defaultBranch,
         assignmentCredential,
       );
     } catch (err) {
@@ -2659,7 +2661,7 @@ async function cmdRequirementToSpecDispatch(argv: {
     // Read-after-write verification via pollForAgentAssignment.
     const verification = await pollForAgentAssignment(
       () => github.viewIssue(argv.repository, created.number),
-      "Copilot",
+      DEFAULT_CODING_AGENT,
       { attempts: 4, delayMs: 2000 },
     );
     if (!verification.assigned) {
@@ -4131,6 +4133,7 @@ const _harnessCli = yargs(hideBin(process.argv))
         .option("source-sha", { type: "string", demandOption: true, describe: "40-character commit SHA of the push that introduced/modified the requirement" })
         .option("provider", { type: "string", choices: ["github-copilot", "claude-code"] as const, default: "github-copilot", describe: "Spec-generation agent provider" })
         .option("harness-ref", { type: "string", default: "main", describe: "Pinned harness ref embedded in the generated prompt for traceability" })
+        .option("default-branch", { type: "string", default: "main", describe: "Base branch supplied to the coding-agent assignment" })
         .option("spec-output-dir", { type: "string", default: "docs/specifications", describe: "Repo-relative directory for the generated spec" }),
     async (argv) =>
       cmdRequirementToSpecDispatch({
@@ -4140,6 +4143,7 @@ const _harnessCli = yargs(hideBin(process.argv))
         provider: argv.provider as SpecGenerationProvider,
         harnessRef: argv["harness-ref"] as string,
         specOutputDir: argv["spec-output-dir"] as string,
+        defaultBranch: argv["default-branch"] as string,
       }),
   )
   .command(
