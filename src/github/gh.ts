@@ -68,9 +68,12 @@ export function buildMergePullRequestArgs(
   ];
 }
 
-async function runGh(args: string[]): Promise<string> {
+async function runGh(args: string[], credential?: string): Promise<string> {
   try {
-    const { stdout } = await execFile("gh", args, { maxBuffer: 20 * 1024 * 1024 });
+    const { stdout } = await execFile("gh", args, {
+      maxBuffer: 20 * 1024 * 1024,
+      env: credential ? { ...process.env, GH_TOKEN: credential } : process.env,
+    });
     return stdout;
   } catch (err) {
     const e = err as { stderr?: string; message: string };
@@ -486,6 +489,21 @@ export const github = {
   async addAssignees(repository: string, number: number, assignees: string[]): Promise<void> {
     if (assignees.length === 0) return;
     await runGh(["issue", "edit", String(number), "--repo", repository, ...assignees.flatMap((a) => ["--add-assignee", a])]);
+  },
+
+  /** Assign through a dedicated user/OAuth identity without widening the
+   * credential used by the surrounding orchestration commands. */
+  async addAssigneesWithCredential(
+    repository: string,
+    number: number,
+    assignees: string[],
+    credential: string,
+  ): Promise<void> {
+    if (assignees.length === 0) return;
+    await runGh(
+      ["issue", "edit", String(number), "--repo", repository, ...assignees.flatMap((a) => ["--add-assignee", a])],
+      credential,
+    );
   },
 
   async closeIssue(repository: string, number: number, comment?: string): Promise<void> {

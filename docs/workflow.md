@@ -151,6 +151,16 @@ bei `harness init` über `--requirement-path-glob` und
 `--requirement-path-glob 'docs/20-requirements/**/*.md' --requirement-spec-output-dir 'docs/30-specifications'`.
 Das Zielverzeichnis muss repo-relativ und frei von Traversal-Segmenten sein.
 
+Für den Provider `github-copilot` muss das Zielrepository das Secret
+`COPILOT_ASSIGN_PAT` enthalten. GitHub akzeptiert für die Zuweisung eines
+Coding Agents ausschließlich eine Benutzer- oder OAuth-Identität; der
+eingebaute GitHub-App-Token einer Action reicht dafür nicht aus. Der
+installierte Caller reicht ausschließlich dieses benannte Secret weiter und
+niemals pauschal alle Repository-Secrets. Ein vor der bestätigten Zuweisung
+fehlgeschlagener Transport bleibt unter derselben Dispatch-ID und demselben
+Auftrags-Issue retrybar; bestätigte Zustellungen und PR-Effekte werden weiter
+idempotent unterdrückt.
+
 Für öffentliche Repositories mit geschütztem Default-Branch kann der
 `process-audit-receiver` über `--audit-writer-auth-mode github-app` eine
 dedizierte, repository-begrenzte Audit-App verwenden. Der generische

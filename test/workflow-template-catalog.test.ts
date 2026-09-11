@@ -371,6 +371,7 @@ describe("SPEC-014: requirement-to-spec catalog entry", () => {
     expect(rendered).toContain("docs/requirements/**/*.md");
     expect(rendered).toContain("spec-output-dir: 'docs/specifications'");
     expect(rendered).toContain(`requirement-to-spec.yml@${DEFAULT_REQUIREMENT_TO_SPEC_WORKFLOW_REF}`);
+    expect(rendered).toContain("COPILOT_ASSIGN_PAT: ${{ secrets.COPILOT_ASSIGN_PAT }}");
     expect(rendered).toContain(`harness-ref: '${DEFAULT_REQUIREMENT_TO_SPEC_WORKFLOW_REF}'`);
     expect(rendered).toContain("provider: 'github-copilot'");
   });
