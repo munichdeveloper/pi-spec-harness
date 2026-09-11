@@ -30,7 +30,7 @@ jobs:
     # deadlock on the same non-cancelling concurrency key (issue #96).
     uses: ./.github/workflows/run-documentation-finalizer.yml
     with:
-      harness-ref: 'a14f1702f4f77fd2eadbc351b1a228e0982ebe9f'
+      harness-ref: '63ac8761688df794168fd2f2ad9bb4aa8a87bc80'
       default-branch: 'main'
       generated-directory: 'docs/runs/generated'
       index-path: 'docs/runs/RUN-INDEX.md'
