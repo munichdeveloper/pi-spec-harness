@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
@@ -44,9 +45,30 @@ for (const entry of catalog.WORKFLOW_TEMPLATE_CATALOG) {
   const pinnedWorkflow = run("git", ["show", `${release.DEFAULT_HARNESS_WORKFLOW_REF}:${entry.reusableWorkflowRepoPath}`]);
   const candidateWorkflow = run("git", ["show", `HEAD:${entry.reusableWorkflowRepoPath}`]);
   if (pinnedWorkflow !== candidateWorkflow) {
+    const expectedDigest = release.PENDING_REUSABLE_WORKFLOW_SHA256?.[entry.reusableWorkflowRepoPath];
+    const actualDigest = createHash("sha256").update(candidateWorkflow).digest("hex");
+    if (expectedDigest === actualDigest) {
+      continue;
+    }
     throw new Error(
-      `release smoke failed: ${entry.reusableWorkflowRepoPath} differs between default pin ${release.DEFAULT_HARNESS_WORKFLOW_REF} and release candidate`,
+      `release smoke failed: ${entry.reusableWorkflowRepoPath} differs between default pin ${release.DEFAULT_HARNESS_WORKFLOW_REF} and release candidate without an exact pending SHA-256 declaration`,
     );
+  }
+}
+
+for (const path of Object.keys(release.PENDING_REUSABLE_WORKFLOW_SHA256 ?? {})) {
+  const entry = catalog.WORKFLOW_TEMPLATE_CATALOG.find((candidate) => candidate.reusableWorkflowRepoPath === path);
+  if (!entry) {
+    throw new Error(`release smoke failed: pending reusable workflow path is not managed: ${path}`);
+  }
+  const digest = release.PENDING_REUSABLE_WORKFLOW_SHA256[path];
+  if (!/^[a-f0-9]{64}$/.test(digest)) {
+    throw new Error(`release smoke failed: pending reusable workflow digest is not SHA-256: ${path}`);
+  }
+  const pinnedWorkflow = run("git", ["show", `${release.DEFAULT_HARNESS_WORKFLOW_REF}:${path}`]);
+  const candidateWorkflow = run("git", ["show", `HEAD:${path}`]);
+  if (pinnedWorkflow === candidateWorkflow) {
+    throw new Error(`release smoke failed: stale pending reusable workflow declaration: ${path}`);
   }
 }
 
