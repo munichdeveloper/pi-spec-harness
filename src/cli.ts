@@ -2641,7 +2641,18 @@ async function cmdRequirementToSpecDispatch(argv: {
   if (argv.provider === "github-copilot") {
     // Assign @github-copilot and verify read-after-write (SPEC-014 TAC-04).
     try {
-      await github.addAssignees(argv.repository, created.number, ["Copilot"]);
+      const assignmentCredential = process.env.COPILOT_ASSIGN_PAT;
+      if (!assignmentCredential) {
+        return await emitFailure(
+          "COPILOT_ASSIGN_PAT is not configured; GitHub App installation tokens cannot assign coding agents",
+        );
+      }
+      await github.addAssigneesWithCredential(
+        argv.repository,
+        created.number,
+        ["Copilot"],
+        assignmentCredential,
+      );
     } catch (err) {
       await emitFailure(`could not assign @github-copilot to issue #${created.number}: ${String(err)}`);
     }

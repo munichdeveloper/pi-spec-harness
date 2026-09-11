@@ -119,10 +119,10 @@ jobs:
         if: steps.changed.outputs.files != ''
         shell: bash
         env:
-          # GitHub App installation tokens cannot assign coding agents.  Use
-          # the dedicated credential when configured and retain github.token
-          # for providers which do not need a user identity.
-          GITHUB_TOKEN: ${{ secrets.COPILOT_ASSIGN_PAT || github.token }}
+          GITHUB_TOKEN: ${{ github.token }}
+          # Used only by the assignment subprocess. All durable orchestration
+          # continues to use the repository-scoped built-in token.
+          COPILOT_ASSIGN_PAT: ${{ secrets.COPILOT_ASSIGN_PAT }}
           CALLER_REPOSITORY: ${{ github.repository }}
           SOURCE_SHA: ${{ github.sha }}
           PROVIDER: ${{ inputs.provider }}

@@ -367,7 +367,8 @@ describe("SPEC-010 capability-smoke reusable workflow contracts", () => {
   it("recovers missed requirement pushes with explicit glob pathspecs", async () => {
     const workflow = await readFile(".github/workflows/requirement-to-spec.yml", "utf8");
     expect(workflow).toContain("COPILOT_ASSIGN_PAT:");
-    expect(workflow).toContain("secrets.COPILOT_ASSIGN_PAT || github.token");
+    expect(workflow).toContain("GITHUB_TOKEN: ${{ github.token }}");
+    expect(workflow).toContain("COPILOT_ASSIGN_PAT: ${{ secrets.COPILOT_ASSIGN_PAT }}");
     expect(workflow).toContain('":(glob)$glob"');
     expect(workflow).toContain("git ls-files");
     expect(workflow).toContain("github.event_name == 'schedule'");
