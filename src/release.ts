@@ -9,7 +9,7 @@
  * future tags, or older incomplete releases.
  */
 export const HARNESS_VERSION = "0.4.3";
-export const DEFAULT_HARNESS_WORKFLOW_REF = "0dcce1129af2fd2f3a76259f87463c8714228062";
+export const DEFAULT_HARNESS_WORKFLOW_REF = "c5ef317cfef3889e97b58c586d594d7b954ffc3c";
 
 /**
  * Explicit two-phase bootstrap for reusable-workflow changes.
@@ -19,6 +19,4 @@ export const DEFAULT_HARNESS_WORKFLOW_REF = "0dcce1129af2fd2f3a76259f87463c87142
  * DEFAULT_HARNESS_WORKFLOW_REF to the merged commit and remove the declaration.
  * An empty map is the normal/released state.
  */
-export const PENDING_REUSABLE_WORKFLOW_SHA256: Readonly<Record<string, string>> = Object.freeze({
-  ".github/workflows/requirement-to-spec.yml": "30b348099024d73ea0fb7fa1bdcc983f399701d4b19e19cb5158f7f05b169cd8",
-});
+export const PENDING_REUSABLE_WORKFLOW_SHA256: Readonly<Record<string, string>> = Object.freeze({});
