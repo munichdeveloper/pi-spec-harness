@@ -9,7 +9,7 @@
  * future tags, or older incomplete releases.
  */
 export const HARNESS_VERSION = "0.4.3";
-export const DEFAULT_HARNESS_WORKFLOW_REF = "655570967e5b323c51af77fb6c686a8768a91df8";
+export const DEFAULT_HARNESS_WORKFLOW_REF = "08d7b3bb596b30c2236bc5a6477968b96bae7654";
 
 /**
  * Explicit two-phase bootstrap for reusable-workflow changes.
