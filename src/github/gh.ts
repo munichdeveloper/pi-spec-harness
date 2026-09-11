@@ -128,11 +128,52 @@ export function selectPullRequestByBodyMarker(
   candidates: PullRequestMarkerCandidate[],
   marker: string,
 ): PullRequestMarkerCandidate | undefined {
-  const matches = candidates.filter((candidate) => candidate.body.includes(marker));
+  const matches = candidates.filter((candidate) =>
+    (candidate.state === "OPEN" || candidate.mergedAt !== null || candidate.mergeCommit !== null)
+    && candidate.body.includes(marker));
   if (matches.length > 1) {
     throw new GhError(`multiple pull requests contain immutable marker '${marker}'`);
   }
   return matches[0];
+}
+
+export function selectPullRequestByClosingIssue(
+  candidates: PullRequestMarkerCandidate[],
+  issueNumber: number,
+): PullRequestMarkerCandidate | undefined {
+  const closingReference = new RegExp(
+    `\\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\\s*:?\\s*#${issueNumber}\\b`,
+    "i",
+  );
+  const matches = candidates.filter((candidate) =>
+    (candidate.state === "OPEN" || candidate.mergedAt !== null || candidate.mergeCommit !== null)
+    && closingReference.test(candidate.body));
+  if (matches.length > 1) {
+    throw new GhError(`multiple pull requests close dispatch issue #${issueNumber}`);
+  }
+  return matches[0];
+}
+
+export function parsePullRequestMarkerCandidates(output: string): PullRequestMarkerCandidate[] {
+  const pages = JSON.parse(output) as Array<Array<{
+    number: number;
+    body: string | null;
+    head: { sha: string; ref: string };
+    state: string;
+    merged_at: string | null;
+    merge_commit_sha: string | null;
+    html_url: string;
+  }>>;
+  return pages.flat().map((candidate) => ({
+    number: candidate.number,
+    body: candidate.body ?? "",
+    headRefOid: candidate.head.sha,
+    headRefName: candidate.head.ref,
+    state: candidate.state.toUpperCase(),
+    mergedAt: candidate.merged_at,
+    mergeCommit: candidate.merge_commit_sha ? { oid: candidate.merge_commit_sha } : null,
+    url: candidate.html_url,
+  }));
 }
 
 export function findBlockingStatusChecks(checks: StatusCheckRollupItem[]): string[] {
@@ -857,11 +898,23 @@ export const github = {
     marker: string,
   ): Promise<{ number: number; headRefOid: string; headRefName: string; state: string; mergedAt: string | null; mergeCommit: { oid: string } | null; url: string } | undefined> {
     const out = await runGh([
-      "pr", "list", "--repo", repository,
-      "--state", "all", "--limit", "100",
-      "--json", "number,body,headRefOid,headRefName,state,mergedAt,mergeCommit,url",
+      "api", `repos/${repository}/pulls`, "--method", "GET",
+      "-f", "state=all", "-f", "per_page=100", "--paginate", "--slurp",
     ]);
-    return selectPullRequestByBodyMarker(JSON.parse(out) as PullRequestMarkerCandidate[], marker);
+    return selectPullRequestByBodyMarker(parsePullRequestMarkerCandidates(out), marker);
+  },
+
+  /** Fall back to the dispatch issue's closing reference when a coding agent
+   * does not copy the opaque dispatch key into its PR body. */
+  async findPullRequestByClosingIssue(
+    repository: string,
+    issueNumber: number,
+  ): Promise<PullRequestMarkerCandidate | undefined> {
+    const out = await runGh([
+      "api", `repos/${repository}/pulls`, "--method", "GET",
+      "-f", "state=all", "-f", "per_page=100", "--paginate", "--slurp",
+    ]);
+    return selectPullRequestByClosingIssue(parsePullRequestMarkerCandidates(out), issueNumber);
   },
 
   async listPullRequestChangedPaths(repository: string, pullRequest: number): Promise<string[]> {

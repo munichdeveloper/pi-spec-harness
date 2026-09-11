@@ -2536,6 +2536,7 @@ async function cmdRequirementToSpecDispatch(argv: {
       targetSpecPath: order.targetSpecPath,
       provider: argv.provider,
       branch: order.agentBranch,
+      dispatchIssue: existing.number,
       status: "dispatched",
       requestedAt: nowIso(),
       updatedAt: nowIso(),
@@ -2844,7 +2845,10 @@ async function cmdRequirementToSpecCheck(argv: {
 
   // Poll for a PR on the expected agent branch.
   const pr = await github.findPullRequestByHead(argv.repository, record.branch)
-    ?? await github.findPullRequestByBodyMarker(argv.repository, record.dispatchKey);
+    ?? await github.findPullRequestByBodyMarker(argv.repository, record.dispatchKey)
+    ?? (record.dispatchIssue
+      ? await github.findPullRequestByClosingIssue(argv.repository, record.dispatchIssue)
+      : undefined);
   if (!pr) {
     console.log(
       JSON.stringify({
