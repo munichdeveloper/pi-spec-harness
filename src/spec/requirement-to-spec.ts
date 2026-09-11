@@ -46,8 +46,10 @@ export interface SpecDispatchOrder {
   repository: string;
   /** Source requirement identifier (e.g. "REQ-014"). */
   requirementId: string;
-  /** Commit SHA of the merged requirement document. */
+  /** Git object SHA of the merged requirement document contents. */
   sourceSha: string;
+  /** Commit checked out when the requirement content identity was calculated. */
+  sourceCommitSha?: string;
   /** Absolute path (repo-relative) of the requirement file. */
   requirementPath: string;
   /** Desired output path for the generated spec. */
@@ -160,6 +162,7 @@ export function buildSpecDispatchOrder(opts: {
   repository: string;
   requirementId: string;
   sourceSha: string;
+  sourceCommitSha?: string;
   requirementPath: string;
   targetSpecPath?: string;
   specOutputDir?: string;
@@ -178,6 +181,7 @@ export function buildSpecDispatchOrder(opts: {
     repository: opts.repository,
     requirementId: opts.requirementId,
     sourceSha: opts.sourceSha,
+    sourceCommitSha: opts.sourceCommitSha,
     requirementPath: opts.requirementPath,
     targetSpecPath,
     agentBranch,

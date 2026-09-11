@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 import { readFile } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { runReadinessExecuteCommand } from "./spec/readiness-execute-command.js";
 import { runReadinessReconcileCommand } from "./spec/readiness-reconcile-command.js";
 import { disposeSyntheticReadinessEvidence, type SyntheticReadinessOutcome } from "./spec/readiness-lifecycle.js";
@@ -2447,6 +2449,7 @@ async function cmdRequirementToSpecDispatch(argv: {
   repository: string;
   requirementPath: string;
   sourceSha: string;
+  sourceCommitSha: string;
   provider: SpecGenerationProvider;
   harnessRef: string;
   specOutputDir: string;
@@ -2491,6 +2494,7 @@ async function cmdRequirementToSpecDispatch(argv: {
     repository: argv.repository,
     requirementId: fm.id,
     sourceSha: argv.sourceSha,
+    sourceCommitSha: argv.sourceCommitSha,
     requirementPath: argv.requirementPath,
     specOutputDir: argv.specOutputDir,
     provider: argv.provider,
@@ -2522,6 +2526,83 @@ async function cmdRequirementToSpecDispatch(argv: {
     return;
   }
 
+  // Identity migrations (for example commit SHA -> requirement blob SHA)
+  // adopt an already effective provider PR instead of dispatching a second
+  // agent for the same still-active requirement work.
+  const priorRequirementRecords = storeData.records.filter((candidate) =>
+    candidate.dispatchKey !== order.dispatchKey
+    && candidate.requirementId === fm.id
+    && candidate.provider === argv.provider
+    && candidate.targetSpecPath === order.targetSpecPath
+    && candidate.dispatchIssue !== undefined,
+  );
+  const priorEffects = new Map<number, {
+    record: SpecDispatchRecord;
+    pr: NonNullable<Awaited<ReturnType<typeof github.findPullRequestByHead>>>;
+  }>();
+  const execFileAsync = promisify(execFile);
+  for (const prior of priorRequirementRecords) {
+    // Adoption is a one-time migration from the legacy commit-keyed model.
+    // Prove that the requirement at that commit resolves to the current blob;
+    // otherwise this is either a real content change or ambiguous stale evidence.
+    if (prior.sourceCommitSha !== undefined || !/^[0-9a-f]{40}$/i.test(prior.sourceSha)) {
+      throw new Error(`requirement-to-spec-dispatch: ambiguous prior dispatch identity for '${fm.id}' — refusing duplicate dispatch`);
+    }
+    let priorBlobSha: string;
+    try {
+      const resolved = await execFileAsync("git", ["rev-parse", `${prior.sourceSha}:${argv.requirementPath}`]);
+      priorBlobSha = resolved.stdout.trim();
+    } catch {
+      throw new Error(`requirement-to-spec-dispatch: cannot prove legacy dispatch content identity for '${fm.id}' — refusing duplicate dispatch`);
+    }
+    if (priorBlobSha.toLowerCase() !== argv.sourceSha.toLowerCase()) continue;
+    const pr = await github.findPullRequestByHead(argv.repository, prior.branch)
+      ?? await github.findPullRequestByBodyMarker(argv.repository, prior.dispatchKey)
+      ?? await github.findPullRequestByClosingIssue(argv.repository, prior.dispatchIssue!);
+    if (!pr && prior.status !== "cancelled") {
+      throw new Error(`requirement-to-spec-dispatch: legacy dispatch for '${fm.id}' has no discoverable PR — refusing duplicate dispatch`);
+    }
+    if (pr && pr.state !== "CLOSED") priorEffects.set(pr.number, { record: prior, pr });
+  }
+  if (priorEffects.size > 1) {
+    throw new Error(`requirement-to-spec-dispatch: multiple active provider PRs exist for '${fm.id}'`);
+  }
+  const priorEffect = priorEffects.values().next().value;
+  if (priorEffect) {
+    const merged = priorEffect.pr.state === "MERGED";
+    const adopted: SpecDispatchRecord = {
+      ...priorEffect.record,
+      dispatchKey: order.dispatchKey,
+      sourceSha: argv.sourceSha,
+      sourceCommitSha: argv.sourceCommitSha,
+      branch: priorEffect.pr.headRefName,
+      status: merged ? "pr-merged" : "pr-open",
+      specPullRequest: priorEffect.pr.number,
+      specPrHeadSha: priorEffect.pr.headRefOid,
+      specMergeCommitSha: merged ? priorEffect.pr.mergeCommit?.oid : undefined,
+      specMergedAt: merged ? priorEffect.pr.mergedAt ?? undefined : undefined,
+      updatedAt: nowIso(),
+    };
+    storeData = upsertStoreRecord(storeData, adopted);
+    await specStore.save(storeData, storeIssueNumber);
+    console.log(JSON.stringify({
+      schemaVersion: SCHEMA_VERSION,
+      command: "requirement-to-spec-dispatch",
+      result: {
+        idempotent: true,
+        adopted: true,
+        dispatchKey: order.dispatchKey,
+        previousDispatchKey: priorEffect.record.dispatchKey,
+        requirementId: fm.id,
+        issueNumber: priorEffect.record.dispatchIssue,
+        pullRequest: priorEffect.pr.number,
+        status: adopted.status,
+      },
+      nextAction: "existing provider effect adopted under stable requirement identity — no agent dispatch sent",
+    }, null, 2));
+    return;
+  }
+
   // ── 5. SECONDARY idempotency: dispatch issue-title lookup (crash recovery) ─
   const issueTitle = buildSpecGenIssueTitle(fm.id, order.dispatchKey);
   const existing = await github.findIssueByExactTitle(argv.repository, issueTitle);
@@ -2533,6 +2614,7 @@ async function cmdRequirementToSpecDispatch(argv: {
       dispatchKey: order.dispatchKey,
       requirementId: fm.id,
       sourceSha: argv.sourceSha,
+      sourceCommitSha: argv.sourceCommitSha,
       targetSpecPath: order.targetSpecPath,
       provider: argv.provider,
       branch: order.agentBranch,
@@ -2610,6 +2692,7 @@ async function cmdRequirementToSpecDispatch(argv: {
         requirementId: fm.id,
         targetSpecPath: order.targetSpecPath,
         sourceSha: argv.sourceSha,
+        sourceCommitSha: argv.sourceCommitSha,
         pr: undefined as number | undefined,
         issueNumber: created.number,
         issueUrl: created.url,
@@ -2625,6 +2708,7 @@ async function cmdRequirementToSpecDispatch(argv: {
         dispatchKey: order.dispatchKey,
         requirementId: fm.id,
         sourceSha: argv.sourceSha,
+        sourceCommitSha: argv.sourceCommitSha,
         targetSpecPath: order.targetSpecPath,
         provider: argv.provider,
         branch: order.agentBranch,
@@ -2703,6 +2787,7 @@ async function cmdRequirementToSpecDispatch(argv: {
       dispatchKey: order.dispatchKey,
       requirementId: fm.id,
       sourceSha: argv.sourceSha,
+      sourceCommitSha: argv.sourceCommitSha,
       targetSpecPath: order.targetSpecPath,
       provider: argv.provider,
       branch: order.agentBranch,
@@ -2719,6 +2804,8 @@ async function cmdRequirementToSpecDispatch(argv: {
     dispatched: true,
     dispatchKey: order.dispatchKey,
     requirementId: fm.id,
+    sourceSha: argv.sourceSha,
+    sourceCommitSha: argv.sourceCommitSha,
     provider: argv.provider,
     targetSpecPath: order.targetSpecPath,
     agentBranch: order.agentBranch,
@@ -4142,6 +4229,7 @@ const _harnessCli = yargs(hideBin(process.argv))
         .option("repository", { type: "string", demandOption: true, describe: "Target repository (owner/repo)" })
         .option("requirement-path", { type: "string", demandOption: true, describe: "Repo-relative path to the requirement Markdown file" })
         .option("source-sha", { type: "string", demandOption: true, describe: "40-character commit SHA of the push that introduced/modified the requirement" })
+        .option("source-commit-sha", { type: "string", demandOption: true, describe: "40-character checked-out commit SHA used to resolve the requirement blob" })
         .option("provider", { type: "string", choices: ["github-copilot", "claude-code"] as const, default: "github-copilot", describe: "Spec-generation agent provider" })
         .option("harness-ref", { type: "string", default: "main", describe: "Pinned harness ref embedded in the generated prompt for traceability" })
         .option("default-branch", { type: "string", default: "main", describe: "Base branch supplied to the coding-agent assignment" })
@@ -4151,6 +4239,7 @@ const _harnessCli = yargs(hideBin(process.argv))
         repository: argv.repository as string,
         requirementPath: argv["requirement-path"] as string,
         sourceSha: argv["source-sha"] as string,
+        sourceCommitSha: argv["source-commit-sha"] as string,
         provider: argv.provider as SpecGenerationProvider,
         harnessRef: argv["harness-ref"] as string,
         specOutputDir: argv["spec-output-dir"] as string,
