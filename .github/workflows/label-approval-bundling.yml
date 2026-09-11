@@ -18,7 +18,10 @@ on:
         default: main
 
 permissions:
+  contents: write
   issues: write
+  pull-requests: write
+  checks: read
 
 jobs:
   bundle:
@@ -89,6 +92,17 @@ jobs:
           gh issue comment '${{ github.event.issue.number }}' \
             --repo '${{ github.repository }}' \
             --body "$message"
+
+      - name: Materialize an approved requirement through a protected PR
+        if: steps.refs.outputs.issue_type == 'type:requirement'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        working-directory: .pi-spec-harness
+        run: |
+          npm run harness -- approved-requirement-materialize \
+            --repository '${{ github.repository }}' \
+            --issue-number '${{ github.event.issue.number }}' \
+            --default-branch '${{ github.event.repository.default_branch }}'
 
       - name: Reject an unclassified or incomplete implementation intake
         if: steps.refs.outputs.ready != 'true' && steps.refs.outputs.routed != 'true'

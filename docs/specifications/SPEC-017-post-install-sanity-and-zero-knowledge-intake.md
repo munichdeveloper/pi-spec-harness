@@ -50,6 +50,15 @@ ausfuehrbar ist; andernfalls lautet er `installed-but-not-ready`.
   inhaltliche Freigabe.
 - Der Bug-Triage-Caller gewaehrt explizit die vom Reusable benoetigten Rechte,
   damit Berechtigungsfehler nicht erst als `startup_failure` sichtbar werden.
+- Ein als `type:requirement` klassifiziertes und einmalig freigegebenes Issue
+  wird deterministisch als `docs/requirements/REQ-<Issue>.md` materialisiert.
+  Der Harness schreibt nicht direkt nach `main`, sondern erzeugt einen
+  eng begrenzten PR, prueft dessen einzigen erlaubten Dateipfad sowie alle
+  Statuschecks und merged nur mit exakter Head-SHA. Ein periodischer Lauf
+  setzt wartende PRs nach gruenen Checks idempotent fort.
+- Die Materialisierung uebernimmt Titel, Body, Quell-Issue und die bestehende
+  Approval-Evidence. Sie erzeugt weder Implementierungslabels noch verlangt
+  sie eine zweite fachliche Freigabe.
 
 ## Akzeptanzkriterien
 
@@ -67,3 +76,9 @@ ausfuehrbar ist; andernfalls lautet er `installed-but-not-ready`.
 7. Der Happy Path verlangt hoechstens eine inhaltliche Freigabe.
 8. Normale Issue-Labels starten keinen Run-Dokumentations-Finalizer.
 9. Die in dsb-new beobachtete Blockerkette ist durch Regressionstests gedeckt.
+10. Ein freigegebenes Requirement-Issue wird idempotent als versioniertes
+    Requirement-Artefakt ueber einen geschuetzten PR materialisiert.
+11. Veraenderte oder zusaetzliche PR-Dateipfade, fehlende Checks und eine
+    geaenderte Head-SHA verhindern den automatischen Merge fail-closed.
+12. Derselbe Approval-Nachweis autorisiert die anschliessende Spec-Erzeugung;
+    eine zweite Label-Freigabe ist nicht erforderlich.
