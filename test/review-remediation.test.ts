@@ -964,7 +964,7 @@ describe("GitHub workflow contract — review-fix job (TAC-12)", () => {
     expect(workflow).toContain("resolve-review-fix-comment:");
     expect(workflow).toContain("review-fix-comment:");
     expect(workflow).toContain("review-fix-pr-event:");
-    expect(workflow).toContain(".github/workflows/review-fix.yml@8d57f7f8c19a526af320a0d8a1b8cce6a7cd578f");
+    expect(workflow).toContain(".github/workflows/review-fix.yml@0dcce1129af2fd2f3a76259f87463c8714228062");
     expect(workflow).not.toContain("@main");
   });
 
