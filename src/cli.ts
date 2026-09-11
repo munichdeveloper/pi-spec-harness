@@ -1788,6 +1788,21 @@ async function cmdImplPrAutoBind(argv: { repository: string; pullRequest: number
   if (state.branch && state.branch !== pr.baseRefName) {
     throw new Error(`Implementation PR #${argv.pullRequest} has base '${pr.baseRefName}', expected '${state.branch}'`);
   }
+  if (state.implementationPullRequest && state.implementationPullRequest !== argv.pullRequest) {
+    printResult(
+      "impl-pr-auto-bind",
+      {
+        bound: false,
+        skipped: "follow-up-pull-request",
+        runId: state.runId,
+        primaryPullRequest: state.implementationPullRequest,
+        observedPullRequest: argv.pullRequest,
+      },
+      `Run '${state.runId}' remains bound to primary implementation PR #${state.implementationPullRequest}; ` +
+      `follow-up PR #${argv.pullRequest} is intentionally not rebound.`,
+    );
+    return;
+  }
   state = bindImplementationPullRequest(state, argv.pullRequest, pr.headRefOid);
   const marker = `harness:${state.runId}`;
   if (!body.includes(marker)) {

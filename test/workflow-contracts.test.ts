@@ -66,6 +66,12 @@ describe("GitHub workflow contracts", () => {
     expect(prJob.indexOf("delivery-pr-merge-effect")).toBeLessThan(prJob.indexOf("npm run harness -- orchestrate"));
   });
 
+  it("keeps follow-up PRs attached to the primary implementation run without rebinding", async () => {
+    const cli = await readFile("src/cli.ts", "utf8");
+    expect(cli).toContain('skipped: "follow-up-pull-request"');
+    expect(cli).toContain("remains bound to primary implementation PR");
+  });
+
   // TAC-09: workflow supports workflow_dispatch and push (own file on default branch)
   it("supports workflow_dispatch and push triggers for bootstrap reconciliation (TAC-09)", async () => {
     const workflow = await readFile(".github/workflows/harness-gate-trigger.yml", "utf8");

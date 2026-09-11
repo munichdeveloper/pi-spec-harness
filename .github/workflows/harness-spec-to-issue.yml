@@ -13,8 +13,8 @@ permissions:
 
 jobs:
   spec-to-issue:
-    uses: munichdeveloper/pi-spec-harness/.github/workflows/spec-to-issue.yml@ed31530c585d3303cfcee46d305fb31ce4fae183
+    uses: munichdeveloper/pi-spec-harness/.github/workflows/spec-to-issue.yml@b97b20ed26547e7f7126b95171be20ddc1fa0305
     with:
       spec-path-glob: 'docs/specifications/*.md'
       default-branch: 'main'
-      harness-ref: 'ed31530c585d3303cfcee46d305fb31ce4fae183'
+      harness-ref: 'b97b20ed26547e7f7126b95171be20ddc1fa0305'
