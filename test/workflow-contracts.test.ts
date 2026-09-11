@@ -357,11 +357,9 @@ describe("SPEC-010 capability-smoke reusable workflow contracts", () => {
   it("SPEC-017: issue intake is conservative, idempotent, and does not expose internal approval instructions", async () => {
     const workflow = await readFile(".github/workflows/issue-intake.yml", "utf8");
     expect(workflow).toContain("Classify untrusted issue text without write credentials");
-    expect(workflow).toContain("kind=\"incomplete\"");
-    expect(workflow).toContain("title=\"$(printf");
-    expect(workflow).toContain("elif [[ \"$text\" == *\"bug\"*");
-    expect(workflow).toContain('[[ "$text" == *"akzeptanzkriterien"* ]]');
-    expect(workflow).toContain('[[ "$text" == *"gewünschte"* || "$text" == *"gewuenschte"* || "$text" == *"ziel"* ]]');
+    expect(workflow).toContain("Checkout trusted Harness classifier");
+    expect(workflow).toContain("persist-credentials: false");
+    expect(workflow).toContain("node .pi-spec-harness/scripts/issue_intake_classifier.mjs");
     expect(workflow).toContain("pi-spec-harness:issue-intake:v1");
     expect(workflow).toContain("issues/comments/${comment_id}");
     expect(workflow).toContain("Technische Labels, Workflow-Namen und Zugangsdaten musst du dafür nicht kennen");
