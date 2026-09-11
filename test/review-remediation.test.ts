@@ -18,6 +18,7 @@ import { readFileSync } from "node:fs";
 
 import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
+import { DEFAULT_HARNESS_WORKFLOW_REF } from "../src/release.js";
 import { hasTrustedIssueCommentMarker, loadReviewAutomationCandidates, type ReviewAutomationCandidateStore } from "../src/cli.js";
 import {
   buildReviewIdempotencyKey,
@@ -964,7 +965,7 @@ describe("GitHub workflow contract — review-fix job (TAC-12)", () => {
     expect(workflow).toContain("resolve-review-fix-comment:");
     expect(workflow).toContain("review-fix-comment:");
     expect(workflow).toContain("review-fix-pr-event:");
-    expect(workflow).toContain(".github/workflows/review-fix.yml@c5ef317cfef3889e97b58c586d594d7b954ffc3c");
+    expect(workflow).toContain(`.github/workflows/review-fix.yml@${DEFAULT_HARNESS_WORKFLOW_REF}`);
     expect(workflow).not.toContain("@main");
   });
 
