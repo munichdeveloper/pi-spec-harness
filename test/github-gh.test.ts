@@ -4,6 +4,7 @@ import {
   findBlockingStatusChecks,
   parsePaginatedIssues,
   parsePaginatedLabelEvents,
+  selectPullRequestByBodyMarker,
 } from "../src/github/gh.js";
 
 describe("GitHub pull-request merge command", () => {
@@ -15,6 +16,32 @@ describe("GitHub pull-request merge command", () => {
       "-f", "base=delivery/spec-014",
       "-f", "head=abc123",
     ]);
+  });
+});
+
+describe("GitHub coding-agent pull-request discovery", () => {
+  const candidate = (number: number, body: string) => ({
+    number,
+    body,
+    headRefOid: `head-${number}`,
+    headRefName: `copilot/normalized-${number}`,
+    state: "OPEN",
+    mergedAt: null,
+    mergeCommit: null,
+    url: `https://example.test/pull/${number}`,
+  });
+
+  it("binds a normalized agent branch through the immutable dispatch marker", () => {
+    expect(selectPullRequestByBodyMarker([
+      candidate(41, "Fixes #40\n<!-- dispatch:req-025:abc -->"),
+    ], "dispatch:req-025:abc")?.number).toBe(41);
+  });
+
+  it("fails closed when a marker is ambiguous", () => {
+    expect(() => selectPullRequestByBodyMarker([
+      candidate(41, "dispatch:req-025:abc"),
+      candidate(42, "dispatch:req-025:abc"),
+    ], "dispatch:req-025:abc")).toThrow("multiple pull requests");
   });
 });
 
