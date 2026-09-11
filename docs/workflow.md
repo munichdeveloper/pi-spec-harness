@@ -205,7 +205,10 @@ init`-Aufruf:
    auch ein über `harness issue-create` erzeugtes Issue erkannt wird.
 2. `label-approval-bundling` (Vorlage): triggert auf `issues.labeled` mit
    einem konfigurierbaren `trigger-label` (Default
-   `harness:approved-for-agent`) und setzt die `target-labels` (Default
+   `harness:approved-for-agent`). GitHub Actions kann keinen eigenen Button in
+   die Issue-Oberflaeche einfuegen; das Label ist die kanonische einmalige
+   Freigabeaktion. Erst nach Validierung des Lebenszyklus-Typs und vorhandener
+   REQ-/SPEC-Koordinaten setzt der Workflow die `target-labels` (Default
    `status:ready`, `ai:allowed`, `harness:implementation`) in einer
    einzigen Aktion. Im selben Lauf ruft sie anschließend `harness init`
    non-interaktiv mit einer deterministisch aus der Implementierungs-Issue-
