@@ -333,6 +333,7 @@ export interface SpecDispatchRecord {
   /** Stable idempotency key: `<repository>:<req-id>:<source-sha>`. */
   dispatchKey: string;
   requirementId: string;
+  /** Content identity of the requirement artifact (Git blob SHA for workflow dispatches). */
   sourceSha: string;
   targetSpecPath: string;
   provider: SpecGenerationProvider;

@@ -2522,6 +2522,64 @@ async function cmdRequirementToSpecDispatch(argv: {
     return;
   }
 
+  // Identity migrations (for example commit SHA -> requirement blob SHA)
+  // adopt an already effective provider PR instead of dispatching a second
+  // agent for the same still-active requirement work.
+  const priorRequirementRecords = storeData.records.filter((candidate) =>
+    candidate.dispatchKey !== order.dispatchKey
+    && candidate.requirementId === fm.id
+    && candidate.provider === argv.provider
+    && candidate.targetSpecPath === order.targetSpecPath
+    && candidate.dispatchIssue !== undefined,
+  );
+  const priorEffects = new Map<number, {
+    record: SpecDispatchRecord;
+    pr: NonNullable<Awaited<ReturnType<typeof github.findPullRequestByHead>>>;
+  }>();
+  for (const prior of priorRequirementRecords) {
+    const pr = await github.findPullRequestByHead(argv.repository, prior.branch)
+      ?? await github.findPullRequestByBodyMarker(argv.repository, prior.dispatchKey)
+      ?? await github.findPullRequestByClosingIssue(argv.repository, prior.dispatchIssue!);
+    if (pr) priorEffects.set(pr.number, { record: prior, pr });
+  }
+  if (priorEffects.size > 1) {
+    throw new Error(`requirement-to-spec-dispatch: multiple active provider PRs exist for '${fm.id}'`);
+  }
+  const priorEffect = priorEffects.values().next().value;
+  if (priorEffect) {
+    const merged = priorEffect.pr.state === "MERGED";
+    const adopted: SpecDispatchRecord = {
+      ...priorEffect.record,
+      dispatchKey: order.dispatchKey,
+      sourceSha: argv.sourceSha,
+      branch: priorEffect.pr.headRefName,
+      status: merged ? "pr-merged" : "pr-open",
+      specPullRequest: priorEffect.pr.number,
+      specPrHeadSha: priorEffect.pr.headRefOid,
+      specMergeCommitSha: merged ? priorEffect.pr.mergeCommit?.oid : undefined,
+      specMergedAt: merged ? priorEffect.pr.mergedAt ?? undefined : undefined,
+      updatedAt: nowIso(),
+    };
+    storeData = upsertStoreRecord(storeData, adopted);
+    await specStore.save(storeData, storeIssueNumber);
+    console.log(JSON.stringify({
+      schemaVersion: SCHEMA_VERSION,
+      command: "requirement-to-spec-dispatch",
+      result: {
+        idempotent: true,
+        adopted: true,
+        dispatchKey: order.dispatchKey,
+        previousDispatchKey: priorEffect.record.dispatchKey,
+        requirementId: fm.id,
+        issueNumber: priorEffect.record.dispatchIssue,
+        pullRequest: priorEffect.pr.number,
+        status: adopted.status,
+      },
+      nextAction: "existing provider effect adopted under stable requirement identity — no agent dispatch sent",
+    }, null, 2));
+    return;
+  }
+
   // ── 5. SECONDARY idempotency: dispatch issue-title lookup (crash recovery) ─
   const issueTitle = buildSpecGenIssueTitle(fm.id, order.dispatchKey);
   const existing = await github.findIssueByExactTitle(argv.repository, issueTitle);

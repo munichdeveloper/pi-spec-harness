@@ -124,7 +124,6 @@ jobs:
           # continues to use the repository-scoped built-in token.
           COPILOT_ASSIGN_PAT: ${{ secrets.COPILOT_ASSIGN_PAT }}
           CALLER_REPOSITORY: ${{ github.repository }}
-          SOURCE_SHA: ${{ github.sha }}
           PROVIDER: ${{ inputs.provider }}
           HARNESS_REF: ${{ inputs.harness-ref }}
           SPEC_OUTPUT_DIR: ${{ inputs.spec-output-dir }}
@@ -132,10 +131,13 @@ jobs:
           while IFS= read -r req_file; do
             [[ -z "$req_file" ]] && continue
             echo "Processing requirement file: $req_file"
+            # Bind idempotency to the requirement blob, not to unrelated
+            # default-branch commits such as Harness pin updates.
+            source_sha="$(git rev-parse '${{ inputs.default-branch }}':"$req_file")"
             node .harness/dist/cli.js requirement-to-spec-dispatch \
               --repository "$CALLER_REPOSITORY" \
               --requirement-path "$req_file" \
-              --source-sha "$SOURCE_SHA" \
+              --source-sha "$source_sha" \
               --provider "$PROVIDER" \
               --spec-output-dir "$SPEC_OUTPUT_DIR" \
               --default-branch '${{ inputs.default-branch }}' \
