@@ -194,7 +194,8 @@ describe("GitHub workflow contracts", () => {
     expect(workflow).toContain("issues: write");
     expect(workflow).toContain("if: github.ref_name == inputs.default-branch");
     expect(workflow).toContain('":(glob)$glob"');
-    expect(workflow).not.toContain("contents: write");
+    expect(workflow).toContain("contents: read");
+    expect(workflow).not.toContain("pull-requests: write");
   });
 
   it("defines the reusable label-approval-bundling workflow contract with single-action label bundling and automatic run bootstrap (SPEC-007 TAC-08/TAC-12/TAC-13/TAC-14)", async () => {
@@ -210,7 +211,9 @@ describe("GitHub workflow contracts", () => {
     expect(workflow).toContain("--branch '${{ github.event.repository.default_branch }}'");
     expect(workflow).toContain("issue-${{");
     expect(workflow).toContain("issues: write");
-    expect(workflow).not.toContain("contents: write");
+    expect(workflow).toContain("contents: write");
+    expect(workflow).toContain("pull-requests: write");
+    expect(workflow).toContain("checks: read");
   });
 
   it("wires --install-workflows, --install-agents-context, spec-to-issue, and issue-create --from-spec-path in the CLI (SPEC-006/SPEC-007/SPEC-008)", async () => {
@@ -356,6 +359,8 @@ describe("SPEC-010 capability-smoke reusable workflow contracts", () => {
       workflow.indexOf("Bundle target labels after validation"),
     );
     expect(workflow).toContain('$issue_type" == "type:requirement"');
+    expect(workflow).toContain("approved-requirement-materialize");
+    expect(workflow).toContain("Materialize an approved requirement through a protected PR");
   });
 
   it("SPEC-017: issue intake is conservative, idempotent, and does not expose internal approval instructions", async () => {

@@ -29,12 +29,13 @@ on:
         type: string
         default: github-copilot
 
-# Minimal permissions: read-only on contents; issues for gate reporting.
-# No write-capable credentials are passed to PR-head code (SPEC-014, decision 6).
+# Trusted orchestration only: PR-head code is never checked out. Writes are
+# restricted to deterministic requirement branches and exact-head PR merges.
 permissions:
-  contents: read
+  contents: write
   issues: write
-  pull-requests: read
+  pull-requests: write
+  checks: read
 
 jobs:
   requirement-to-spec:
@@ -92,6 +93,16 @@ jobs:
       - name: Install harness dependencies
         working-directory: .harness
         run: npm ci
+
+      - name: Reconcile approved issue requirements
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          CALLER_REPOSITORY: ${{ github.repository }}
+        run: |
+          node .harness/dist/cli.js approved-requirement-materialize \
+            --repository "$CALLER_REPOSITORY" \
+            --all \
+            --default-branch '${{ inputs.default-branch }}'
 
       - name: Dispatch spec-generation for each changed requirement
         if: steps.changed.outputs.files != ''

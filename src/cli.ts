@@ -32,6 +32,12 @@ import {
   renderBugWorkflowReference,
 } from "./bug/workflow-reference.js";
 import { findWorkflowTemplate, resolveWorkflowInstallPlan } from "./workflows/template-catalog.js";
+import {
+  buildRequirementMaterializationPlan,
+  isApprovedRequirement,
+  REQUIREMENT_MATERIALIZATION_MARKER,
+  type ApprovedRequirementIssue,
+} from "./intake/requirement-materialization.js";
 import { decideWorkflowInstall } from "./workflows/install-decision.js";
 import { provisionApprovalWorkflowLabels } from "./workflows/label-provisioning.js";
 import { upsertManagedBlock, renderHarnessContextBlock, AGENTS_MD_PATH } from "./agents-context/managed-block.js";
@@ -2253,6 +2259,114 @@ async function cmdImplPrMerge(argv: StoreArgs): Promise<void> {
 // SPEC-014: requirement-to-spec-dispatch
 // ---------------------------------------------------------------------------
 
+async function materializeApprovedRequirement(
+  repository: string,
+  issue: ApprovedRequirementIssue,
+  defaultBranch: string,
+  outputDirectory: string,
+): Promise<Record<string, unknown>> {
+  if (!isApprovedRequirement(issue)) {
+    return { issue: issue.number, skipped: "not-an-approved-requirement" };
+  }
+  const plan = buildRequirementMaterializationPlan(issue, outputDirectory);
+  const landed = await github.getFileContentIfExists(repository, plan.requirementPath, defaultBranch);
+  if (landed) {
+    if (!landed.content.includes(`${REQUIREMENT_MATERIALIZATION_MARKER}; source-issue=${issue.number}`)) {
+      throw new Error(`requirement path collision at '${plan.requirementPath}' for issue #${issue.number}`);
+    }
+    return { issue: issue.number, requirementId: plan.requirementId, status: "materialized", path: plan.requirementPath };
+  }
+
+  let branchSha = await github.getBranchShaIfExists(repository, plan.branch);
+  if (!branchSha) {
+    const defaultSha = await github.getBranchSha(repository, defaultBranch);
+    await github.createBranch(repository, plan.branch, defaultSha);
+    branchSha = defaultSha;
+  }
+
+  const branchFile = await github.getFileContentIfExists(repository, plan.requirementPath, plan.branch);
+  if (!branchFile) {
+    branchSha = await github.createFileOnBranch(
+      repository,
+      plan.branch,
+      plan.requirementPath,
+      plan.content,
+      `${plan.requirementId}: materialize approved issue #${issue.number}`,
+    );
+  } else if (branchFile.content !== plan.content) {
+    throw new Error(`existing materialization branch contains different content at '${plan.requirementPath}'`);
+  }
+
+  let pr = await github.findPullRequestByHead(repository, plan.branch);
+  if (!pr) {
+    const created = await github.createPullRequest(repository, {
+      title: plan.pullRequestTitle,
+      body: plan.pullRequestBody,
+      base: defaultBranch,
+      head: plan.branch,
+    });
+    pr = await github.findPullRequestByHead(repository, plan.branch);
+    if (!pr) throw new Error(`created requirement PR #${created.number} could not be read back`);
+  }
+
+  const commentMarker = `<!-- ${REQUIREMENT_MATERIALIZATION_MARKER}; pr=${pr.number} -->`;
+  if (!(issue.comments ?? []).some((comment) => comment.body.includes(commentMarker))) {
+    await github.commentIssue(repository, issue.number, [
+      commentMarker,
+      `Das freigegebene Requirement wird als \`${plan.requirementPath}\` in PR #${pr.number} materialisiert.`,
+      "Der Harness wartet auf die Repository-Pruefungen und fuehrt danach ohne zweite fachliche Freigabe fort.",
+    ].join("\n\n"));
+  }
+
+  if (pr.state === "MERGED" || pr.state === "merged") {
+    return { issue: issue.number, requirementId: plan.requirementId, status: "materialized", pullRequest: pr.number };
+  }
+  if (pr.state !== "OPEN" && pr.state !== "open") {
+    throw new Error(`requirement materialization PR #${pr.number} is '${pr.state}', not open or merged`);
+  }
+
+  const prView = await github.viewPullRequest(repository, pr.number) as {
+    headRefOid?: string;
+    statusCheckRollup?: StatusCheckRollupItem[];
+    mergeable?: string;
+  };
+  const headSha = prView.headRefOid ?? branchSha;
+  const changedPaths = await github.listPullRequestChangedPaths(repository, pr.number);
+  if (changedPaths.length !== 1 || changedPaths[0] !== plan.requirementPath) {
+    throw new Error(`requirement PR #${pr.number} changes unexpected paths: ${changedPaths.join(", ")}`);
+  }
+  const checks = prView.statusCheckRollup ?? [];
+  if (checks.length === 0) {
+    return { issue: issue.number, requirementId: plan.requirementId, status: "waiting-for-checks", pullRequest: pr.number };
+  }
+  const blockers = findBlockingStatusChecks(checks);
+  if (blockers.length > 0 || prView.mergeable !== "MERGEABLE") {
+    return { issue: issue.number, requirementId: plan.requirementId, status: "waiting-for-checks", pullRequest: pr.number, blockers };
+  }
+
+  const merge = await github.trySquashPullRequest(repository, pr.number, headSha);
+  return merge.merged
+    ? { issue: issue.number, requirementId: plan.requirementId, status: "merged", pullRequest: pr.number, mergeCommit: merge.sha }
+    : { issue: issue.number, requirementId: plan.requirementId, status: "waiting-for-protection", pullRequest: pr.number, reason: merge.reason };
+}
+
+async function cmdApprovedRequirementMaterialize(argv: {
+  repository: string;
+  issueNumber?: number;
+  all?: boolean;
+  defaultBranch: string;
+  outputDirectory: string;
+}): Promise<void> {
+  const issues = argv.all
+    ? await github.listOpenIssuesByLabels(argv.repository, ["type:requirement", "harness:approved-for-agent"])
+    : [await github.viewIssue(argv.repository, argv.issueNumber!)];
+  const results = [];
+  for (const issue of issues) {
+    results.push(await materializeApprovedRequirement(argv.repository, issue, argv.defaultBranch, argv.outputDirectory));
+  }
+  printResult("approved-requirement-materialize", { results }, "scheduled reconciliation will continue any waiting materialization PRs");
+}
+
 /**
  * Issue title prefix used to find existing dispatch issues for deduplication.
  * The full title format is:
@@ -3967,6 +4081,29 @@ const _harnessCli = yargs(hideBin(process.argv))
     "Find all open harness gates in a repository and apply any pending label decisions (missed-event recovery)",
     (y) => y.option("repository", { type: "string", demandOption: true, describe: "owner/repo to reconcile" }),
     async (argv) => cmdReconcile({ repository: argv.repository as string }),
+  )
+  .command(
+    "approved-requirement-materialize",
+    "Materialize approved natural-language requirement issues through a protected PR and reconcile them idempotently",
+    (y) =>
+      y
+        .option("repository", { type: "string", demandOption: true })
+        .option("issue-number", { type: "number", conflicts: "all" })
+        .option("all", { type: "boolean", default: false, conflicts: "issue-number" })
+        .option("default-branch", { type: "string", default: "main" })
+        .option("output-directory", { type: "string", default: "docs/requirements" })
+        .check((argv) => {
+          if (!argv.all && !argv["issue-number"]) throw new Error("either --issue-number or --all is required");
+          return true;
+        }),
+    async (argv) =>
+      cmdApprovedRequirementMaterialize({
+        repository: argv.repository as string,
+        issueNumber: argv["issue-number"] as number | undefined,
+        all: argv.all as boolean,
+        defaultBranch: argv["default-branch"] as string,
+        outputDirectory: argv["output-directory"] as string,
+      }),
   )
   .command(
     "requirement-to-spec-dispatch",

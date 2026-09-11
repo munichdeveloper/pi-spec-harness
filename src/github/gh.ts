@@ -84,6 +84,17 @@ export interface IssueRef {
   url: string;
 }
 
+export interface ViewedIssue {
+  number: number;
+  title: string;
+  body: string;
+  state: string;
+  labels: { name: string }[];
+  assignees: { login: string }[];
+  url: string;
+  comments: { author: { login: string }; body: string; createdAt: string }[];
+}
+
 export interface LabelEvent {
   label: string;
   actor: string;
@@ -434,16 +445,7 @@ export const github = {
   async viewIssue(repository: string, number: number) {
     const out = await runGh(["issue", "view", String(number), "--repo", repository, "--json",
       "number,title,body,state,labels,assignees,url,comments"]);
-    return JSON.parse(out) as {
-      number: number;
-      title: string;
-      body: string;
-      state: string;
-      labels: { name: string }[];
-      assignees: { login: string }[];
-      url: string;
-      comments: { author: { login: string }; body: string; createdAt: string }[];
-    };
+    return JSON.parse(out) as ViewedIssue;
   },
 
   async viewPullRequest(repository: string, number: number) {
@@ -560,6 +562,23 @@ export const github = {
     return out.trim();
   },
 
+  async getBranchShaIfExists(repository: string, branch: string): Promise<string | undefined> {
+    try {
+      return await this.getBranchSha(repository, branch);
+    } catch (err) {
+      if (err instanceof GhError && /404|not found|reference does not exist/i.test(err.message)) return undefined;
+      throw err;
+    }
+  },
+
+  /** Create a branch at an already verified immutable commit. */
+  async createBranch(repository: string, branch: string, fromSha: string): Promise<void> {
+    await runGhWithJson(
+      ["api", `repos/${repository}/git/refs`, "--method", "POST", "--input", "-"],
+      { ref: `refs/heads/${branch}`, sha: fromSha },
+    );
+  },
+
   /**
    * Fetch a file's raw content and its blob SHA from a specific ref.
    * Returns content as a UTF-8 string plus the blob SHA needed for updates.
@@ -626,6 +645,53 @@ export const github = {
       "--jq", ".commit.sha",
     ]);
     return out.trim();
+  },
+
+  /** Create a new file on a named branch without writing to the default branch. */
+  async createFileOnBranch(
+    repository: string,
+    branch: string,
+    path: string,
+    content: string,
+    commitMessage: string,
+  ): Promise<string> {
+    const encodedContent = Buffer.from(content).toString("base64");
+    const out = await runGhWithJson(
+      ["api", `repos/${repository}/contents/${path}`, "--method", "PUT", "--input", "-", "--jq", ".commit.sha"],
+      { message: commitMessage, content: encodedContent, branch },
+    );
+    return out.trim();
+  },
+
+  /**
+   * Squash-merge the exact reviewed PR head. GitHub still enforces branch
+   * protections and required checks; expected policy failures are reported as
+   * a non-terminal waiting result for the scheduled reconciler.
+   */
+  async trySquashPullRequest(
+    repository: string,
+    pullRequest: number,
+    expectedHeadSha: string,
+  ): Promise<{ merged: boolean; sha?: string; reason?: string }> {
+    try {
+      const raw = await runGhWithJson(
+        ["api", `repos/${repository}/pulls/${pullRequest}/merge`, "--method", "PUT", "--input", "-"],
+        { merge_method: "squash", sha: expectedHeadSha },
+      );
+      const result = JSON.parse(raw) as { merged?: boolean; sha?: string; message?: string };
+      return { merged: result.merged === true, sha: result.sha, reason: result.message };
+    } catch (err) {
+      if (err instanceof GhError && /405|409|required status check|not mergeable|protected branch/i.test(err.message)) {
+        return { merged: false, reason: "repository protections or checks are not satisfied yet" };
+      }
+      throw err;
+    }
+  },
+
+  async listOpenIssuesByLabels(repository: string, labels: string[]): Promise<ViewedIssue[]> {
+    const args = ["issue", "list", "--repo", repository, "--state", "open", "--limit", "100", "--json", "number,title,body,state,labels,assignees,url,comments"];
+    for (const label of labels) args.push("--label", label);
+    return JSON.parse(await runGh(args));
   },
 
   /**
@@ -755,6 +821,14 @@ export const github = {
       url: string;
     }>;
     return results[0];
+  },
+
+  async listPullRequestChangedPaths(repository: string, pullRequest: number): Promise<string[]> {
+    const out = await runGh([
+      "api", `repos/${repository}/pulls/${pullRequest}/files`, "--paginate", "--slurp",
+      "--jq", "flatten | map(.filename)",
+    ]);
+    return JSON.parse(out) as string[];
   },
 
   /**

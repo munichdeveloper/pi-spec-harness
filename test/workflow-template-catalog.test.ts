@@ -110,7 +110,7 @@ describe("WORKFLOW_TEMPLATE_CATALOG", () => {
     expect(rendered).toContain("harness:approved-for-agent");
     expect(rendered).toContain('["status:ready","ai:allowed"]');
     expect(rendered).toContain("harness-ref: '8f7e6d5c4b3a29180706050403020100ffeeddcc'");
-    expect(rendered).toContain("permissions:\n  contents: read\n  issues: write");
+    expect(rendered).toContain("permissions:\n  contents: write\n  issues: write\n  pull-requests: write\n  checks: read");
     expect(rendered).not.toContain("secrets: inherit");
   });
 
@@ -393,13 +393,13 @@ describe("SPEC-014: requirement-to-spec catalog entry", () => {
     expect(rendered).toContain("branches: [trunk]");
   });
 
-  it("uses the minimum read/write permissions needed for dispatch and PR reconciliation", () => {
+  it("grants only the writes needed for protected requirement materialization and reconciliation", () => {
     const rendered = renderRequirementToSpecReference();
-    expect(rendered).toContain("contents: read");
+    expect(rendered).toContain("contents: write");
     expect(rendered).toContain("issues: write");
-    expect(rendered).toContain("pull-requests: read");
+    expect(rendered).toContain("pull-requests: write");
+    expect(rendered).toContain("checks: read");
     expect(rendered).not.toContain("secrets: inherit");
-    expect(rendered).not.toContain("contents: write");
   });
 
   it.each([
@@ -427,6 +427,8 @@ describe("SPEC-014: requirement-to-spec catalog entry", () => {
     expect(reusable).toContain("default: docs/specifications");
     expect(reusable).toContain("SPEC_OUTPUT_DIR: ${{ inputs.spec-output-dir }}");
     expect(reusable).toContain('--spec-output-dir "$SPEC_OUTPUT_DIR"');
+    expect(reusable).toContain("approved-requirement-materialize");
+    expect(reusable).toContain("--all");
   });
 
   it("uses non-cancelling concurrency to avoid dropping queued runs", () => {

@@ -94,8 +94,10 @@ on:
     types: [labeled]
 
 permissions:
-  contents: read
+  contents: write
   issues: write
+  pull-requests: write
+  checks: read
 
 jobs:
   bundle:
@@ -420,12 +422,13 @@ concurrency:
   group: harness-requirement-to-spec-\${{ github.repository }}
   cancel-in-progress: false
 
-# Minimal permissions: read-only on contents; issues for gate reporting.
-# No write-capable credentials are passed to PR-head code.
+# The trusted reusable never checks out PR-head code. Write permissions are
+# limited to deterministic requirement materialization and exact-head merging.
 permissions:
-  contents: read
+  contents: write
   issues: write
-  pull-requests: read
+  pull-requests: write
+  checks: read
 
 jobs:
   requirement-to-spec:
