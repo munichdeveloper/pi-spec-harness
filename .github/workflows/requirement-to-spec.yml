@@ -138,6 +138,7 @@ jobs:
               --source-sha "$SOURCE_SHA" \
               --provider "$PROVIDER" \
               --spec-output-dir "$SPEC_OUTPUT_DIR" \
+              --default-branch '${{ inputs.default-branch }}' \
               --harness-ref "$HARNESS_REF"
           done <<< "${{ steps.changed.outputs.files }}"
 

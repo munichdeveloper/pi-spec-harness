@@ -491,21 +491,6 @@ export const github = {
     await runGh(["issue", "edit", String(number), "--repo", repository, ...assignees.flatMap((a) => ["--add-assignee", a])]);
   },
 
-  /** Assign through a dedicated user/OAuth identity without widening the
-   * credential used by the surrounding orchestration commands. */
-  async addAssigneesWithCredential(
-    repository: string,
-    number: number,
-    assignees: string[],
-    credential: string,
-  ): Promise<void> {
-    if (assignees.length === 0) return;
-    await runGh(
-      ["issue", "edit", String(number), "--repo", repository, ...assignees.flatMap((a) => ["--add-assignee", a])],
-      credential,
-    );
-  },
-
   async closeIssue(repository: string, number: number, comment?: string): Promise<void> {
     const args = ["issue", "close", String(number), "--repo", repository];
     if (comment) args.push("--comment", comment);
@@ -788,8 +773,9 @@ export const github = {
     issueNumber: number,
     assignee: string,
     baseRef: string,
+    credential?: string,
   ): Promise<void> {
-    await runGh(buildAgentAssignmentArgs(repository, issueNumber, assignee, baseRef));
+    await runGh(buildAgentAssignmentArgs(repository, issueNumber, assignee, baseRef), credential);
   },
 
   async updatePullRequestBody(repository: string, number: number, body: string): Promise<void> {
