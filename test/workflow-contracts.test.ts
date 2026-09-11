@@ -66,6 +66,12 @@ describe("GitHub workflow contracts", () => {
     expect(prJob.indexOf("delivery-pr-merge-effect")).toBeLessThan(prJob.indexOf("npm run harness -- orchestrate"));
   });
 
+  it("keeps follow-up PRs attached to the primary implementation run without rebinding", async () => {
+    const cli = await readFile("src/cli.ts", "utf8");
+    expect(cli).toContain('skipped: "follow-up-pull-request"');
+    expect(cli).toContain("remains bound to primary implementation PR");
+  });
+
   // TAC-09: workflow supports workflow_dispatch and push (own file on default branch)
   it("supports workflow_dispatch and push triggers for bootstrap reconciliation (TAC-09)", async () => {
     const workflow = await readFile(".github/workflows/harness-gate-trigger.yml", "utf8");
@@ -351,9 +357,9 @@ describe("SPEC-010 capability-smoke reusable workflow contracts", () => {
   it("SPEC-017: issue intake is conservative, idempotent, and does not expose internal approval instructions", async () => {
     const workflow = await readFile(".github/workflows/issue-intake.yml", "utf8");
     expect(workflow).toContain("Classify untrusted issue text without write credentials");
-    expect(workflow).toContain("kind=\"incomplete\"");
-    expect(workflow).toContain("title=\"$(printf");
-    expect(workflow).toContain("elif [[ \"$text\" == *\"bug\"*");
+    expect(workflow).toContain("Checkout trusted Harness classifier");
+    expect(workflow).toContain("persist-credentials: false");
+    expect(workflow).toContain("node .pi-spec-harness/scripts/issue_intake_classifier.mjs");
     expect(workflow).toContain("pi-spec-harness:issue-intake:v1");
     expect(workflow).toContain("issues/comments/${comment_id}");
     expect(workflow).toContain("Technische Labels, Workflow-Namen und Zugangsdaten musst du dafür nicht kennen");

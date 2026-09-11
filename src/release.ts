@@ -9,4 +9,4 @@
  * future tags, or older incomplete releases.
  */
 export const HARNESS_VERSION = "0.4.3";
-export const DEFAULT_HARNESS_WORKFLOW_REF = "ed31530c585d3303cfcee46d305fb31ce4fae183";
+export const DEFAULT_HARNESS_WORKFLOW_REF = "47c7a481e729dce0278e12e5fb9287117fabf8f4";

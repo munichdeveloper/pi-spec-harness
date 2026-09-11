@@ -25,32 +25,20 @@ jobs:
   intake:
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout trusted Harness classifier
+        uses: actions/checkout@v4
+        with:
+          repository: munichdeveloper/pi-spec-harness
+          ref: ${{ inputs.harness-ref }}
+          path: .pi-spec-harness
+          persist-credentials: false
+
       - name: Classify untrusted issue text without write credentials
         id: classify
-        shell: bash
         env:
           ISSUE_TITLE: ${{ inputs.issue-title }}
           ISSUE_BODY: ${{ inputs.issue-body }}
-        run: |
-          title="$(printf '%s' "$ISSUE_TITLE" | tr '[:upper:]' '[:lower:]')"
-          text="$(printf '%s\n%s' "$ISSUE_TITLE" "$ISSUE_BODY" | tr '[:upper:]' '[:lower:]')"
-          kind="incomplete"
-          label="intake:needs-information"
-          if [[ "$title" =~ ^[[:space:]]*(\[[^]]*\][[:space:]]*)?spec-[0-9]+([:[:space:]]|$) ]] || [[ "$title" =~ ^[[:space:]]*software[[:space:]]+spec(ifikation)?([:[:space:]]|$) ]]; then
-            kind="spec"
-            label="type:spec"
-          elif [[ "$text" == *"bug"* ]] || [[ "$text" == *"fehler"* ]] || [[ "$text" == *"funktioniert nicht"* ]]; then
-            kind="bug"
-            label="type:bug"
-          elif [[ "$text" =~ (^|[[:space:]])spike([:[:space:]]|$) ]] || [[ "$text" == *"untersuchen"* ]]; then
-            kind="spike"
-            label="type:spike"
-          elif [[ "$text" =~ req-[0-9]+ ]] || [[ "$text" == *"anforderung"* ]] || [[ "$text" == *"ich möchte"* ]] || [[ "$text" == *"ich moechte"* ]]; then
-            kind="requirement"
-            label="type:requirement"
-          fi
-          echo "kind=$kind" >> "$GITHUB_OUTPUT"
-          echo "label=$label" >> "$GITHUB_OUTPUT"
+        run: node .pi-spec-harness/scripts/issue_intake_classifier.mjs
 
       - name: Persist one idempotent intake result
         shell: bash
