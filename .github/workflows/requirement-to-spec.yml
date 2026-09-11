@@ -138,6 +138,7 @@ jobs:
               --repository "$CALLER_REPOSITORY" \
               --requirement-path "$req_file" \
               --source-sha "$source_sha" \
+              --source-commit-sha '${{ github.sha }}' \
               --provider "$PROVIDER" \
               --spec-output-dir "$SPEC_OUTPUT_DIR" \
               --default-branch '${{ inputs.default-branch }}' \

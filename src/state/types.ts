@@ -335,6 +335,8 @@ export interface SpecDispatchRecord {
   requirementId: string;
   /** Content identity of the requirement artifact (Git blob SHA for workflow dispatches). */
   sourceSha: string;
+  /** Commit from which the requirement blob was resolved; absent only on legacy records. */
+  sourceCommitSha?: string;
   targetSpecPath: string;
   provider: SpecGenerationProvider;
   branch: string;

@@ -895,6 +895,7 @@ describe("SPEC-014 TAC-04: dispatch contract — provider adapter contracts", ()
       repository: "org/repo",
       requirementId: "REQ-999",
       sourceSha: "f".repeat(40),
+      sourceCommitSha: "e".repeat(40),
       requirementPath: "docs/requirements/REQ-999.md",
     };
     const copilotKey = buildSpecDispatchOrder({ ...opts, provider: "github-copilot" }).dispatchKey;
@@ -1024,6 +1025,7 @@ describe("SPEC-014 TAC-09: failure audit event required fields", () => {
       repository: "org/repo",
       requirementId: "REQ-014",
       sourceSha: "f".repeat(40),
+      sourceCommitSha: "e".repeat(40),
       requirementPath: "docs/requirements/REQ-014.md",
       provider: "github-copilot",
     });
@@ -1032,6 +1034,7 @@ describe("SPEC-014 TAC-09: failure audit event required fields", () => {
     expect(order.requirementId).toBe("REQ-014");
     expect(order.targetSpecPath).toMatch(/SPEC-014/);
     expect(order.sourceSha).toBe("f".repeat(40));
+    expect(order.sourceCommitSha).toBe("e".repeat(40));
     expect(order.dispatchKey).toBeTruthy();
   });
 });

@@ -379,6 +379,7 @@ describe("SPEC-010 capability-smoke reusable workflow contracts", () => {
     const workflow = await readFile(".github/workflows/requirement-to-spec.yml", "utf8");
     expect(workflow).toContain("source_sha=\"$(git rev-parse '${{ inputs.default-branch }}':\"$req_file\")\"");
     expect(workflow).toContain('--source-sha "$source_sha"');
+    expect(workflow).toContain("--source-commit-sha '${{ github.sha }}'");
     expect(workflow).not.toContain("SOURCE_SHA: ${{ github.sha }}");
   });
 
