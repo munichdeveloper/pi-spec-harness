@@ -19,4 +19,7 @@ export const DEFAULT_HARNESS_WORKFLOW_REF = "8d57f7f8c19a526af320a0d8a1b8cce6a7c
  * DEFAULT_HARNESS_WORKFLOW_REF to the merged commit and remove the declaration.
  * An empty map is the normal/released state.
  */
-export const PENDING_REUSABLE_WORKFLOW_SHA256: Readonly<Record<string, string>> = Object.freeze({});
+export const PENDING_REUSABLE_WORKFLOW_SHA256: Readonly<Record<string, string>> = Object.freeze({
+  ".github/workflows/label-approval-bundling.yml": "5c28cfd1d87a0aa812a08aa493c4c1977dbd68e12f040c6770c91739265c7580",
+  ".github/workflows/requirement-to-spec.yml": "52ac79e6019fb954ac2182f6376422555918fa4fcf107353f4cfb901cd8253ee",
+});

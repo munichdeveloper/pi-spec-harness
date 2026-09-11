@@ -110,7 +110,7 @@ describe("WORKFLOW_TEMPLATE_CATALOG", () => {
     expect(rendered).toContain("harness:approved-for-agent");
     expect(rendered).toContain('["status:ready","ai:allowed"]');
     expect(rendered).toContain("harness-ref: '8f7e6d5c4b3a29180706050403020100ffeeddcc'");
-    expect(rendered).toContain("permissions:\n  contents: write\n  issues: write\n  pull-requests: write\n  checks: read");
+    expect(rendered).toContain("permissions:\n  contents: write\n  issues: write\n  pull-requests: write\n  checks: read\n  statuses: read");
     expect(rendered).not.toContain("secrets: inherit");
   });
 
@@ -399,6 +399,7 @@ describe("SPEC-014: requirement-to-spec catalog entry", () => {
     expect(rendered).toContain("issues: write");
     expect(rendered).toContain("pull-requests: write");
     expect(rendered).toContain("checks: read");
+    expect(rendered).toContain("statuses: read");
     expect(rendered).not.toContain("secrets: inherit");
   });
 
