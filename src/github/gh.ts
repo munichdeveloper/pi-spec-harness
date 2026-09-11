@@ -135,6 +135,21 @@ export function selectPullRequestByBodyMarker(
   return matches[0];
 }
 
+export function selectPullRequestByClosingIssue(
+  candidates: PullRequestMarkerCandidate[],
+  issueNumber: number,
+): PullRequestMarkerCandidate | undefined {
+  const closingReference = new RegExp(
+    `(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\\s*:?\\s*#${issueNumber}\\b`,
+    "i",
+  );
+  const matches = candidates.filter((candidate) => closingReference.test(candidate.body));
+  if (matches.length > 1) {
+    throw new GhError(`multiple pull requests close dispatch issue #${issueNumber}`);
+  }
+  return matches[0];
+}
+
 export function findBlockingStatusChecks(checks: StatusCheckRollupItem[]): string[] {
   const acceptedConclusions = new Set(["SUCCESS", "NEUTRAL", "SKIPPED"]);
   return checks.flatMap((check) => {
@@ -862,6 +877,20 @@ export const github = {
       "--json", "number,body,headRefOid,headRefName,state,mergedAt,mergeCommit,url",
     ]);
     return selectPullRequestByBodyMarker(JSON.parse(out) as PullRequestMarkerCandidate[], marker);
+  },
+
+  /** Fall back to the dispatch issue's closing reference when a coding agent
+   * does not copy the opaque dispatch key into its PR body. */
+  async findPullRequestByClosingIssue(
+    repository: string,
+    issueNumber: number,
+  ): Promise<PullRequestMarkerCandidate | undefined> {
+    const out = await runGh([
+      "pr", "list", "--repo", repository,
+      "--state", "all", "--limit", "100",
+      "--json", "number,body,headRefOid,headRefName,state,mergedAt,mergeCommit,url",
+    ]);
+    return selectPullRequestByClosingIssue(JSON.parse(out) as PullRequestMarkerCandidate[], issueNumber);
   },
 
   async listPullRequestChangedPaths(repository: string, pullRequest: number): Promise<string[]> {

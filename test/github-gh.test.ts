@@ -5,6 +5,7 @@ import {
   parsePaginatedIssues,
   parsePaginatedLabelEvents,
   selectPullRequestByBodyMarker,
+  selectPullRequestByClosingIssue,
 } from "../src/github/gh.js";
 
 describe("GitHub pull-request merge command", () => {
@@ -42,6 +43,25 @@ describe("GitHub coding-agent pull-request discovery", () => {
       candidate(41, "dispatch:req-025:abc"),
       candidate(42, "dispatch:req-025:abc"),
     ], "dispatch:req-025:abc")).toThrow("multiple pull requests");
+  });
+
+  it("binds an agent PR through its unique closing reference to the dispatch issue", () => {
+    expect(selectPullRequestByClosingIssue([
+      candidate(41, "Implementation complete.\n\nFixes #40"),
+    ], 40)?.number).toBe(41);
+  });
+
+  it("does not accept an unrelated numeric mention as closing evidence", () => {
+    expect(selectPullRequestByClosingIssue([
+      candidate(41, "Related to #40"),
+    ], 40)).toBeUndefined();
+  });
+
+  it("fails closed when multiple PRs close the same dispatch issue", () => {
+    expect(() => selectPullRequestByClosingIssue([
+      candidate(41, "Fixes #40"),
+      candidate(42, "Resolves: #40"),
+    ], 40)).toThrow("multiple pull requests close dispatch issue");
   });
 });
 
