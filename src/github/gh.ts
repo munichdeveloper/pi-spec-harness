@@ -113,6 +113,28 @@ export interface StatusCheckRollupItem {
   context?: string;
 }
 
+export interface PullRequestMarkerCandidate {
+  number: number;
+  body: string;
+  headRefOid: string;
+  headRefName: string;
+  state: string;
+  mergedAt: string | null;
+  mergeCommit: { oid: string } | null;
+  url: string;
+}
+
+export function selectPullRequestByBodyMarker(
+  candidates: PullRequestMarkerCandidate[],
+  marker: string,
+): PullRequestMarkerCandidate | undefined {
+  const matches = candidates.filter((candidate) => candidate.body.includes(marker));
+  if (matches.length > 1) {
+    throw new GhError(`multiple pull requests contain immutable marker '${marker}'`);
+  }
+  return matches[0];
+}
+
 export function findBlockingStatusChecks(checks: StatusCheckRollupItem[]): string[] {
   const acceptedConclusions = new Set(["SUCCESS", "NEUTRAL", "SKIPPED"]);
   return checks.flatMap((check) => {
@@ -825,6 +847,21 @@ export const github = {
       url: string;
     }>;
     return results[0];
+  },
+
+  /** Resolve an agent PR by an immutable marker copied from its dispatch
+   * issue. Coding agents may normalize the requested branch name, so branch
+   * equality alone is not reliable evidence. Ambiguity fails closed. */
+  async findPullRequestByBodyMarker(
+    repository: string,
+    marker: string,
+  ): Promise<{ number: number; headRefOid: string; headRefName: string; state: string; mergedAt: string | null; mergeCommit: { oid: string } | null; url: string } | undefined> {
+    const out = await runGh([
+      "pr", "list", "--repo", repository,
+      "--state", "all", "--limit", "100",
+      "--json", "number,body,headRefOid,headRefName,state,mergedAt,mergeCommit,url",
+    ]);
+    return selectPullRequestByBodyMarker(JSON.parse(out) as PullRequestMarkerCandidate[], marker);
   },
 
   async listPullRequestChangedPaths(repository: string, pullRequest: number): Promise<string[]> {

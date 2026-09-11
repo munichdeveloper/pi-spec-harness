@@ -3,7 +3,11 @@ export const DEFAULT_CODING_AGENT = "copilot-swe-agent[bot]";
 import type { RunState } from "../state/types.js";
 
 export function normalizeAgentLogin(login: string): string {
-  return login.replace(/^@/, "").toLowerCase();
+  const normalized = login.replace(/^@/, "").toLowerCase();
+  // GitHub's write contract uses the canonical coding-agent login while the
+  // issue read model currently exposes the same assignment as `Copilot`.
+  if (normalized === "copilot") return DEFAULT_CODING_AGENT;
+  return normalized;
 }
 
 export function extractReferencedIssueNumbers(body: string): number[] {

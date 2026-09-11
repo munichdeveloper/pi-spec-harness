@@ -2648,13 +2648,19 @@ async function cmdRequirementToSpecDispatch(argv: {
           "COPILOT_ASSIGN_PAT is not configured; GitHub App installation tokens cannot assign coding agents",
         );
       }
-      await github.assignCodingAgent(
-        argv.repository,
-        created.number,
-        DEFAULT_CODING_AGENT,
-        argv.defaultBranch,
-        assignmentCredential,
+      const currentIssue = await github.viewIssue(argv.repository, created.number);
+      const alreadyAssigned = currentIssue.assignees.some(
+        (assignee) => normalizeAgentLogin(assignee.login) === normalizeAgentLogin(DEFAULT_CODING_AGENT),
       );
+      if (!alreadyAssigned) {
+        await github.assignCodingAgent(
+          argv.repository,
+          created.number,
+          DEFAULT_CODING_AGENT,
+          argv.defaultBranch,
+          assignmentCredential,
+        );
+      }
     } catch (err) {
       await emitFailure(`could not assign @github-copilot to issue #${created.number}: ${String(err)}`);
     }
@@ -2837,7 +2843,8 @@ async function cmdRequirementToSpecCheck(argv: {
   }
 
   // Poll for a PR on the expected agent branch.
-  const pr = await github.findPullRequestByHead(argv.repository, record.branch);
+  const pr = await github.findPullRequestByHead(argv.repository, record.branch)
+    ?? await github.findPullRequestByBodyMarker(argv.repository, record.dispatchKey);
   if (!pr) {
     console.log(
       JSON.stringify({
