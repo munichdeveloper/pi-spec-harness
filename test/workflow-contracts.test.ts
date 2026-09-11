@@ -349,9 +349,13 @@ describe("SPEC-010 capability-smoke reusable workflow contracts", () => {
     const workflow = await readFile(".github/workflows/label-approval-bundling.yml", "utf8");
     expect(workflow).toContain("title=\"$(jq -r '.issue.title // \"\"'");
     expect(workflow).toContain("requirement=\"REQ-${BASH_REMATCH[1]}\"");
-    expect(workflow).toContain("Explain an incomplete intake in user language");
-    expect(workflow).toContain("Es sind keine weiteren technischen Labels erforderlich");
+    expect(workflow).toContain("Preserve approval for an earlier lifecycle stage");
+    expect(workflow).toContain("eine zweite fachliche Freigabe ist nicht erforderlich");
     expect(workflow).toContain("steps.refs.outputs.ready == 'true'");
+    expect(workflow.indexOf("Derive requirement/spec references")).toBeLessThan(
+      workflow.indexOf("Bundle target labels after validation"),
+    );
+    expect(workflow).toContain('$issue_type" == "type:requirement"');
   });
 
   it("SPEC-017: issue intake is conservative, idempotent, and does not expose internal approval instructions", async () => {
