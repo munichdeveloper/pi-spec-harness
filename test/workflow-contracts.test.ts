@@ -364,6 +364,13 @@ describe("SPEC-010 capability-smoke reusable workflow contracts", () => {
     expect(workflow).toContain("Materialize an approved requirement through a protected PR");
   });
 
+  it("recovers missed requirement pushes with explicit glob pathspecs", async () => {
+    const workflow = await readFile(".github/workflows/requirement-to-spec.yml", "utf8");
+    expect(workflow).toContain('":(glob)$glob"');
+    expect(workflow).toContain("git ls-files");
+    expect(workflow).toContain("github.event_name == 'schedule'");
+  });
+
   it("SPEC-017: issue intake is conservative, idempotent, and does not expose internal approval instructions", async () => {
     const workflow = await readFile(".github/workflows/issue-intake.yml", "utf8");
     expect(workflow).toContain("Classify untrusted issue text without write credentials");
