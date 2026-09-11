@@ -98,6 +98,7 @@ permissions:
   issues: write
   pull-requests: write
   checks: read
+  statuses: read
 
 jobs:
   bundle:
@@ -429,6 +430,7 @@ permissions:
   issues: write
   pull-requests: write
   checks: read
+  statuses: read
 
 jobs:
   requirement-to-spec:

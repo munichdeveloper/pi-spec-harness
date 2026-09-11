@@ -214,6 +214,7 @@ describe("GitHub workflow contracts", () => {
     expect(workflow).toContain("contents: write");
     expect(workflow).toContain("pull-requests: write");
     expect(workflow).toContain("checks: read");
+    expect(workflow).toContain("statuses: read");
   });
 
   it("wires --install-workflows, --install-agents-context, spec-to-issue, and issue-create --from-spec-path in the CLI (SPEC-006/SPEC-007/SPEC-008)", async () => {
