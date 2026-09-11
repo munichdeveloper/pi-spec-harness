@@ -28,26 +28,6 @@ jobs:
     if: github.event.label.name == inputs.trigger-label
     runs-on: ubuntu-latest
     steps:
-      - name: Bundle target labels in a single action (AC-05/TAC-08)
-        id: bundle
-        env:
-          GH_TOKEN: ${{ github.token }}
-        shell: bash
-        run: |
-          set -e
-          issue='${{ github.event.issue.number }}'
-          labels_json='${{ inputs.target-labels }}'
-          add_args=()
-          while IFS= read -r label; do
-            [[ -z "$label" ]] && continue
-            add_args+=(--add-label "$label")
-          done < <(printf '%s' "$labels_json" | jq -r '.[]')
-
-          # TAC-09: repeated labeling is a no-op for GitHub (labels are a
-          # set); re-adding an already-present label must not fail the job.
-          gh issue edit "$issue" --repo '${{ github.repository }}' "${add_args[@]}"
-          echo "issue=$issue" >> "$GITHUB_OUTPUT"
-
       - name: Setup Node for the harness CLI
         uses: actions/setup-node@v4
         with:
@@ -70,6 +50,7 @@ jobs:
         run: |
           body="$(jq -r '.issue.body // ""' "$GITHUB_EVENT_PATH")"
           title="$(jq -r '.issue.title // ""' "$GITHUB_EVENT_PATH")"
+          issue_type="$(jq -r '[.issue.labels[].name | select(startswith("type:"))][0] // ""' "$GITHUB_EVENT_PATH")"
           # Matches the body format produced by buildIssueFromSpec()
           # ("**Requirement(s):** REQ-006, REQ-007" / "**Spec:** SPEC-007 (...)").
           requirement="$(printf '%s\n' "$body" | grep -oE 'REQ-[0-9]+' | head -1 || true)"
@@ -82,23 +63,60 @@ jobs:
           fi
           echo "requirement=$requirement" >> "$GITHUB_OUTPUT"
           echo "spec=$spec" >> "$GITHUB_OUTPUT"
-          if [[ -n "$requirement" && -n "$spec" ]]; then
+          echo "issue_type=$issue_type" >> "$GITHUB_OUTPUT"
+          if [[ "$issue_type" == "type:requirement" || "$issue_type" == "type:bug" ]]; then
+            echo "routed=true" >> "$GITHUB_OUTPUT"
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          elif [[ -n "$requirement" && -n "$spec" ]]; then
+            echo "routed=false" >> "$GITHUB_OUTPUT"
             echo "ready=true" >> "$GITHUB_OUTPUT"
           else
+            echo "routed=false" >> "$GITHUB_OUTPUT"
             echo "ready=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Explain an incomplete intake in user language
-        if: steps.refs.outputs.ready != 'true'
+      - name: Preserve approval for an earlier lifecycle stage
+        if: steps.refs.outputs.routed == 'true'
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh issue comment '${{ steps.bundle.outputs.issue }}' \
+          if [[ '${{ steps.refs.outputs.issue_type }}' == 'type:requirement' ]]; then
+            message=$'Die inhaltliche Freigabe ist gespeichert. Das Requirement wird nun in die Requirement-/Spec-Kette uebernommen; eine zweite fachliche Freigabe ist nicht erforderlich.'
+          else
+            message=$'Die inhaltliche Freigabe ist gespeichert. Der Bug-Triage-Pfad uebernimmt die weitere Verarbeitung; eine zweite fachliche Freigabe ist nicht erforderlich.'
+          fi
+          gh issue comment '${{ github.event.issue.number }}' \
             --repo '${{ github.repository }}' \
-            --body $'Die Freigabe wurde gespeichert, aber die Umsetzung kann noch nicht sicher gestartet werden.\n\nDer Harness konnte noch keine eindeutige Anforderung und Software-Spezifikation zuordnen. Es sind keine weiteren technischen Labels erforderlich. Bitte ergänze im Issue das gewünschte Verhalten und überprüfbare Akzeptanzkriterien; der Intake übernimmt anschließend die technische Zuordnung.'
+            --body "$message"
+
+      - name: Reject an unclassified or incomplete implementation intake
+        if: steps.refs.outputs.ready != 'true' && steps.refs.outputs.routed != 'true'
+        shell: bash
+        run: |
           echo "::error::Installation is installed-but-not-ready for zero-knowledge intake: no requirement/spec coordinates could be derived."
           exit 1
+
+      - name: Bundle target labels after validation (AC-05/TAC-08)
+        if: steps.refs.outputs.ready == 'true'
+        id: bundle
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -e
+          issue='${{ github.event.issue.number }}'
+          labels_json='${{ inputs.target-labels }}'
+          add_args=()
+          while IFS= read -r label; do
+            [[ -z "$label" ]] && continue
+            add_args+=(--add-label "$label")
+          done < <(printf '%s' "$labels_json" | jq -r '.[]')
+
+          # Repeated labeling is a no-op. Crucially this write happens only
+          # after lifecycle type and REQ/SPEC coordinates were validated.
+          gh issue edit "$issue" --repo '${{ github.repository }}' "${add_args[@]}"
+          echo "issue=$issue" >> "$GITHUB_OUTPUT"
 
       - name: Bootstrap the harness run for this implementation issue (TAC-12/TAC-13/TAC-14)
         if: steps.refs.outputs.ready == 'true'
@@ -114,13 +132,13 @@ jobs:
           # (find-or-create); an immutable-field mismatch against a
           # pre-existing, differently-parameterised run for the same run-id
           # is intentionally left untouched rather than overwritten.
-          run_id="issue-${{ steps.bundle.outputs.issue }}"
+          run_id="issue-${{ github.event.issue.number }}"
           npm run harness -- init \
             --repository '${{ github.repository }}' \
             --run-id "$run_id" \
             --requirement '${{ steps.refs.outputs.requirement }}' \
             --spec '${{ steps.refs.outputs.spec }}' \
-            --issue '${{ steps.bundle.outputs.issue }}' \
+            --issue '${{ github.event.issue.number }}' \
             --branch '${{ github.event.repository.default_branch }}' \
             || echo "::notice::harness init for run '$run_id' left an existing, differently-parameterised run untouched."
 
