@@ -42,6 +42,9 @@ ausfuehrbar ist; andernfalls lautet er `installed-but-not-ready`.
   `issues.edited`, klassifiziert untrusted Titel-/Body-Daten ohne
   Schreib-Credential im Klassifikationsschritt und persistiert genau einen
   aktualisierbaren Intake-Kommentar.
+- Ein strukturiertes Issue mit Akzeptanzkriterien und ausdrücklich benanntem
+  Ziel oder gewuenschtem Verhalten gilt als ausfuehrbares Requirement, auch
+  ohne Harness-Schluesselwoerter wie `REQ-*` oder „Anforderung“.
 - Eine automatisch gesetzte Bug-Klassifikation allein startet keinen
   Coding-Agenten. Der Bug-Caller verlangt zusaetzlich die einmalige gebundene
   inhaltliche Freigabe.

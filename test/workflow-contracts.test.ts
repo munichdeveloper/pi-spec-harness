@@ -354,6 +354,8 @@ describe("SPEC-010 capability-smoke reusable workflow contracts", () => {
     expect(workflow).toContain("kind=\"incomplete\"");
     expect(workflow).toContain("title=\"$(printf");
     expect(workflow).toContain("elif [[ \"$text\" == *\"bug\"*");
+    expect(workflow).toContain('[[ "$text" == *"akzeptanzkriterien"* ]]');
+    expect(workflow).toContain('[[ "$text" == *"gewünschte"* || "$text" == *"gewuenschte"* || "$text" == *"ziel"* ]]');
     expect(workflow).toContain("pi-spec-harness:issue-intake:v1");
     expect(workflow).toContain("issues/comments/${comment_id}");
     expect(workflow).toContain("Technische Labels, Workflow-Namen und Zugangsdaten musst du dafür nicht kennen");

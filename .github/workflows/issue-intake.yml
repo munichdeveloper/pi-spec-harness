@@ -45,6 +45,10 @@ jobs:
           elif [[ "$text" =~ (^|[[:space:]])spike([:[:space:]]|$) ]] || [[ "$text" == *"untersuchen"* ]]; then
             kind="spike"
             label="type:spike"
+          elif [[ "$text" == *"akzeptanzkriterien"* ]] && \
+               [[ "$text" == *"gewünschte"* || "$text" == *"gewuenschte"* || "$text" == *"ziel"* ]]; then
+            kind="requirement"
+            label="type:requirement"
           elif [[ "$text" =~ req-[0-9]+ ]] || [[ "$text" == *"anforderung"* ]] || [[ "$text" == *"ich möchte"* ]] || [[ "$text" == *"ich moechte"* ]]; then
             kind="requirement"
             label="type:requirement"
