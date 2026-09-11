@@ -53,7 +53,7 @@ import {
 } from "./spec/requirement-to-spec.js";
 import type { StateStore } from "./state/state-store.js";
 import { FileStateStore, nowIso } from "./state/store.js";
-import { SpecGenFileStore, SpecGenIssueStore, findStoreRecord, upsertStoreRecord } from "./spec/spec-gen-store.js";
+import { SpecGenFileStore, SpecGenIssueStore, findStoreRecord, suppressSpecDispatch, upsertStoreRecord } from "./spec/spec-gen-store.js";
 import { validateSpecContent } from "./spec/spec-validator.js";
 import {
   PHASE_ORDER,
@@ -2501,12 +2501,13 @@ async function cmdRequirementToSpecDispatch(argv: {
   let storeData = initialStoreData;
 
   const existingRecord = findStoreRecord(storeData, order.dispatchKey);
-  if (existingRecord && existingRecord.status !== "prepared") {
+  if (suppressSpecDispatch(existingRecord)) {
+    const record = existingRecord!;
     const result = {
       idempotent: true,
       dispatchKey: order.dispatchKey,
       requirementId: fm.id,
-      status: existingRecord.status,
+      status: record.status,
       issueNumber: undefined as number | undefined,
     };
     console.log(
@@ -2514,7 +2515,7 @@ async function cmdRequirementToSpecDispatch(argv: {
         schemaVersion: SCHEMA_VERSION,
         command: "requirement-to-spec-dispatch",
         result,
-        nextAction: `outbox already has '${existingRecord.status}' record for dispatchKey — skipping duplicate dispatch`,
+        nextAction: `outbox already has '${record.status}' record for dispatchKey — skipping duplicate dispatch`,
       }, null, 2),
     );
     return;
@@ -2523,7 +2524,7 @@ async function cmdRequirementToSpecDispatch(argv: {
   // ── 5. SECONDARY idempotency: dispatch issue-title lookup (crash recovery) ─
   const issueTitle = buildSpecGenIssueTitle(fm.id, order.dispatchKey);
   const existing = await github.findIssueByExactTitle(argv.repository, issueTitle);
-  if (existing) {
+  if (existing && existingRecord?.status !== "cancelled") {
     // Dispatch issue exists but outbox was not persisted (crash between create and save).
     // Restore the outbox entry from GitHub as crash-recovery evidence, then return.
     const recovered: SpecDispatchRecord = {
@@ -2584,11 +2585,15 @@ async function cmdRequirementToSpecDispatch(argv: {
     color: "0366d6",
     description: "Durable pi-spec-harness spec-generation outbox",
   });
-  const created = await github.createIssue(argv.repository, {
-    title: issueTitle,
-    body: issueBody,
-    labels,
-  });
+  // A cancelled transport is retryable. Reuse its immutable dispatch issue;
+  // creating a second issue would split evidence and could duplicate work.
+  const created = existingRecord?.status === "cancelled" && existing
+    ? existing
+    : await github.createIssue(argv.repository, {
+        title: issueTitle,
+        body: issueBody,
+        labels,
+      });
 
   // Helper: emit a structured failure audit event and persist cancelled status.
   const emitFailure = async (outcome: string): Promise<never> => {

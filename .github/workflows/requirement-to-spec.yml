@@ -2,6 +2,10 @@ name: Harness Requirement to Spec Reusable
 
 on:
   workflow_call:
+    secrets:
+      COPILOT_ASSIGN_PAT:
+        description: Narrow user or OAuth token required by GitHub to assign the Copilot coding agent.
+        required: false
     inputs:
       requirement-path-glob:
         description: Path glob (relative to repo root) that identifies requirement files, e.g. docs/requirements/**/*.md.
@@ -115,7 +119,10 @@ jobs:
         if: steps.changed.outputs.files != ''
         shell: bash
         env:
-          GITHUB_TOKEN: ${{ github.token }}
+          # GitHub App installation tokens cannot assign coding agents.  Use
+          # the dedicated credential when configured and retain github.token
+          # for providers which do not need a user identity.
+          GITHUB_TOKEN: ${{ secrets.COPILOT_ASSIGN_PAT || github.token }}
           CALLER_REPOSITORY: ${{ github.repository }}
           SOURCE_SHA: ${{ github.sha }}
           PROVIDER: ${{ inputs.provider }}

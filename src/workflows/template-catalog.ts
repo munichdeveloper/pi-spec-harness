@@ -435,6 +435,8 @@ permissions:
 jobs:
   requirement-to-spec:
     uses: ${reusableRepository}/.github/workflows/requirement-to-spec.yml@${harnessRef}
+    secrets:
+      COPILOT_ASSIGN_PAT: \${{ secrets.COPILOT_ASSIGN_PAT }}
     with:
       harness-ref: '${harnessRef}'
       requirement-path-glob: '${requirementPathGlob}'

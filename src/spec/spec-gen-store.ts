@@ -65,6 +65,15 @@ export function findStoreRecord(
 }
 
 /**
+ * Only an in-flight or successful record suppresses another provider attempt.
+ * `cancelled` means that no provider effect was confirmed and is deliberately
+ * retryable with the same dispatch key and immutable tracking issue.
+ */
+export function suppressSpecDispatch(record: SpecDispatchRecord | undefined): boolean {
+  return record !== undefined && record.status !== "prepared" && record.status !== "cancelled";
+}
+
+/**
  * Upsert a record into the store. Monotonic: refuses status downgrade.
  * Pure — returns a new SpecGenStoreData value.
  */

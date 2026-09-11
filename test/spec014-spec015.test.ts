@@ -613,6 +613,7 @@ import { rm } from "node:fs/promises";
 import {
   SpecGenFileStore,
   findStoreRecord,
+  suppressSpecDispatch,
   parseSpecGenStoreFromBody,
   renderSpecGenStoreBody,
   upsertStoreRecord,
@@ -1001,6 +1002,15 @@ describe("SPEC-014 TAC-02/TAC-10: outbox-to-materialized-PR full state path", ()
     data = upsertStoreRecord(data, makeRecord({ dispatchKey: key2, status: "dispatched", requirementId: "REQ-014" }));
     expect(data.records).toHaveLength(2);
     expect(findStoreRecord(data, key2)!.status).toBe("dispatched");
+  });
+
+  it("retries a cancelled provider transport with the same dispatch key", () => {
+    const dispatchKey = buildSpecDispatchKey("org/repo", "REQ-014", "a".repeat(40));
+    const cancelled = makeRecord({ dispatchKey, status: "cancelled" });
+    expect(suppressSpecDispatch(cancelled)).toBe(false);
+    expect(suppressSpecDispatch(makeRecord({ dispatchKey, status: "dispatched" }))).toBe(true);
+    expect(suppressSpecDispatch(makeRecord({ dispatchKey, status: "pr-open" }))).toBe(true);
+    expect(suppressSpecDispatch(makeRecord({ dispatchKey, status: "pr-merged" }))).toBe(true);
   });
 });
 
