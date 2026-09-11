@@ -1,5 +1,12 @@
 # Workflow
 
+Wiederverwendbare Workflow-Aenderungen werden ohne Schutzumgehung in zwei
+Phasen veroeffentlicht: Der Aenderungs-PR bindet die exakten Kandidatenbytes
+ueber SHA-256 in `PENDING_REUSABLE_WORKFLOW_SHA256`. Nach dem Merge rueckt ein
+zweiter PR den immutable Default-Pin auf den Merge-Commit vor und entfernt die
+nun veraltete Pending-Deklaration. Der Release-Smoke lehnt unbekannte, falsche
+und veraltete Deklarationen ab.
+
 Angelehnt an den im alten Harness-Repo dokumentierten Ablauf, aber mit Pi als
 aktivem Implementierungsagenten statt eines externen Codex-Prozesses.
 
