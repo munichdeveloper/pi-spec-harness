@@ -4,6 +4,7 @@ import {
   findBlockingStatusChecks,
   parsePaginatedIssues,
   parsePaginatedLabelEvents,
+  parsePullRequestMarkerCandidates,
   selectPullRequestByBodyMarker,
   selectPullRequestByClosingIssue,
 } from "../src/github/gh.js";
@@ -57,11 +58,38 @@ describe("GitHub coding-agent pull-request discovery", () => {
     ], 40)).toBeUndefined();
   });
 
+  it("does not accept a closing keyword embedded in a larger word", () => {
+    expect(selectPullRequestByClosingIssue([
+      candidate(41, "prefixfixes #40"),
+    ], 40)).toBeUndefined();
+  });
+
+  it("excludes closed, unmerged candidates from live binding", () => {
+    expect(selectPullRequestByClosingIssue([{
+      ...candidate(41, "Fixes #40"),
+      state: "CLOSED",
+    }], 40)).toBeUndefined();
+  });
+
   it("fails closed when multiple PRs close the same dispatch issue", () => {
     expect(() => selectPullRequestByClosingIssue([
       candidate(41, "Fixes #40"),
       candidate(42, "Resolves: #40"),
     ], 40)).toThrow("multiple pull requests close dispatch issue");
+  });
+
+  it("parses every REST pagination page into PR evidence", () => {
+    const rest = (number: number) => ({
+      number,
+      body: `Fixes #${number}`,
+      head: { sha: `sha-${number}`, ref: `branch-${number}` },
+      state: "open",
+      merged_at: null,
+      merge_commit_sha: null,
+      html_url: `https://example.test/pull/${number}`,
+    });
+    expect(parsePullRequestMarkerCandidates(JSON.stringify([[rest(40)], [rest(41)]]))
+      .map((candidate) => candidate.number)).toEqual([40, 41]);
   });
 });
 

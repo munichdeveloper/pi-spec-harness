@@ -2536,6 +2536,7 @@ async function cmdRequirementToSpecDispatch(argv: {
       targetSpecPath: order.targetSpecPath,
       provider: argv.provider,
       branch: order.agentBranch,
+      dispatchIssue: existing.number,
       status: "dispatched",
       requestedAt: nowIso(),
       updatedAt: nowIso(),

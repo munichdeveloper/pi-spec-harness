@@ -4,7 +4,7 @@ occurred_at: "2026-09-11T15:32:00.000Z"
 confirmed_at: "2026-09-11T15:32:00.000Z"
 process_instance: "PI-MUNICHDEVELOPER-PI-SPEC-HARNESS-SPEC-017"
 idempotency_key: "spec017:agent-pr-issue-binding:implementation:v1"
-process_code: "AI_ITERATION"
+process_code: "PR_BIND"
 actor: "CODEX"
 access_role: "GITHUB_PERSONAL_ACCESS_TOKEN"
 supporting_access_roles:
@@ -24,6 +24,6 @@ description: "PR discovery now falls back to a unique GitHub closing reference f
 ---
 # Process Audit Journal Entry
 
-<!-- harness:audit-record process_code=AI_ITERATION -->
+<!-- harness:audit-record process_code=PR_BIND -->
 
 Recorded for the SPEC-017 provider-normalized PR binding iteration.
